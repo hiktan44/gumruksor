@@ -601,7 +601,9 @@ _GEMINI_HOST = "generativelanguage.googleapis.com"
 # Gemini Flash cok kipli (gorsel + metin); ayni zincir her gorevde kullanilir.
 # "gemini-flash-latest" takma adi Google tarafinda hep en guncel Flash surumune cozulur.
 _GEMINI_DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
-_LLM_PROVIDERS = ("zai", "gemini", "openrouter")
+# Birincil saglayici secim sirasi (LLM_PRIMARY_PROVIDER yoksa): once dogrudan
+# Google Gemini, sonra Z.ai, en son OpenRouter.
+_LLM_PROVIDERS = ("gemini", "zai", "openrouter")
 # GLM-5.x always thinks; reasoning tokens count against max_tokens.
 _ZAI_THINKING_TOKEN_ALLOWANCE = 4000
 _ZAI_RETRY_DELAYS_SECONDS = (3.0, 6.0)
@@ -639,7 +641,7 @@ def _llm_base_url() -> str:
     """Resolve the OpenAI-compatible base URL.
 
     Priority: LLM_BASE_URL > LLM_PRIMARY_PROVIDER > first configured key in the
-    order Z.ai, Google Gemini, OpenRouter.
+    order Google Gemini, Z.ai, OpenRouter.
     """
     configured = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
     if configured:
@@ -947,7 +949,11 @@ def _fallback_enabled(provider: str) -> bool:
         "zai": "LLM_FALLBACK_TO_ZAI",
         "openrouter": "LLM_FALLBACK_TO_OPENROUTER",
     }.get(provider, "")
-    return os.environ.get(name, "1").strip().lower() not in {"0", "false", "no", "off"} if name else False
+    if not name:
+        return False
+    # OpenRouter yedegi varsayilan olarak kapali; acmak icin LLM_FALLBACK_TO_OPENROUTER=1.
+    default = "0" if provider == "openrouter" else "1"
+    return os.environ.get(name, default).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _openrouter_fallback_enabled() -> bool:

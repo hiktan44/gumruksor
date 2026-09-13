@@ -977,7 +977,8 @@ class LlmResilienceTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json=_chat_response('{"a": 2}', "google/gemini-flash-latest"))
 
         text, model = await self._chat(
-            handler, ["glm-5v-turbo", "glm-4.6v"], _llm_env(ZAI_API_KEY="zai-key", OPENROUTER_API_KEY="or-key")
+            handler, ["glm-5v-turbo", "glm-4.6v"],
+            _llm_env(ZAI_API_KEY="zai-key", OPENROUTER_API_KEY="or-key", LLM_FALLBACK_TO_OPENROUTER="1"),  # gitleaks:allow
         )
         self.assertEqual(text, '{"a": 2}')
         self.assertEqual(model, "google/gemini-flash-latest")
@@ -1031,7 +1032,8 @@ class LlmResilienceTests(unittest.IsolatedAsyncioTestCase):
 
         started = time.monotonic()
         text, model = await self._chat(
-            handler, ["glm-5v-turbo", "glm-4.6v"], _llm_env(ZAI_API_KEY="zai-key", OPENROUTER_API_KEY="or-key"),
+            handler, ["glm-5v-turbo", "glm-4.6v"],
+            _llm_env(ZAI_API_KEY="zai-key", OPENROUTER_API_KEY="or-key", LLM_FALLBACK_TO_OPENROUTER="1"),  # gitleaks:allow
             _llm_total_deadline=lambda: 2.0,
             _llm_primary_budget=lambda total: 0.2,
             _LLM_MIN_FALLBACK_SECONDS=0.1,
@@ -1099,7 +1101,7 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
                 max_tokens=100,
             )
 
-    def test_gemini_key_alone_selects_gemini_and_zai_still_wins_when_both_exist(self) -> None:
+    def test_gemini_is_primary_when_its_key_exists_and_override_can_pick_zai(self) -> None:
         with patch.dict(os.environ, _llm_env(GEMINI_API_KEY="gem-key"), clear=True):
             self.assertEqual(_llm_provider(), "gemini")
             self.assertEqual(_llm_base_url(), "https://generativelanguage.googleapis.com/v1beta/openai")
@@ -1107,13 +1109,17 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(_openrouter_models("OPENROUTER_VISION_MODELS"), ["gemini-3.8-flash", "gemini-flash-latest"])
             self.assertEqual(_openrouter_models("OPENROUTER_CUSTOMS_MODELS"), ["gemini-3.8-flash", "gemini-flash-latest"])
         with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key"), clear=True):
+            self.assertEqual(_llm_provider(), "gemini", "Gemini key wins over Z.ai without an override")
+            self.assertEqual(_llm_api_key_value(), "gem-key")
+            self.assertEqual(_openrouter_models("OPENROUTER_VISION_MODELS")[0], "gemini-3.8-flash")
+        with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", LLM_PRIMARY_PROVIDER="zai"), clear=True):
             self.assertEqual(_llm_provider(), "zai")
             self.assertEqual(_llm_api_key_value(), "zai-key")
-        with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", LLM_PRIMARY_PROVIDER="gemini"), clear=True):
-            self.assertEqual(_llm_provider(), "gemini")
-            self.assertEqual(_llm_api_key_value(), "gem-key")
         with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key", LLM_PRIMARY_PROVIDER="gemini"), clear=True):
             self.assertEqual(_llm_provider(), "zai", "override without a Gemini key is ignored")
+        with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key"), clear=True):
+            fallbacks = [name for name, _, _, _ in customs_advisor._fallback_providers("gemini", vision=True)]
+            self.assertEqual(fallbacks, ["zai"], "OpenRouter stays out of the chain unless explicitly enabled")
 
     def test_gemini_model_list_accepts_openrouter_style_google_ids(self) -> None:
         with patch.dict(os.environ, _llm_env(GEMINI_MODELS="~google/gemini-3.8-flash, z-ai/glm-5.3, gemini-flash-latest"), clear=True):
@@ -1153,7 +1159,8 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json=_chat_response('{"a": 7}', "gemini-3.8-flash"))
 
         text, model = await self._chat(
-            handler, ["glm-5v-turbo"], _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key")
+            handler, ["glm-5v-turbo"],
+            _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key", LLM_PRIMARY_PROVIDER="zai", LLM_FALLBACK_TO_OPENROUTER="1"),  # gitleaks:allow
         )
         self.assertEqual((text, model), ('{"a": 7}', "gemini-3.8-flash"))
         self.assertEqual(seen, ["api.z.ai", "generativelanguage.googleapis.com"])
@@ -1168,7 +1175,8 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(503, json={"error": {"message": "down"}})
 
         text, model = await self._chat(
-            handler, ["glm-5v-turbo"], _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key")
+            handler, ["glm-5v-turbo"],
+            _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key", LLM_PRIMARY_PROVIDER="zai", LLM_FALLBACK_TO_OPENROUTER="1"),  # gitleaks:allow
         )
         self.assertEqual((text, model), ('{"a": 8}', "google/gemini-flash-latest"))
         self.assertEqual(seen[0], "api.z.ai")
@@ -1253,7 +1261,8 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError):
             await self._chat(
-                handler, ["glm-5v-turbo"], _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", LLM_FALLBACK_TO_GEMINI="0")
+                handler, ["glm-5v-turbo"],
+                _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", LLM_PRIMARY_PROVIDER="zai", LLM_FALLBACK_TO_GEMINI="0"),  # gitleaks:allow
             )
         self.assertEqual(seen, ["api.z.ai"])
 
@@ -1280,7 +1289,7 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
             return httpx.Response(200, json=_chat_response('```json\n{"ok": true, "seen": "Kırmızı"}\n```', body["model"]))
 
-        env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key")
+        env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key", LLM_PRIMARY_PROVIDER="zai", LLM_FALLBACK_TO_OPENROUTER="1")  # gitleaks:allow
         with patch.dict(os.environ, env, clear=True), patch(
             "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
         ), patch("customs_advisor._retry_sleep", new=AsyncMock()):
