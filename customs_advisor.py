@@ -1330,6 +1330,144 @@ async def _openrouter_chat(
     raise RuntimeError(_LLM_UNAVAILABLE_MESSAGE)
 
 
+_DIAGNOSTIC_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="  # gitleaks:allow
+)
+_DIAGNOSTIC_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}, "seen": {"type": "string"}},
+    "required": ["ok", "seen"],
+}
+
+
+async def _diagnose_one(
+    *,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    vision: bool,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Send one tiny request to a provider/model and report status, latency and detail."""
+    url = f"{base_url}/chat/completions"
+    validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
+    user_content: Any = 'Sadece {"ok": true, "seen": "metin"} döndür.'
+    if vision:
+        user_content = [
+            {"type": "text", "text": 'Görseli gördüğünü doğrula; sadece {"ok": true, "seen": "görsel"} döndür.'},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_DIAGNOSTIC_PNG_BASE64}"}},
+        ]
+    messages = [
+        {"role": "system", "content": "Sen bir bağlantı testisin. Yalnızca istenen JSON nesnesini döndür."},
+        {"role": "user", "content": user_content},
+    ]
+    base_payload = _openrouter_payload(
+        models=[model],
+        messages=messages,
+        response_schema=_DIAGNOSTIC_SCHEMA,
+        schema_name="diagnostic",
+        max_tokens=60,
+        provider=provider,
+    )
+    payload = _model_payload(base_payload, model, provider)
+    headers = _openrouter_headers(api_key, provider)
+    result: dict[str, Any] = {"provider": provider, "model": model, "host": urlsplit(url).hostname, "ok": False}
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
+            response = await asyncio.wait_for(
+                _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
+                timeout=timeout_seconds,
+            )
+            if provider == "gemini" and response.status_code == 400 and "response_format" in payload:
+                result["schema_rejected"] = _openrouter_error_detail(response)
+                payload = {key: value for key, value in payload.items() if key != "response_format"}
+                response = await asyncio.wait_for(
+                    _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
+                    timeout=timeout_seconds,
+                )
+    except asyncio.TimeoutError:
+        result["error"] = f"zaman aşımı ({timeout_seconds:.0f} sn)"
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return result
+    except httpx.RequestError as exc:
+        result["error"] = f"bağlantı hatası ({type(exc).__name__})"
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return result
+    result["latency_ms"] = int((time.monotonic() - started) * 1000)
+    result["status"] = response.status_code
+    if not response.is_success:
+        result["error"] = f"HTTP {response.status_code} · {_openrouter_error_detail(response)}"
+        return result
+    try:
+        body = response.json()
+        content = _strip_json_fences(_openrouter_message_text(body["choices"][0]["message"]["content"]))
+        result["resolved_model"] = str(body.get("model") or model)
+        result["reply"] = content[:200]
+        parsed = json.loads(content)
+        result["ok"] = isinstance(parsed, dict) and bool(parsed.get("ok"))
+        if not result["ok"]:
+            result["error"] = "yanıt beklenen JSON değil"
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        result["error"] = f"geçersiz yanıt ({type(exc).__name__})"
+    return result
+
+
+async def diagnose_llm_providers(*, vision: bool = False, timeout_seconds: float = 25.0) -> dict[str, Any]:
+    """Live connectivity report for the configured LLM providers (admin diagnostics).
+
+    Runs one tiny request against the primary chain's first model and each
+    fallback provider's first model. Secrets are never included; only booleans
+    for key presence, model ids, HTTP status, latency and short error text.
+    """
+    base_url = _llm_base_url()
+    primary = _llm_provider(base_url)
+    env_name = "OPENROUTER_VISION_MODELS" if vision else "OPENROUTER_CUSTOMS_MODELS"
+    primary_models = _openrouter_models(env_name)
+    fallbacks = _fallback_providers(primary, vision=vision)
+    report: dict[str, Any] = {
+        "mode": "vision" if vision else "text",
+        "primary": primary,
+        "primary_host": urlsplit(base_url).hostname,
+        "primary_override": os.environ.get("LLM_PRIMARY_PROVIDER", "").strip().lower() or None,
+        "keys": {name: bool(_provider_api_key(name)) for name in _LLM_PROVIDERS},
+        "chains": {
+            "primary": primary_models,
+            "fallbacks": [{"provider": name, "models": models} for name, _, _, models in fallbacks],
+        },
+        "timeouts": {
+            "request_seconds": _llm_request_timeout().read,
+            "primary_budget_seconds": _llm_primary_budget(_llm_total_deadline()),
+            "total_deadline_seconds": _llm_total_deadline(),
+        },
+        "checks": [],
+    }
+    targets: list[tuple[str, str, str, list[str]]] = []
+    primary_key = _provider_api_key(primary)
+    if primary_key:
+        targets.append((primary, base_url, primary_key, primary_models))
+    else:
+        report["checks"].append({"provider": primary, "ok": False, "error": "API anahtarı tanımlı değil"})
+    targets.extend(fallbacks)
+    for provider, url, key, models in targets:
+        if not models:
+            report["checks"].append({"provider": provider, "ok": False, "error": "model listesi boş"})
+            continue
+        report["checks"].append(
+            await _diagnose_one(
+                provider=provider,
+                base_url=url,
+                api_key=key,
+                model=models[0],
+                vision=vision,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    report["healthy"] = any(check.get("ok") for check in report["checks"])
+    return report
+
+
 _VISION_PROMPT = """
 Bir Türkiye gümrük ön inceleme sisteminin yalnızca GÖRSEL EVSAF ÇIKARMA aşamasındasın.
 Fotoğrafı kıdemli ürün uzmanı, teknik katalog editörü ve tarife sınıflandırma ön inceleme

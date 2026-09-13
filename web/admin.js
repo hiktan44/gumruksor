@@ -199,6 +199,49 @@ $("#userSearchInput").addEventListener("input", (event) => {
   renderUsers(filtered);
 });
 
+// TAB 2b: LLM CONNECTIVITY DIAGNOSTICS
+async function runLlmDiagnostics(vision) {
+  const output = $("#llmDiagnosticsOutput");
+  const buttons = [$("#llmDiagText"), $("#llmDiagVision")].filter(Boolean);
+  buttons.forEach((btn) => { btn.disabled = true; });
+  output.innerHTML = `<p>${vision ? "Görsel" : "Metin"} testi çalışıyor… Her sağlayıcı için en fazla 25 saniye bekleniyor.</p>`;
+  try {
+    const data = await json(`/api/admin/llm-diagnostics?vision=${vision ? "1" : "0"}`);
+    const keys = Object.entries(data.keys || {})
+      .map(([name, present]) => `${escapeHtml(name)}: ${present ? "anahtar var" : "anahtar yok"}`)
+      .join(" · ");
+    const chains = [
+      `birincil (${escapeHtml(data.primary)}): ${escapeHtml((data.chains?.primary || []).join(" → "))}`,
+      ...(data.chains?.fallbacks || []).map((fb) => `yedek ${escapeHtml(fb.provider)}: ${escapeHtml((fb.models || []).join(" → "))}`),
+    ].join("<br>");
+    const rows = (data.checks || [])
+      .map((check) => `
+        <tr class="${check.ok ? "diag-ok" : "diag-fail"}">
+          <td><b>${escapeHtml(check.provider)}</b><br><small>${escapeHtml(check.model || "")}</small></td>
+          <td>${check.ok ? "✅ Yanıt verdi" : "❌ Başarısız"}</td>
+          <td>${check.status != null ? `HTTP ${escapeHtml(check.status)}` : "—"}<br><small>${check.latency_ms != null ? `${escapeHtml(check.latency_ms)} ms` : ""}</small></td>
+          <td>${escapeHtml(check.error || check.reply || "")}${check.schema_rejected ? `<br><small>Şema reddedildi, şemasız yeniden denendi: ${escapeHtml(check.schema_rejected)}</small>` : ""}</td>
+        </tr>`)
+      .join("");
+    output.innerHTML = `
+      <p><b>${data.healthy ? "En az bir sağlayıcı çalışıyor." : "Hiçbir sağlayıcı yanıt vermedi."}</b> Mod: ${escapeHtml(data.mode)} · Birincil: ${escapeHtml(data.primary)} (${escapeHtml(data.primary_host || "")})${data.primary_override ? ` · LLM_PRIMARY_PROVIDER=${escapeHtml(data.primary_override)}` : ""}</p>
+      <p><small>${keys}</small></p>
+      <p><small>${chains}</small></p>
+      <p><small>Süre sınırları: istek ${escapeHtml(data.timeouts?.request_seconds)} sn · birincil pay ${escapeHtml(data.timeouts?.primary_budget_seconds)} sn · toplam ${escapeHtml(data.timeouts?.total_deadline_seconds)} sn</small></p>
+      <table class="mini-table">
+        <thead><tr><th>Sağlayıcı / model</th><th>Sonuç</th><th>Durum</th><th>Ayrıntı</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4">Test edilecek sağlayıcı bulunamadı.</td></tr>'}</tbody>
+      </table>`;
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    buttons.forEach((btn) => { btn.disabled = false; });
+  }
+}
+
+$("#llmDiagText")?.addEventListener("click", () => runLlmDiagnostics(false));
+$("#llmDiagVision")?.addEventListener("click", () => runLlmDiagnostics(true));
+
 // TAB 2: LLM EXPENSES
 async function loadLLMExpenses(filter = currentLlmFilter) {
   currentLlmFilter = filter;

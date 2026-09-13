@@ -1258,6 +1258,65 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, ["api.z.ai"])
 
 
+class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    """Admin connectivity report: one tiny request per configured provider."""
+
+    async def test_report_lists_keys_chains_and_per_provider_results(self) -> None:
+        seen: list[tuple[str, str, bool]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            has_image = any(
+                isinstance(part, dict) and part.get("type") == "image_url"
+                for part in (body["messages"][1]["content"] if isinstance(body["messages"][1]["content"], list) else [])
+            )
+            seen.append((request.url.host, body["model"], has_image))
+            if request.url.host == "api.z.ai":
+                return httpx.Response(500, json={"error": {"message": "upstream down"}})
+            if request.url.host == "generativelanguage.googleapis.com" and "response_format" in body:
+                return httpx.Response(400, json={"error": {"message": "schema not supported"}})
+            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
+
+        env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key")
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._retry_sleep", new=AsyncMock()):
+            report = await customs_advisor.diagnose_llm_providers(vision=True, timeout_seconds=5)
+        self.assertEqual(report["mode"], "vision")
+        self.assertEqual(report["primary"], "zai")
+        self.assertEqual(report["keys"], {"zai": True, "gemini": True, "openrouter": True})
+        self.assertEqual(report["chains"]["primary"], ["glm-5v-turbo", "glm-4.6v"])
+        self.assertEqual([fb["provider"] for fb in report["chains"]["fallbacks"]], ["gemini", "openrouter"])
+        self.assertTrue(report["healthy"])
+        by_provider = {check["provider"]: check for check in report["checks"]}
+        self.assertFalse(by_provider["zai"]["ok"])
+        self.assertIn("HTTP 500", by_provider["zai"]["error"])
+        self.assertTrue(by_provider["gemini"]["ok"])
+        self.assertIn("schema not supported", by_provider["gemini"]["schema_rejected"])
+        self.assertTrue(by_provider["openrouter"]["ok"])
+        self.assertTrue(all(has_image for _, _, has_image in seen))
+        self.assertEqual(seen[0][:2], ("api.z.ai", "glm-5v-turbo"))
+        serialised = json.dumps(report)
+        for secret in ("zai-key", "gem-key", "or-key"):
+            self.assertNotIn(secret, serialised)
+
+    async def test_missing_primary_key_is_reported_without_requests(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.host)
+            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "metin"}'))
+
+        with patch.dict(os.environ, _llm_env(), clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ):
+            report = await customs_advisor.diagnose_llm_providers(vision=False, timeout_seconds=5)
+        self.assertEqual(report["primary"], "openrouter")
+        self.assertFalse(report["healthy"])
+        self.assertEqual(calls, [])
+        self.assertIn("anahtar", report["checks"][0]["error"])
+
+
 class ZaiDescribeImageProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_describe_image_reports_zai_provider(self) -> None:
         buffer = io.BytesIO()
