@@ -3,7 +3,9 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
@@ -71,6 +73,62 @@ class ConsultationApiE2ETests(unittest.TestCase):
             token = self.auth.create_session(user)
             headers["Cookie"] = f"{self.auth.session_cookie}={token}"
         return self.client.request(method, path, headers=headers, **kwargs)
+
+    def test_phone_like_consultant_id_survives_contact_redaction(self):
+        # A UUID4 whose digit run matches the Turkish phone pattern used to be mangled
+        # by request redaction, so the consultant lookup failed for ~1 in 80 profiles.
+        phone_like = uuid.UUID("9ca1aaed-962f-47ac-b587-4130658b472b")
+        os.environ["CONSULTANTS_MARKETPLACE_ENABLED"] = "1"
+        with patch("account_service.uuid.uuid4", return_value=phone_like):
+            application = self.request(
+                "POST",
+                "/api/consultants/me",
+                self.consultant,
+                json={
+                    "display_name": "Ayşe Uzman",
+                    "title": "Tarife sınıflandırma danışmanı",
+                    "bio": "Tarife kararları ve ürün evsafı üzerinden bağımsız sınıflandırma görüşü veriyorum.",
+                    "expertise": ["GTİP ve tarife sınıflandırma"],
+                    "city": "İstanbul",
+                    "service_mode": "online",
+                    "experience_years": 8,
+                    "advisory_only_accepted": True,
+                },
+            )
+        self.assertEqual(application.status_code, 201, application.text)
+        approval = self.request("PUT", f"/api/admin/consultants/{self.consultant['sub']}", self.admin, json={"status": "active"})
+        self.assertEqual(approval.status_code, 200, approval.text)
+        listed = self.request("GET", "/api/consultants").json()["items"]
+        self.assertEqual(listed[0]["id"], str(phone_like))
+        handoff = self.request(
+            "POST",
+            "/api/consultation-requests",
+            self.requester,
+            json={
+                "consultant_id": str(phone_like),
+                "subject": "Porselen fincan sınıflandırması",
+                "message": "Aday kodu ve kontrol kapsamını değerlendirir misiniz?",
+                "share_consent": True,
+                "result": {"summary": "Ön değerlendirme", "inquiry": {"product_description": "Porselen fincan"}},
+            },
+        )
+        self.assertEqual(handoff.status_code, 201, handoff.text)
+        # Free text is still redacted; a phone number in the message never reaches storage.
+        handoff2 = self.request(
+            "POST",
+            "/api/consultation-requests",
+            self.requester,
+            json={
+                "consultant_id": str(phone_like),
+                "subject": "İkinci soru hakkında",
+                "message": "Beni 0532 123 45 67 numarasından arayın lütfen.",
+                "share_consent": True,
+                "result": {"summary": "Ön değerlendirme"},
+            },
+        )
+        self.assertEqual(handoff2.status_code, 201, handoff2.text)
+        incoming = self.request("GET", "/api/consultation-requests", self.consultant).json()["incoming"]
+        self.assertNotIn("0532", str(incoming))
 
     def test_application_approval_packet_handoff_acceptance_and_messaging(self):
         # Varsayılan: pazaryeri kapalıdır; dizin profilleri herkese görünmez.
