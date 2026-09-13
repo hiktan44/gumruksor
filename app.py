@@ -1040,10 +1040,15 @@ async def web_admin_llm_diagnostics(request: Request):
     except AuthError as exc:
         return _auth_error(exc, status_code=403)
     vision = request.query_params.get("vision", "").strip().lower() in {"1", "true", "yes"}
+    recent_only = request.query_params.get("recent", "").strip().lower() in {"1", "true", "yes"}
     try:
-        from customs_advisor import diagnose_llm_providers
+        from customs_advisor import diagnose_llm_providers, recent_llm_events
 
-        report = await diagnose_llm_providers(vision=vision)
+        if recent_only:
+            # No live probe: only the in-memory record of the latest real calls.
+            report = {"mode": "recent", "recent": recent_llm_events()}
+        else:
+            report = await diagnose_llm_providers(vision=vision)
     except Exception:
         logger.exception("LLM diagnostics failed")
         return JSONResponse({"error": "Bağlantı testi çalıştırılamadı."}, status_code=500)

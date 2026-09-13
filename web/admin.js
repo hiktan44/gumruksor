@@ -200,9 +200,42 @@ $("#userSearchInput").addEventListener("input", (event) => {
 });
 
 // TAB 2b: LLM CONNECTIVITY DIAGNOSTICS
+function renderRecentLlmEvents(events) {
+  const rows = (events || [])
+    .map((event) => `
+      <tr class="${event.ok ? "diag-ok" : "diag-fail"}">
+        <td>${escapeHtml(formatDate(event.at))}</td>
+        <td><b>${escapeHtml(event.operation || "")}</b><br><small>${escapeHtml([event.provider, event.model].filter(Boolean).join(" · "))}</small></td>
+        <td>${event.ok ? "✅ Başarılı" : "❌ Başarısız"}<br><small>${event.elapsed_s != null ? `${escapeHtml(event.elapsed_s)} sn` : ""}</small></td>
+        <td>${escapeHtml(event.detail || "")}</td>
+      </tr>`)
+    .join("");
+  return `
+    <h3>Son gerçek çağrılar (sunucu belleği, en yeni üstte)</h3>
+    <table class="mini-table">
+      <thead><tr><th>Zaman (UTC)</th><th>İşlem / sağlayıcı</th><th>Sonuç</th><th>Ayrıntı</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4">Sunucu yeniden başladığından beri kayıtlı çağrı yok.</td></tr>'}</tbody>
+    </table>`;
+}
+
+async function showRecentLlmEvents() {
+  const output = $("#llmDiagnosticsOutput");
+  const buttons = [$("#llmDiagRecent"), $("#llmDiagText"), $("#llmDiagVision")].filter(Boolean);
+  buttons.forEach((btn) => { btn.disabled = true; });
+  output.innerHTML = "<p>Son çağrılar yükleniyor…</p>";
+  try {
+    const data = await json("/api/admin/llm-diagnostics?recent=1");
+    output.innerHTML = renderRecentLlmEvents(data.recent);
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    buttons.forEach((btn) => { btn.disabled = false; });
+  }
+}
+
 async function runLlmDiagnostics(vision) {
   const output = $("#llmDiagnosticsOutput");
-  const buttons = [$("#llmDiagText"), $("#llmDiagVision")].filter(Boolean);
+  const buttons = [$("#llmDiagRecent"), $("#llmDiagText"), $("#llmDiagVision")].filter(Boolean);
   buttons.forEach((btn) => { btn.disabled = true; });
   output.innerHTML = `<p>${vision ? "Görsel" : "Metin"} testi çalışıyor… Her sağlayıcı için en fazla 25 saniye bekleniyor.</p>`;
   try {
@@ -231,7 +264,8 @@ async function runLlmDiagnostics(vision) {
       <table class="mini-table">
         <thead><tr><th>Sağlayıcı / model</th><th>Sonuç</th><th>Durum</th><th>Ayrıntı</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="4">Test edilecek sağlayıcı bulunamadı.</td></tr>'}</tbody>
-      </table>`;
+      </table>
+      ${renderRecentLlmEvents(data.recent)}`;
   } catch (error) {
     output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
   } finally {
@@ -239,6 +273,7 @@ async function runLlmDiagnostics(vision) {
   }
 }
 
+$("#llmDiagRecent")?.addEventListener("click", () => showRecentLlmEvents());
 $("#llmDiagText")?.addEventListener("click", () => runLlmDiagnostics(false));
 $("#llmDiagVision")?.addEventListener("click", () => runLlmDiagnostics(true));
 
