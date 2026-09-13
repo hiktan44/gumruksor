@@ -1319,7 +1319,9 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["primary_host"], "gateway.example.com")
         self.assertTrue(report["healthy"])
         self.assertEqual(report["checks"][0]["host"], "gateway.example.com")
-        self.assertEqual(len(usage), 1)
+        # The Z.ai key also makes Z.ai a fallback target, so two calls are recorded.
+        self.assertEqual([check["provider"] for check in report["checks"]], ["openrouter", "zai"])
+        self.assertEqual(len(usage), 2)
         self.assertEqual(usage[0]["operation"], "diagnostic_text")
         self.assertEqual(usage[0]["model"], "gateway-model")
 
