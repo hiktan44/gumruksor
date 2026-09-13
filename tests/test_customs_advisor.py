@@ -642,6 +642,19 @@ def _chat_response(content: str, model: str = "glm-5.3") -> dict:
     }
 
 
+def _gemini_response(text: str, model: str = "gemini-3.8-flash") -> dict:
+    """Native generateContent reply shape (candidates + usageMetadata + modelVersion)."""
+    return {
+        "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": "STOP"}],
+        "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15},
+        "modelVersion": model,
+    }
+
+
+def _gemini_model_from_url(request: httpx.Request) -> str:
+    return request.url.path.rsplit("/models/", 1)[-1].split(":", 1)[0]
+
+
 def _mock_client_factory(handler):
     def factory(*args, **kwargs):
         return _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), timeout=kwargs.get("timeout"))
@@ -1111,7 +1124,7 @@ class LlmResilienceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
-    """Direct Google Gemini (OpenAI-compatible endpoint) as primary or fallback."""
+    """Direct Google Gemini (native generateContent API) as primary or fallback."""
 
     async def _chat(self, handler, models, env):
         with patch.dict(os.environ, env, clear=True), patch(
@@ -1157,22 +1170,28 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, json=_chat_response('```json\n{"a": 5}\n```', "gemini-3.8-flash"))
+            return httpx.Response(200, json=_gemini_response('```json\n{"a": 5}\n```', "gemini-3.8-flash-001"))
 
         text, model = await self._chat(handler, ["gemini-3.8-flash"], _llm_env(GEMINI_API_KEY="gem-key"))
-        self.assertEqual((text, model), ('{"a": 5}', "gemini-3.8-flash"))
+        self.assertEqual((text, model), ('{"a": 5}', "gemini-3.8-flash-001"))
         request = seen[0]
-        self.assertEqual(str(request.url), "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
-        self.assertEqual(request.headers["authorization"], "Bearer gem-key")
-        self.assertNotIn("x-openrouter-title", request.headers)
+        # Same request shape as productanaliz (proven in production): native
+        # generateContent, key header, systemInstruction, no OpenAI-only knobs.
+        self.assertEqual(
+            str(request.url),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+        )
+        self.assertEqual(request.headers["x-goog-api-key"], "gem-key")
+        self.assertEqual(request.headers["user-agent"], "aistudio-build")
+        self.assertNotIn("authorization", request.headers)
         body = json.loads(request.content)
-        self.assertEqual(body["model"], "gemini-3.8-flash")
-        self.assertEqual(body["response_format"]["type"], "json_schema")
-        self.assertEqual(body["response_format"]["json_schema"]["name"], "test_schema")
-        self.assertEqual(body["reasoning_effort"], "low")
-        self.assertNotIn("provider", body)
-        self.assertNotIn("thinking", body)
-        self.assertIn("test_schema", body["messages"][0]["content"])
+        self.assertEqual(set(body), {"contents", "systemInstruction"})
+        system_text = body["systemInstruction"]["parts"][0]["text"]
+        self.assertTrue(system_text.startswith("Sistem"))
+        self.assertIn("test_schema", system_text)
+        self.assertEqual(body["contents"], [{"role": "user", "parts": [{"text": "Ürün"}]}])
+        for key in ("model", "response_format", "reasoning_effort", "generationConfig", "thinking"):
+            self.assertNotIn(key, body)
 
     async def test_zai_failure_prefers_gemini_over_openrouter(self) -> None:
         seen: list[str] = []
@@ -1181,7 +1200,7 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
             seen.append(request.url.host)
             if request.url.host == "api.z.ai":
                 return httpx.Response(500, json={"error": {"message": "upstream"}})
-            return httpx.Response(200, json=_chat_response('{"a": 7}', "gemini-3.8-flash"))
+            return httpx.Response(200, json=_gemini_response('{"a": 7}', "gemini-3.8-flash"))
 
         text, model = await self._chat(
             handler, ["glm-5v-turbo"],
@@ -1205,35 +1224,68 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((text, model), ('{"a": 8}', "google/gemini-flash-latest"))
         self.assertEqual(seen[0], "api.z.ai")
-        self.assertEqual(seen[1:3], ["generativelanguage.googleapis.com", "generativelanguage.googleapis.com"])
-        self.assertEqual(seen[3], "openrouter.ai")
+        # Each Gemini model: one 503 plus a single retry, then the next model, then OpenRouter.
+        self.assertEqual(seen[1:5], ["generativelanguage.googleapis.com"] * 4)
+        self.assertEqual(seen[5], "openrouter.ai")
+        self.assertEqual(len(seen), 6)
 
-    async def test_gemini_schema_rejection_is_retried_without_response_format(self) -> None:
-        bodies: list[dict] = []
+    async def test_gemini_retries_transient_errors_and_skips_to_next_model_on_404(self) -> None:
+        calls: list[str] = []
+        sleeps = AsyncMock()
 
         def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            bodies.append(body)
-            if "response_format" in body:
-                return httpx.Response(400, json={"error": {"message": "Invalid JSON schema in response_format"}})
-            return httpx.Response(200, json=_chat_response('{"a": 9}', "gemini-3.8-flash"))
+            model = _gemini_model_from_url(request)
+            calls.append(model)
+            if model == "gemini-3.8-flash":
+                if calls.count(model) == 1:
+                    return httpx.Response(429, json={"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+                return httpx.Response(404, json={"error": {"message": "model not found", "status": "NOT_FOUND"}})
+            return httpx.Response(200, json=_gemini_response('{"a": 9}', "gemini-flash-latest"))
 
-        text, model = await self._chat(handler, ["gemini-3.8-flash"], _llm_env(GEMINI_API_KEY="gem-key"))
-        self.assertEqual((text, model), ('{"a": 9}', "gemini-3.8-flash"))
-        self.assertEqual(len(bodies), 2)
-        self.assertIn("response_format", bodies[0])
-        self.assertNotIn("response_format", bodies[1])
-        self.assertEqual(bodies[1]["model"], "gemini-3.8-flash")
+        env = _llm_env(GEMINI_API_KEY="gem-key")
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._retry_sleep", new=sleeps):
+            text, model = await _openrouter_chat(
+                api_key="gem-key",
+                models=["gemini-3.8-flash", "gemini-flash-latest"],
+                messages=[{"role": "system", "content": "Sistem"}, {"role": "user", "content": "Ürün"}],
+                response_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+                schema_name="test_schema",
+                max_tokens=100,
+            )
+        self.assertEqual((text, model), ('{"a": 9}', "gemini-flash-latest"))
+        # 429 -> one retry (1.5 s) -> 404 -> straight to the next model, no further retry.
+        self.assertEqual(calls, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-flash-latest"])
+        sleeps.assert_awaited_once_with(1.5)
+
+    async def test_gemini_blocked_or_empty_reply_moves_to_next_model(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            model = _gemini_model_from_url(request)
+            calls.append(model)
+            if model == "gemini-3.8-flash":
+                return httpx.Response(200, json={"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []})
+            return httpx.Response(200, json=_gemini_response('{"a": 3}', "gemini-flash-latest"))
+
+        text, model = await self._chat(handler, ["gemini-3.8-flash", "gemini-flash-latest"], _llm_env(GEMINI_API_KEY="gem-key"))
+        self.assertEqual((text, model), ('{"a": 3}', "gemini-flash-latest"))
+        self.assertEqual(calls, ["gemini-3.8-flash", "gemini-flash-latest"])
 
     async def test_gemini_primary_falls_back_to_zai_vision_chain_for_images(self) -> None:
         seen: list[tuple[str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
-            seen.append((request.url.host, body["model"]))
             if request.url.host == "api.z.ai":
+                seen.append((request.url.host, body["model"]))
                 self.assertEqual(body["thinking"], {"type": "disabled"})
                 return httpx.Response(200, json=_chat_response('{"a": 4}', "glm-5v-turbo"))
+            seen.append((request.url.host, _gemini_model_from_url(request)))
+            parts = body["contents"][0]["parts"]
+            self.assertEqual(parts[0], {"text": "Evsaf"})
+            self.assertEqual(parts[1], {"inlineData": {"mimeType": "image/png", "data": "AAAA"}})
             return httpx.Response(503, json={"error": {"message": "down"}})
 
         env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", LLM_PRIMARY_PROVIDER="gemini")
@@ -1252,17 +1304,18 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
                 max_tokens=100,
             )
         self.assertEqual((text, model), ('{"a": 4}', "glm-5v-turbo"))
-        self.assertEqual(seen[:2], [("generativelanguage.googleapis.com", "gemini-3.8-flash"), ("generativelanguage.googleapis.com", "gemini-flash-latest")])
-        self.assertEqual(seen[2], ("api.z.ai", "glm-5v-turbo"))
+        gemini_calls = [model for host, model in seen if host == "generativelanguage.googleapis.com"]
+        self.assertEqual(gemini_calls, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-latest"])
+        self.assertEqual(seen[-1], ("api.z.ai", "glm-5v-turbo"))
 
     async def test_gemini_primary_text_fallback_uses_zai_text_models(self) -> None:
         seen: list[tuple[str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            seen.append((request.url.host, body["model"]))
             if request.url.host == "api.z.ai":
+                seen.append((request.url.host, json.loads(request.content)["model"]))
                 return httpx.Response(200, json=_chat_response('{"a": 6}', "glm-5.3"))
+            seen.append((request.url.host, _gemini_model_from_url(request)))
             return httpx.Response(503, json={"error": {"message": "down"}})
 
         text, model = await self._chat(
@@ -1300,6 +1353,11 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
+            if request.url.host == "generativelanguage.googleapis.com":
+                has_image = any("inlineData" in part for part in body["contents"][0]["parts"])
+                seen.append((request.url.host, _gemini_model_from_url(request), has_image))
+                self.assertIn("systemInstruction", body)
+                return httpx.Response(200, json=_gemini_response('```json\n{"ok": true, "seen": "Kırmızı"}\n```', "gemini-3.8-flash"))
             has_image = any(
                 isinstance(part, dict) and part.get("type") == "image_url"
                 for part in (body["messages"][1]["content"] if isinstance(body["messages"][1]["content"], list) else [])
@@ -1307,12 +1365,8 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             seen.append((request.url.host, body["model"], has_image))
             if request.url.host == "api.z.ai":
                 return httpx.Response(500, json={"error": {"message": "upstream down"}})
-            if request.url.host == "generativelanguage.googleapis.com" and "response_format" in body:
-                return httpx.Response(400, json={"error": {"message": "schema not supported"}})
-            if request.url.host == "openrouter.ai":
-                # Echoes the prompt without looking at the image: must be reported unhealthy.
-                return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
-            return httpx.Response(200, json=_chat_response('```json\n{"ok": true, "seen": "Kırmızı"}\n```', body["model"]))
+            # OpenRouter echoes the prompt without looking at the image: must be reported unhealthy.
+            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
 
         env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key", LLM_PRIMARY_PROVIDER="zai", LLM_FALLBACK_TO_OPENROUTER="1")  # gitleaks:allow
         with patch.dict(os.environ, env, clear=True), patch(
@@ -1329,7 +1383,8 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(by_provider["zai"]["ok"])
         self.assertIn("HTTP 500", by_provider["zai"]["error"])
         self.assertTrue(by_provider["gemini"]["ok"])
-        self.assertIn("schema not supported", by_provider["gemini"]["schema_rejected"])
+        self.assertEqual(by_provider["gemini"]["resolved_model"], "gemini-3.8-flash")
+        self.assertEqual(by_provider["gemini"]["host"], "generativelanguage.googleapis.com")
         self.assertFalse(by_provider["openrouter"]["ok"])
         self.assertIn("görsel işlenmedi", by_provider["openrouter"]["error"])
         self.assertTrue(all(has_image for _, _, has_image in seen))
