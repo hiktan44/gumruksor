@@ -596,9 +596,17 @@ _OPENROUTER_MODEL_RE = re.compile(r"^~?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 _ZAI_HOST_SUFFIXES = ("z.ai", "bigmodel.cn")
-# Google Gemini'nin OpenAI uyumlu ucu: chat/completions, image_url ve JSON modu destekler.
+# Google Gemini API koku. Canli cagrilar yerel generateContent ucunu kullanir
+# (/v1beta/models/{model}:generateContent); "/openai" son eki gecmis yapilandirmalarla
+# uyum icin kabul edilir ve URL uretilirken atilir.
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 _GEMINI_HOST = "generativelanguage.googleapis.com"
+# productanaliz projesinde canlida calistigi dogrulanan Gemini cagri bicimi:
+# systemInstruction + inlineData gorselleri, yanit metninden JSON ayiklama,
+# 429/5xx icin kisa aralikli yeniden deneme, 404 veya tekrarlayan 503'te sonraki model.
+_GEMINI_USER_AGENT = "aistudio-build"
+_GEMINI_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_GEMINI_RETRY_DELAYS_SECONDS = (1.5, 3.0, 6.0)
 # Gemini Flash cok kipli (gorsel + metin); ayni zincir her gorevde kullanilir.
 # "gemini-flash-latest" takma adi Google tarafinda hep en guncel Flash surumune cozulur.
 _GEMINI_DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
@@ -837,20 +845,16 @@ def _openrouter_payload(
     # Strip credentials and personal contact data before any provider sees it.
     safe_messages = redact_data(messages, contact_data=True)
     strict_schema = _strict_json_schema(response_schema)
-    if provider in {"zai", "gemini"}:
-        # Z.ai takes JSON-object mode; Gemini's OpenAI-compatible endpoint documents
-        # json_schema (a 400 on the schema is retried without response_format). The
-        # schema is also stated in the system message and the reply is validated
-        # with Pydantic. Thinking tokens count against max_tokens on both.
-        response_format: dict[str, Any] = {"type": "json_object"}
-        if provider == "gemini":
-            response_format = {"type": "json_schema", "json_schema": {"name": schema_name, "schema": strict_schema}}
+    if provider == "zai":
+        # Z.ai takes JSON-object mode; the schema is also stated in the system
+        # message and the reply is validated with Pydantic. Thinking tokens count
+        # against max_tokens. (Gemini uses its native API: see _gemini_native_payload.)
         return {
             "models": models,
             "messages": _with_schema_instruction(
                 safe_messages, _schema_instruction(schema_name, strict_schema)
             ),
-            "response_format": response_format,
+            "response_format": {"type": "json_object"},
             "max_tokens": max_tokens + _ZAI_THINKING_TOKEN_ALLOWANCE,
             "stream": False,
         }
@@ -902,11 +906,6 @@ def _model_payload(base_payload: dict[str, Any], model: str, provider: str) -> d
     if provider == "zai" and _zai_is_text_reasoning_model(model):
         # GLM-5.x thinking cannot be disabled; keep it short.
         payload["reasoning_effort"] = os.environ.get("ZAI_REASONING_EFFORT", "low").strip() or "low"
-    if provider == "gemini":
-        # Gemini 3.x thinks by default; low effort keeps vision extraction fast.
-        effort = os.environ.get("GEMINI_REASONING_EFFORT", "low").strip().lower() or "low"
-        if effort in {"low", "medium", "high"}:
-            payload["reasoning_effort"] = effort
     if provider == "zai" and _zai_is_vision_model(model):
         # Gorsel modellerde "dusunme" adimi yaniti dakikalarca uzatabiliyor; evsaf
         # cikarimi icin gerekli degil. ZAI_VISION_THINKING=enabled ile acilabilir.
@@ -1121,6 +1120,146 @@ async def _retry_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+def _gemini_generate_url(base_url: str, model: str) -> str:
+    """Native generateContent URL for one model (accepts the legacy '/openai' base)."""
+    root = base_url.rstrip("/")
+    if root.endswith("/openai"):
+        root = root[: -len("/openai")]
+    return f"{root}/models/{model}:generateContent"
+
+
+def _split_data_url(url: str) -> tuple[str, str]:
+    match = re.match(r"^data:([\w.+-]+/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$", str(url or ""))
+    if not match:
+        raise ValueError("Gemini görsel girdisi yalnızca base64 veri adresi (data URL) olabilir.")
+    return match.group(1), re.sub(r"\s+", "", match.group(2))
+
+
+def _gemini_parts(content: Any) -> list[dict[str, Any]]:
+    """Map OpenAI-style message content to Gemini parts (text + inlineData)."""
+    if isinstance(content, str):
+        return [{"text": content}]
+    parts: list[dict[str, Any]] = []
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            if kind in {"text", "output_text"}:
+                parts.append({"text": str(item.get("text", ""))})
+            elif kind == "image_url":
+                image = item.get("image_url")
+                url = image.get("url", "") if isinstance(image, dict) else str(image or "")
+                mime_type, data = _split_data_url(url)
+                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+    return parts
+
+
+def _gemini_native_payload(
+    *,
+    messages: list[dict[str, Any]],
+    response_schema: dict[str, Any],
+    schema_name: str,
+) -> dict[str, Any]:
+    """Build the native generateContent body: systemInstruction + contents.
+
+    Mirrors the request shape proven in production by productanaliz: no
+    response_format / reasoning knobs; the JSON contract lives in the system
+    instruction and the reply is parsed and validated on our side.
+    """
+    safe_messages = redact_data(messages, contact_data=True)
+    prepared = _with_schema_instruction(
+        safe_messages, _schema_instruction(schema_name, _strict_json_schema(response_schema))
+    )
+    system_parts: list[dict[str, Any]] = []
+    contents: list[dict[str, Any]] = []
+    for message in prepared:
+        role = message.get("role")
+        parts = _gemini_parts(message.get("content"))
+        if not parts:
+            continue
+        if role == "system":
+            system_parts.extend(parts)
+        elif role in {"user", "assistant", "model"}:
+            contents.append({"role": "model" if role in {"assistant", "model"} else "user", "parts": parts})
+    payload: dict[str, Any] = {"contents": contents}
+    if system_parts:
+        payload["systemInstruction"] = {"parts": system_parts}
+    return payload
+
+
+def _gemini_headers(api_key: str) -> dict[str, str]:
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+        "User-Agent": _GEMINI_USER_AGENT,
+    }
+    for name, value in headers.items():
+        try:
+            value.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ValueError(f"Gemini HTTP başlığı ASCII uyumlu değil: {name}") from exc
+    return headers
+
+
+async def _post_gemini_generate(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    api_key: str,
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """POST one generateContent request; 429/5xx are retried briefly like productanaliz.
+
+    A 503 is retried only once (Google's overload signal), 404 is returned at
+    once so the chain moves to the next model, and the last attempt's response
+    is returned for the caller to report.
+    """
+    headers = _gemini_headers(api_key)
+    attempt = 0
+    while True:
+        response = await client.post(url, headers=headers, json=payload)
+        status = response.status_code
+        retryable = status in _GEMINI_RETRY_STATUSES and attempt < len(_GEMINI_RETRY_DELAYS_SECONDS)
+        if status == 503 and attempt > 0:
+            retryable = False
+        if not retryable:
+            return response
+        await _retry_sleep(_GEMINI_RETRY_DELAYS_SECONDS[attempt])
+        attempt += 1
+
+
+def _gemini_response_text(body: Any) -> str:
+    """Join the text parts of the first candidate; raise ValueError when blocked/empty."""
+    if not isinstance(body, dict):
+        raise ValueError("Gemini yanıtı JSON nesnesi değil")
+    feedback = body.get("promptFeedback") or {}
+    if isinstance(feedback, dict) and feedback.get("blockReason"):
+        raise ValueError(f"istek Gemini tarafından engellendi ({feedback.get('blockReason')})")
+    candidates = body.get("candidates") or []
+    if not candidates or not isinstance(candidates[0], dict):
+        raise ValueError("Gemini aday yanıt döndürmedi")
+    first = candidates[0]
+    content = first.get("content") or {}
+    parts = content.get("parts") if isinstance(content, dict) else None
+    text = "\n".join(
+        str(part.get("text", ""))
+        for part in (parts or [])
+        if isinstance(part, dict) and part.get("text") and not part.get("thought")
+    ).strip()
+    if not text:
+        raise ValueError(f"Gemini boş yanıt döndürdü (finishReason={first.get('finishReason') or 'bilinmiyor'})")
+    return text
+
+
+def _gemini_usage(body: dict[str, Any]) -> tuple[int, int, int]:
+    usage = body.get("usageMetadata") or {}
+    prompt_tok = int(usage.get("promptTokenCount") or 0)
+    comp_tok = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
+    total_tok = int(usage.get("totalTokenCount") or (prompt_tok + comp_tok))
+    return prompt_tok, comp_tok, total_tok
+
+
 async def _post_chat_completion(
     client: httpx.AsyncClient,
     *,
@@ -1210,17 +1349,25 @@ async def _run_model_chain(
     deadline: float,
 ) -> tuple[str, str]:
     """Try each model in order until one returns usable content or the deadline passes."""
+    gemini = provider == "gemini"
     url = f"{base_url}/chat/completions"
     validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
-    base_payload = _openrouter_payload(
-        models=models,
-        messages=messages,
-        response_schema=response_schema,
-        schema_name=schema_name,
-        max_tokens=max_tokens,
-        provider=provider,
-    )
-    headers = _openrouter_headers(api_key, provider)
+    if gemini:
+        gemini_payload = _gemini_native_payload(
+            messages=messages, response_schema=response_schema, schema_name=schema_name
+        )
+        base_payload: dict[str, Any] = {}
+        headers: dict[str, str] = {}
+    else:
+        base_payload = _openrouter_payload(
+            models=models,
+            messages=messages,
+            response_schema=response_schema,
+            schema_name=schema_name,
+            max_tokens=max_tokens,
+            provider=provider,
+        )
+        headers = _openrouter_headers(api_key, provider)
     failures: list[str] = []
     loop = asyncio.get_running_loop()
     async with httpx.AsyncClient(timeout=_llm_request_timeout()) as client:
@@ -1229,45 +1376,21 @@ async def _run_model_chain(
             if remaining <= 0:
                 failures.append(f"{model}: süre doldu")
                 break
-            payload = _model_payload(base_payload, model, provider)
+            if gemini:
+                model_url = _gemini_generate_url(base_url, model)
+                validate_outbound_url(model_url, allowed_hosts={(urlsplit(model_url).hostname or "").lower()})
+                request = _post_gemini_generate(client, url=model_url, api_key=api_key, payload=gemini_payload)
+            else:
+                payload = _model_payload(base_payload, model, provider)
+                request = _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider)
             try:
-                response = await asyncio.wait_for(
-                    _post_chat_completion(
-                        client,
-                        url=url,
-                        headers=headers,
-                        payload=payload,
-                        provider=provider,
-                    ),
-                    timeout=remaining,
-                )
+                response = await asyncio.wait_for(request, timeout=remaining)
             except asyncio.TimeoutError:
                 failures.append(f"{model}: zaman aşımı")
                 break
             except httpx.RequestError as exc:
                 failures.append(f"{model}: bağlantı hatası ({type(exc).__name__})")
                 continue
-            if (
-                not response.is_success
-                and provider == "gemini"
-                and response.status_code == 400
-                and "response_format" in payload
-            ):
-                # Some schema features are rejected by Gemini's structured output; the
-                # system message already carries the schema, so retry in free JSON mode.
-                failures.append(f"{model}: HTTP 400 · {_openrouter_error_detail(response)} (şemasız yeniden denendi)")
-                payload = {key: value for key, value in payload.items() if key != "response_format"}
-                try:
-                    response = await asyncio.wait_for(
-                        _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
-                        timeout=max(deadline - loop.time(), 0.1),
-                    )
-                except asyncio.TimeoutError:
-                    failures.append(f"{model}: zaman aşımı")
-                    break
-                except httpx.RequestError as exc:
-                    failures.append(f"{model}: bağlantı hatası ({type(exc).__name__})")
-                    continue
             if not response.is_success:
                 failures.append(
                     f"{model}: HTTP {response.status_code} · {_openrouter_error_detail(response)}"
@@ -1275,20 +1398,28 @@ async def _run_model_chain(
                 continue
             try:
                 body = response.json()
-                content = _openrouter_message_text(body["choices"][0]["message"]["content"])
+                if gemini:
+                    content = _gemini_response_text(body)
+                else:
+                    content = _openrouter_message_text(body["choices"][0]["message"]["content"])
             except (KeyError, IndexError, TypeError, ValueError) as exc:
-                failures.append(f"{model}: geçersiz yanıt ({type(exc).__name__})")
+                detail = str(exc)[:160] if gemini else type(exc).__name__
+                failures.append(f"{model}: geçersiz yanıt ({detail})")
                 continue
             if provider in {"zai", "gemini"}:
                 content = _strip_json_fences(content)
                 if not content:
                     failures.append(f"{model}: boş yanıt")
                     continue
-            usage_data = body.get("usage") or {}
-            resolved_m = str(body.get("model") or model)
-            prompt_tok = int(usage_data.get("prompt_tokens") or 0)
-            comp_tok = int(usage_data.get("completion_tokens") or 0)
-            tot_tok = int(usage_data.get("total_tokens") or (prompt_tok + comp_tok))
+            if gemini:
+                resolved_m = str(body.get("modelVersion") or model)
+                prompt_tok, comp_tok, tot_tok = _gemini_usage(body)
+            else:
+                usage_data = body.get("usage") or {}
+                resolved_m = str(body.get("model") or model)
+                prompt_tok = int(usage_data.get("prompt_tokens") or 0)
+                comp_tok = int(usage_data.get("completion_tokens") or 0)
+                tot_tok = int(usage_data.get("total_tokens") or (prompt_tok + comp_tok))
             if prompt_tok == 0 and comp_tok == 0:
                 prompt_tok = max(10, len(str(payload)) // 4)
                 comp_tok = max(5, len(content) // 4)
@@ -1429,33 +1560,32 @@ async def _diagnose_one(
         {"role": "system", "content": "Sen bir bağlantı testisin. Yalnızca istenen JSON nesnesini döndür."},
         {"role": "user", "content": user_content},
     ]
-    base_payload = _openrouter_payload(
-        models=[model],
-        messages=messages,
-        response_schema=_DIAGNOSTIC_SCHEMA,
-        schema_name="diagnostic",
-        max_tokens=60,
-        provider=provider,
-    )
-    payload = _model_payload(base_payload, model, provider)
-    headers = _openrouter_headers(api_key, provider)
+    gemini = provider == "gemini"
+    if gemini:
+        url = _gemini_generate_url(base_url, model)
+        validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
+        payload = _gemini_native_payload(messages=messages, response_schema=_DIAGNOSTIC_SCHEMA, schema_name="diagnostic")
+        headers: dict[str, str] = {}
+    else:
+        base_payload = _openrouter_payload(
+            models=[model],
+            messages=messages,
+            response_schema=_DIAGNOSTIC_SCHEMA,
+            schema_name="diagnostic",
+            max_tokens=60,
+            provider=provider,
+        )
+        payload = _model_payload(base_payload, model, provider)
+        headers = _openrouter_headers(api_key, provider)
     result: dict[str, Any] = {"provider": provider, "model": model, "host": urlsplit(url).hostname, "ok": False}
     started = time.monotonic()
-    deadline = started + timeout_seconds
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
-            response = await asyncio.wait_for(
-                _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
-                timeout=timeout_seconds,
-            )
-            if provider == "gemini" and response.status_code == 400 and "response_format" in payload:
-                # One deadline covers both attempts so a provider never exceeds timeout_seconds.
-                result["schema_rejected"] = _openrouter_error_detail(response)
-                payload = {key: value for key, value in payload.items() if key != "response_format"}
-                response = await asyncio.wait_for(
-                    _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
-                    timeout=max(deadline - time.monotonic(), 0.1),
-                )
+            if gemini:
+                request = _post_gemini_generate(client, url=url, api_key=api_key, payload=payload)
+            else:
+                request = _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider)
+            response = await asyncio.wait_for(request, timeout=timeout_seconds)
     except asyncio.TimeoutError:
         result["error"] = f"zaman aşımı ({timeout_seconds:.0f} sn)"
         result["latency_ms"] = int((time.monotonic() - started) * 1000)
@@ -1471,19 +1601,25 @@ async def _diagnose_one(
         return result
     try:
         body = response.json()
-        content = _strip_json_fences(_openrouter_message_text(body["choices"][0]["message"]["content"]))
-        resolved_model = str(body.get("model") or model)
+        if gemini:
+            content = _strip_json_fences(_gemini_response_text(body))
+            resolved_model = str(body.get("modelVersion") or model)
+            prompt_tok, comp_tok, total_tok = _gemini_usage(body)
+        else:
+            content = _strip_json_fences(_openrouter_message_text(body["choices"][0]["message"]["content"]))
+            resolved_model = str(body.get("model") or model)
+            usage_data = body.get("usage") or {}
+            prompt_tok = int(usage_data.get("prompt_tokens") or 0)
+            comp_tok = int(usage_data.get("completion_tokens") or 0)
+            total_tok = int(usage_data.get("total_tokens") or (prompt_tok + comp_tok))
         result["resolved_model"] = resolved_model
         result["reply"] = content[:200]
-        usage_data = body.get("usage") or {}
-        prompt_tok = int(usage_data.get("prompt_tokens") or 0)
-        comp_tok = int(usage_data.get("completion_tokens") or 0)
         _notify_llm_usage(
             operation="diagnostic_vision" if vision else "diagnostic_text",
             model=resolved_model,
             prompt_tokens=prompt_tok,
             completion_tokens=comp_tok,
-            total_tokens=int(usage_data.get("total_tokens") or (prompt_tok + comp_tok)),
+            total_tokens=total_tok,
             cost_usd=estimate_llm_cost(resolved_model, prompt_tok, comp_tok),
         )
         parsed = json.loads(content)

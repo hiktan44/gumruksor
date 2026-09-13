@@ -886,6 +886,15 @@ async def web_consultation_requests(request: Request):
         return _auth_error(exc)
 
 
+_OPAQUE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _opaque_identifier(value: Any) -> str:
+    """Accept only a compact server-issued id (UUID/slug); anything else becomes empty."""
+    text = str(value or "").strip()
+    return text if _OPAQUE_ID_RE.fullmatch(text) else ""
+
+
 @mcp.custom_route("/api/consultation-requests", methods=["POST"])
 async def web_create_consultation_request(request: Request):
     limited = _rate_limit_response(request, "consultation-request", limit=10, window_seconds=86_400)
@@ -898,15 +907,19 @@ async def web_create_consultation_request(request: Request):
         if not isinstance(body, dict):
             raise AccountError("Danışmanlık talebi geçersiz.")
         guard_data(body, path="danışmanlık talebi")
+        # Identifiers are server-issued UUIDs, not prose: read them before contact
+        # redaction, whose phone pattern can otherwise mangle a digit run inside a UUID.
+        consultant_id = _opaque_identifier(body.get("consultant_id"))
+        dossier_id = _opaque_identifier(body.get("dossier_id"))
         body = redact_data(body, contact_data=True)
         result = account_service.create_consultation_request(
             user,
-            consultant_id=str(body.get("consultant_id", "")),
+            consultant_id=consultant_id,
             subject=str(body.get("subject", "")),
             message=str(body.get("message", "")),
             result=body.get("result") if isinstance(body.get("result"), dict) else {},
             share_consent=body.get("share_consent") is True,
-            dossier_id=str(body.get("dossier_id", "")) or None,
+            dossier_id=dossier_id or None,
         )
         asyncio.create_task(_notify_consultation(str(result.get("id", "")), "new_request", str(body.get("message", "")), recipient_role="consultant"))
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
