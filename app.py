@@ -1029,6 +1029,27 @@ async def web_admin_llm_expenses(request: Request):
         return _auth_error(exc, status_code=403)
 
 
+@mcp.custom_route("/api/admin/llm-diagnostics", methods=["GET"])
+async def web_admin_llm_diagnostics(request: Request):
+    """Live provider connectivity test (admin only); never returns secrets."""
+    limited = _rate_limit_response(request, "admin-llm-diagnostics", limit=6, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    vision = request.query_params.get("vision", "").strip().lower() in {"1", "true", "yes"}
+    try:
+        from customs_advisor import diagnose_llm_providers
+
+        report = await diagnose_llm_providers(vision=vision)
+    except Exception:
+        logger.exception("LLM diagnostics failed")
+        return JSONResponse({"error": "Bağlantı testi çalıştırılamadı."}, status_code=500)
+    return JSONResponse(redact_data(report), headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/admin/payments", methods=["GET"])
 async def web_admin_payments(request: Request):
     try:

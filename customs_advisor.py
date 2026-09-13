@@ -601,7 +601,9 @@ _GEMINI_HOST = "generativelanguage.googleapis.com"
 # Gemini Flash cok kipli (gorsel + metin); ayni zincir her gorevde kullanilir.
 # "gemini-flash-latest" takma adi Google tarafinda hep en guncel Flash surumune cozulur.
 _GEMINI_DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
-_LLM_PROVIDERS = ("zai", "gemini", "openrouter")
+# Birincil saglayici secim sirasi (LLM_PRIMARY_PROVIDER yoksa): once dogrudan
+# Google Gemini, sonra Z.ai, en son OpenRouter.
+_LLM_PROVIDERS = ("gemini", "zai", "openrouter")
 # GLM-5.x always thinks; reasoning tokens count against max_tokens.
 _ZAI_THINKING_TOKEN_ALLOWANCE = 4000
 _ZAI_RETRY_DELAYS_SECONDS = (3.0, 6.0)
@@ -639,7 +641,7 @@ def _llm_base_url() -> str:
     """Resolve the OpenAI-compatible base URL.
 
     Priority: LLM_BASE_URL > LLM_PRIMARY_PROVIDER > first configured key in the
-    order Z.ai, Google Gemini, OpenRouter.
+    order Google Gemini, Z.ai, OpenRouter.
     """
     configured = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
     if configured:
@@ -947,7 +949,11 @@ def _fallback_enabled(provider: str) -> bool:
         "zai": "LLM_FALLBACK_TO_ZAI",
         "openrouter": "LLM_FALLBACK_TO_OPENROUTER",
     }.get(provider, "")
-    return os.environ.get(name, "1").strip().lower() not in {"0", "false", "no", "off"} if name else False
+    if not name:
+        return False
+    # OpenRouter yedegi varsayilan olarak kapali; acmak icin LLM_FALLBACK_TO_OPENROUTER=1.
+    default = "0" if provider == "openrouter" else "1"
+    return os.environ.get(name, default).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _openrouter_fallback_enabled() -> bool:
@@ -1328,6 +1334,176 @@ async def _openrouter_chat(
             failures.extend(f"{name}:{item}" for item in exc.failures)
     logger.warning("LLM chain exhausted (%s, %.1fs): %s", schema_name, loop.time() - started, " | ".join(failures)[:1500])
     raise RuntimeError(_LLM_UNAVAILABLE_MESSAGE)
+
+
+# 48x48 solid red PNG: the probe asks for the dominant colour so a provider that
+# ignores the image (or a gateway echoing the prompt) cannot pass the check.
+_DIAGNOSTIC_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OAQ0AAAQAMGTQP5kwapj9CZ7THZdUHCMkJCQk"  # gitleaks:allow
+    "JCQkJCQkJCQkJCQkJCQkJCQkJCT0ObTRkAFk9MhxZgAAAABJRU5ErkJggg=="  # gitleaks:allow
+)
+_DIAGNOSTIC_EXPECTED_COLOURS = ("kırmızı", "kirmizi", "red", "kızıl", "kizil")
+_DIAGNOSTIC_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}, "seen": {"type": "string"}},
+    "required": ["ok", "seen"],
+}
+
+
+async def _diagnose_one(
+    *,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    vision: bool,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Send one tiny request to a provider/model and report status, latency and detail."""
+    url = f"{base_url}/chat/completions"
+    validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
+    user_content: Any = 'Sadece {"ok": true, "seen": "metin"} döndür.'
+    if vision:
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    "Görseldeki baskın rengi Türkçe tek kelimeyle belirle ve sadece "
+                    '{"ok": true, "seen": "<renk>"} döndür.'
+                ),
+            },
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_DIAGNOSTIC_PNG_BASE64}"}},
+        ]
+    messages = [
+        {"role": "system", "content": "Sen bir bağlantı testisin. Yalnızca istenen JSON nesnesini döndür."},
+        {"role": "user", "content": user_content},
+    ]
+    base_payload = _openrouter_payload(
+        models=[model],
+        messages=messages,
+        response_schema=_DIAGNOSTIC_SCHEMA,
+        schema_name="diagnostic",
+        max_tokens=60,
+        provider=provider,
+    )
+    payload = _model_payload(base_payload, model, provider)
+    headers = _openrouter_headers(api_key, provider)
+    result: dict[str, Any] = {"provider": provider, "model": model, "host": urlsplit(url).hostname, "ok": False}
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
+            response = await asyncio.wait_for(
+                _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
+                timeout=timeout_seconds,
+            )
+            if provider == "gemini" and response.status_code == 400 and "response_format" in payload:
+                # One deadline covers both attempts so a provider never exceeds timeout_seconds.
+                result["schema_rejected"] = _openrouter_error_detail(response)
+                payload = {key: value for key, value in payload.items() if key != "response_format"}
+                response = await asyncio.wait_for(
+                    _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
+                    timeout=max(deadline - time.monotonic(), 0.1),
+                )
+    except asyncio.TimeoutError:
+        result["error"] = f"zaman aşımı ({timeout_seconds:.0f} sn)"
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return result
+    except httpx.RequestError as exc:
+        result["error"] = f"bağlantı hatası ({type(exc).__name__})"
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return result
+    result["latency_ms"] = int((time.monotonic() - started) * 1000)
+    result["status"] = response.status_code
+    if not response.is_success:
+        result["error"] = f"HTTP {response.status_code} · {_openrouter_error_detail(response)}"
+        return result
+    try:
+        body = response.json()
+        content = _strip_json_fences(_openrouter_message_text(body["choices"][0]["message"]["content"]))
+        resolved_model = str(body.get("model") or model)
+        result["resolved_model"] = resolved_model
+        result["reply"] = content[:200]
+        usage_data = body.get("usage") or {}
+        prompt_tok = int(usage_data.get("prompt_tokens") or 0)
+        comp_tok = int(usage_data.get("completion_tokens") or 0)
+        _notify_llm_usage(
+            operation="diagnostic_vision" if vision else "diagnostic_text",
+            model=resolved_model,
+            prompt_tokens=prompt_tok,
+            completion_tokens=comp_tok,
+            total_tokens=int(usage_data.get("total_tokens") or (prompt_tok + comp_tok)),
+            cost_usd=estimate_llm_cost(resolved_model, prompt_tok, comp_tok),
+        )
+        parsed = json.loads(content)
+        if not (isinstance(parsed, dict) and bool(parsed.get("ok"))):
+            result["error"] = "yanıt beklenen JSON değil"
+        elif vision:
+            seen = str(parsed.get("seen") or "").strip().lower()
+            if any(colour in seen for colour in _DIAGNOSTIC_EXPECTED_COLOURS):
+                result["ok"] = True
+            else:
+                result["error"] = f"görsel işlenmedi (beklenen kırmızı, gelen: {seen[:40] or 'boş'})"
+        else:
+            result["ok"] = True
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        result["error"] = f"geçersiz yanıt ({type(exc).__name__})"
+    return result
+
+
+async def diagnose_llm_providers(*, vision: bool = False, timeout_seconds: float = 25.0) -> dict[str, Any]:
+    """Live connectivity report for the configured LLM providers (admin diagnostics).
+
+    Runs one tiny request against the primary chain's first model and each
+    fallback provider's first model. Secrets are never included; only booleans
+    for key presence, model ids, HTTP status, latency and short error text.
+    """
+    base_url = _llm_base_url()
+    primary = _llm_provider(base_url)
+    env_name = "OPENROUTER_VISION_MODELS" if vision else "OPENROUTER_CUSTOMS_MODELS"
+    primary_models = _openrouter_models(env_name)
+    fallbacks = _fallback_providers(primary, vision=vision)
+    report: dict[str, Any] = {
+        "mode": "vision" if vision else "text",
+        "primary": primary,
+        "primary_host": urlsplit(base_url).hostname,
+        "primary_override": os.environ.get("LLM_PRIMARY_PROVIDER", "").strip().lower() or None,
+        "keys": {name: bool(_provider_api_key(name)) for name in _LLM_PROVIDERS},
+        "chains": {
+            "primary": primary_models,
+            "fallbacks": [{"provider": name, "models": models} for name, _, _, models in fallbacks],
+        },
+        "timeouts": {
+            "request_seconds": _llm_request_timeout().read,
+            "primary_budget_seconds": _llm_primary_budget(_llm_total_deadline()),
+            "total_deadline_seconds": _llm_total_deadline(),
+        },
+        "checks": [],
+    }
+    targets: list[tuple[str, str, str, list[str]]] = []
+    # Same key resolution as live calls (covers LLM_BASE_URL gateways with a Z.ai/Gemini key).
+    primary_key = _llm_api_key_value()
+    if primary_key:
+        targets.append((primary, base_url, primary_key, primary_models))
+    else:
+        report["checks"].append({"provider": primary, "ok": False, "error": "API anahtarı tanımlı değil"})
+    targets.extend(fallbacks)
+    for provider, url, key, models in targets:
+        if not models:
+            report["checks"].append({"provider": provider, "ok": False, "error": "model listesi boş"})
+            continue
+        report["checks"].append(
+            await _diagnose_one(
+                provider=provider,
+                base_url=url,
+                api_key=key,
+                model=models[0],
+                vision=vision,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    report["healthy"] = any(check.get("ok") for check in report["checks"])
+    return report
 
 
 _VISION_PROMPT = """
