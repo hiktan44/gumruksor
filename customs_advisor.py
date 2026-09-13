@@ -1330,9 +1330,13 @@ async def _openrouter_chat(
     raise RuntimeError(_LLM_UNAVAILABLE_MESSAGE)
 
 
+# 48x48 solid red PNG: the probe asks for the dominant colour so a provider that
+# ignores the image (or a gateway echoing the prompt) cannot pass the check.
 _DIAGNOSTIC_PNG_BASE64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="  # gitleaks:allow
+    "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OAQ0AAAQAMGTQP5kwapj9CZ7THZdUHCMkJCQk"  # gitleaks:allow
+    "JCQkJCQkJCQkJCQkJCQkJCQkJCT0ObTRkAFk9MhxZgAAAABJRU5ErkJggg=="  # gitleaks:allow
 )
+_DIAGNOSTIC_EXPECTED_COLOURS = ("kırmızı", "kirmizi", "red", "kızıl", "kizil")
 _DIAGNOSTIC_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"ok": {"type": "boolean"}, "seen": {"type": "string"}},
@@ -1355,7 +1359,13 @@ async def _diagnose_one(
     user_content: Any = 'Sadece {"ok": true, "seen": "metin"} döndür.'
     if vision:
         user_content = [
-            {"type": "text", "text": 'Görseli gördüğünü doğrula; sadece {"ok": true, "seen": "görsel"} döndür.'},
+            {
+                "type": "text",
+                "text": (
+                    "Görseldeki baskın rengi Türkçe tek kelimeyle belirle ve sadece "
+                    '{"ok": true, "seen": "<renk>"} döndür.'
+                ),
+            },
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_DIAGNOSTIC_PNG_BASE64}"}},
         ]
     messages = [
@@ -1374,6 +1384,7 @@ async def _diagnose_one(
     headers = _openrouter_headers(api_key, provider)
     result: dict[str, Any] = {"provider": provider, "model": model, "host": urlsplit(url).hostname, "ok": False}
     started = time.monotonic()
+    deadline = started + timeout_seconds
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=10.0)) as client:
             response = await asyncio.wait_for(
@@ -1381,11 +1392,12 @@ async def _diagnose_one(
                 timeout=timeout_seconds,
             )
             if provider == "gemini" and response.status_code == 400 and "response_format" in payload:
+                # One deadline covers both attempts so a provider never exceeds timeout_seconds.
                 result["schema_rejected"] = _openrouter_error_detail(response)
                 payload = {key: value for key, value in payload.items() if key != "response_format"}
                 response = await asyncio.wait_for(
                     _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider),
-                    timeout=timeout_seconds,
+                    timeout=max(deadline - time.monotonic(), 0.1),
                 )
     except asyncio.TimeoutError:
         result["error"] = f"zaman aşımı ({timeout_seconds:.0f} sn)"
@@ -1403,12 +1415,31 @@ async def _diagnose_one(
     try:
         body = response.json()
         content = _strip_json_fences(_openrouter_message_text(body["choices"][0]["message"]["content"]))
-        result["resolved_model"] = str(body.get("model") or model)
+        resolved_model = str(body.get("model") or model)
+        result["resolved_model"] = resolved_model
         result["reply"] = content[:200]
+        usage_data = body.get("usage") or {}
+        prompt_tok = int(usage_data.get("prompt_tokens") or 0)
+        comp_tok = int(usage_data.get("completion_tokens") or 0)
+        _notify_llm_usage(
+            operation="diagnostic_vision" if vision else "diagnostic_text",
+            model=resolved_model,
+            prompt_tokens=prompt_tok,
+            completion_tokens=comp_tok,
+            total_tokens=int(usage_data.get("total_tokens") or (prompt_tok + comp_tok)),
+            cost_usd=estimate_llm_cost(resolved_model, prompt_tok, comp_tok),
+        )
         parsed = json.loads(content)
-        result["ok"] = isinstance(parsed, dict) and bool(parsed.get("ok"))
-        if not result["ok"]:
+        if not (isinstance(parsed, dict) and bool(parsed.get("ok"))):
             result["error"] = "yanıt beklenen JSON değil"
+        elif vision:
+            seen = str(parsed.get("seen") or "").strip().lower()
+            if any(colour in seen for colour in _DIAGNOSTIC_EXPECTED_COLOURS):
+                result["ok"] = True
+            else:
+                result["error"] = f"görsel işlenmedi (beklenen kırmızı, gelen: {seen[:40] or 'boş'})"
+        else:
+            result["ok"] = True
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         result["error"] = f"geçersiz yanıt ({type(exc).__name__})"
     return result
@@ -1444,7 +1475,8 @@ async def diagnose_llm_providers(*, vision: bool = False, timeout_seconds: float
         "checks": [],
     }
     targets: list[tuple[str, str, str, list[str]]] = []
-    primary_key = _provider_api_key(primary)
+    # Same key resolution as live calls (covers LLM_BASE_URL gateways with a Z.ai/Gemini key).
+    primary_key = _llm_api_key_value()
     if primary_key:
         targets.append((primary, base_url, primary_key, primary_models))
     else:

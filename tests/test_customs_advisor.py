@@ -1275,7 +1275,10 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(500, json={"error": {"message": "upstream down"}})
             if request.url.host == "generativelanguage.googleapis.com" and "response_format" in body:
                 return httpx.Response(400, json={"error": {"message": "schema not supported"}})
-            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
+            if request.url.host == "openrouter.ai":
+                # Echoes the prompt without looking at the image: must be reported unhealthy.
+                return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "görsel"}', body["model"]))
+            return httpx.Response(200, json=_chat_response('```json\n{"ok": true, "seen": "Kırmızı"}\n```', body["model"]))
 
         env = _llm_env(ZAI_API_KEY="zai-key", GEMINI_API_KEY="gem-key", OPENROUTER_API_KEY="or-key")
         with patch.dict(os.environ, env, clear=True), patch(
@@ -1293,12 +1296,32 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("HTTP 500", by_provider["zai"]["error"])
         self.assertTrue(by_provider["gemini"]["ok"])
         self.assertIn("schema not supported", by_provider["gemini"]["schema_rejected"])
-        self.assertTrue(by_provider["openrouter"]["ok"])
+        self.assertFalse(by_provider["openrouter"]["ok"])
+        self.assertIn("görsel işlenmedi", by_provider["openrouter"]["error"])
         self.assertTrue(all(has_image for _, _, has_image in seen))
         self.assertEqual(seen[0][:2], ("api.z.ai", "glm-5v-turbo"))
         serialised = json.dumps(report)
         for secret in ("zai-key", "gem-key", "or-key"):
             self.assertNotIn(secret, serialised)
+
+    async def test_diagnostic_calls_are_recorded_and_gateway_key_resolves_like_live_calls(self) -> None:
+        usage: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "metin"}', "gateway-model"))
+
+        env = _llm_env(LLM_BASE_URL="https://gateway.example.com/v1", ZAI_API_KEY="zai-key")
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._LLM_USAGE_HOOK", new=lambda **kwargs: usage.append(kwargs)):
+            report = await customs_advisor.diagnose_llm_providers(vision=False, timeout_seconds=5)
+        self.assertEqual(report["primary"], "openrouter")
+        self.assertEqual(report["primary_host"], "gateway.example.com")
+        self.assertTrue(report["healthy"])
+        self.assertEqual(report["checks"][0]["host"], "gateway.example.com")
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0]["operation"], "diagnostic_text")
+        self.assertEqual(usage[0]["model"], "gateway-model")
 
     async def test_missing_primary_key_is_reported_without_requests(self) -> None:
         calls: list[str] = []
