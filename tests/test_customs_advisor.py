@@ -948,6 +948,31 @@ class LlmResilienceTests(unittest.IsolatedAsyncioTestCase):
                 max_tokens=100,
             )
 
+    async def test_recent_events_record_success_and_exhausted_chain(self) -> None:
+        customs_advisor._LLM_RECENT_EVENTS.clear()
+
+        def ok_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_chat_response('{"a": 1}', "glm-5.3"))
+
+        def failing_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"error": {"message": "upstream down"}})
+
+        env = _llm_env(ZAI_API_KEY="zai-key")  # gitleaks:allow
+        await self._chat(ok_handler, ["glm-5.3"], env)
+        with self.assertRaises(RuntimeError):
+            await self._chat(failing_handler, ["glm-5.3"], env)
+        events = customs_advisor.recent_llm_events()
+        self.assertEqual([event["ok"] for event in events], [False, True])
+        failed, succeeded = events
+        self.assertEqual(failed["operation"], "test_schema")
+        self.assertEqual(failed["provider"], "zai")
+        self.assertIn("HTTP 503", failed["detail"])
+        self.assertIn("upstream down", failed["detail"])
+        self.assertNotIn("zai-key", json.dumps(events))
+        self.assertEqual(succeeded["model"], "glm-5.3")
+        self.assertTrue(succeeded["at"].endswith("+00:00"))
+        customs_advisor._LLM_RECENT_EVENTS.clear()
+
     def test_vision_models_disable_thinking_by_default(self) -> None:
         base = {"models": ["x"], "messages": [], "max_tokens": 10}
         with patch.dict(os.environ, _llm_env(ZAI_API_KEY="zai-key"), clear=True):

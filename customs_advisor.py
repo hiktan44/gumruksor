@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import deque
 import io
 import json
 import logging
@@ -17,7 +18,7 @@ import re
 import sys
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
@@ -25,7 +26,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from control_engine import ImportControlEngine, ImportControlLookupResult
 from classification_evidence import ClassificationEvidenceEngine, ClassificationEvidenceHit
@@ -1163,6 +1164,39 @@ class _ChainExhausted(Exception):
         self.failures = failures
 
 
+# In-memory ring of the latest live LLM calls (success and failure) so an admin
+# can see why an analysis failed without server log access. Provider error
+# text is kept short and never includes API keys; the admin route redacts again.
+_LLM_RECENT_EVENTS: deque[dict[str, Any]] = deque(maxlen=30)
+
+
+def _record_llm_event(
+    *,
+    operation: str,
+    ok: bool,
+    elapsed: float,
+    provider: str | None = None,
+    model: str | None = None,
+    detail: str = "",
+) -> None:
+    _LLM_RECENT_EVENTS.appendleft(
+        {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "operation": operation or "chat",
+            "ok": ok,
+            "elapsed_s": round(elapsed, 1),
+            "provider": provider,
+            "model": model,
+            "detail": str(detail or "")[:1500],
+        }
+    )
+
+
+def recent_llm_events() -> list[dict[str, Any]]:
+    """Newest-first copies of the recent live call records (admin diagnostics)."""
+    return [dict(event) for event in _LLM_RECENT_EVENTS]
+
+
 async def _run_model_chain(
     *,
     base_url: str,
@@ -1299,7 +1333,7 @@ async def _openrouter_chat(
     primary_deadline = started + (_llm_primary_budget(total) if fallbacks else total)
     failures: list[str] = []
     try:
-        return await _run_model_chain(
+        content, resolved = await _run_model_chain(
             base_url=base_url,
             provider=provider,
             api_key=api_key,
@@ -1312,6 +1346,11 @@ async def _openrouter_chat(
         )
     except _ChainExhausted as exc:
         failures.extend(f"{provider}:{item}" for item in exc.failures)
+    else:
+        _record_llm_event(
+            operation=schema_name, ok=True, elapsed=loop.time() - started, provider=provider, model=resolved
+        )
+        return content, resolved
     for name, fallback_url, fallback_key, fallback_models in fallbacks:
         remaining = final_deadline - loop.time()
         if remaining < _LLM_MIN_FALLBACK_SECONDS:
@@ -1319,7 +1358,7 @@ async def _openrouter_chat(
             break
         logger.warning("LLM chain failed (%s); trying %s fallback after: %s", schema_name, name, failures)
         try:
-            return await _run_model_chain(
+            content, resolved = await _run_model_chain(
                 base_url=fallback_url,
                 provider=name,
                 api_key=fallback_key,
@@ -1332,7 +1371,19 @@ async def _openrouter_chat(
             )
         except _ChainExhausted as exc:
             failures.extend(f"{name}:{item}" for item in exc.failures)
-    logger.warning("LLM chain exhausted (%s, %.1fs): %s", schema_name, loop.time() - started, " | ".join(failures)[:1500])
+        else:
+            _record_llm_event(
+                operation=schema_name,
+                ok=True,
+                elapsed=loop.time() - started,
+                provider=name,
+                model=resolved,
+                detail="yedek sağlayıcı kullanıldı; birincil: " + " | ".join(failures),
+            )
+            return content, resolved
+    elapsed = loop.time() - started
+    logger.warning("LLM chain exhausted (%s, %.1fs): %s", schema_name, elapsed, " | ".join(failures)[:1500])
+    _record_llm_event(operation=schema_name, ok=False, elapsed=elapsed, provider=provider, detail=" | ".join(failures))
     raise RuntimeError(_LLM_UNAVAILABLE_MESSAGE)
 
 
@@ -1503,6 +1554,7 @@ async def diagnose_llm_providers(*, vision: bool = False, timeout_seconds: float
             )
         )
     report["healthy"] = any(check.get("ok") for check in report["checks"])
+    report["recent"] = recent_llm_events()
     return report
 
 
@@ -1627,7 +1679,17 @@ async def _request_openrouter_vision_analysis(
         schema_name="product_attributes",
         max_tokens=4000,
     )
-    return _parse_json_object(text), resolved_model
+    try:
+        return _parse_json_object(text), resolved_model
+    except ValueError as exc:
+        _record_llm_event(
+            operation="product_attributes",
+            ok=False,
+            elapsed=0.0,
+            model=resolved_model,
+            detail=f"model yanıtı JSON olarak çözümlenemedi: {exc}",
+        )
+        raise
 
 
 def _missing_information(inquiry: CustomsInquiry) -> list[str]:
@@ -2066,9 +2128,20 @@ class CustomsAdvisor:
         raw.pop("model", None)
         raw.pop("user_confirmation_required", None)
         raw.pop("warning", None)
-        return ProductAttributeAnalysis.model_validate(
-            {**raw, "provider": _llm_provider(), "model": resolved_model}
-        )
+        try:
+            return ProductAttributeAnalysis.model_validate(
+                {**raw, "provider": _llm_provider(), "model": resolved_model}
+            )
+        except ValidationError as exc:
+            first = exc.errors(include_url=False)[0] if exc.errors() else {}
+            _record_llm_event(
+                operation="product_attributes",
+                ok=False,
+                elapsed=0.0,
+                model=resolved_model,
+                detail=f"model yanıtı şemaya uymadı: {first.get('loc')} {first.get('msg')}",
+            )
+            raise
 
     async def classify_product(
         self,

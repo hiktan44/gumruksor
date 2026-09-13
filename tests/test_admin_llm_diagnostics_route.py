@@ -33,6 +33,17 @@ class AdminLlmDiagnosticsRouteTests(unittest.TestCase):
         diagnose.assert_awaited_once_with(vision=True)
         self.assertEqual(response.headers.get("cache-control"), "no-store")
 
+    def test_recent_flag_skips_live_probe(self) -> None:
+        events = [{"at": "2026-09-13T19:00:00+00:00", "operation": "product_attributes", "ok": False, "detail": "gemini:x: HTTP 404"}]
+        with patch.object(web_app, "_require_admin", return_value={"sub": "admin", "email": "admin@example.com"}), patch(
+            "customs_advisor.diagnose_llm_providers", new=AsyncMock()
+        ) as diagnose, patch("customs_advisor.recent_llm_events", return_value=events):
+            response = self.client.get("/api/admin/llm-diagnostics?recent=1")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["mode"], "recent")
+        self.assertEqual(response.json()["recent"][0]["detail"], "gemini:x: HTTP 404")
+        diagnose.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()
