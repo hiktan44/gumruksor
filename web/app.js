@@ -702,6 +702,20 @@ function switchAccountTab(tab) {
   if (tab === "dossiers") loadDossiers();
 }
 
+function hasCapability(feature) {
+  const account = state.auth?.account;
+  if (!account || !Array.isArray(account.capabilities)) return true; // sunucu karar verir
+  return account.capabilities.includes(feature);
+}
+
+function featureUpsellHtml(feature) {
+  const labels = state.featureLabels || {};
+  const label = labels[feature] || "Bu özellik";
+  const plans = (state.plans || []).filter((plan) => (plan.capabilities || []).includes(feature)).map((plan) => plan.name);
+  const target = plans.length ? plans.join(" / ") : "Kurumsal";
+  return `<div class="feature-locked"><p><b>${escapeHtml(label)}</b> mevcut paketinizde yok. <button type="button" class="link-button" data-open-plans>${escapeHtml(target)} paketine geçin</button>.</p></div>`;
+}
+
 function renderAccount(auth) {
   const account = auth.account;
   $("#accountIdentity").textContent = `${auth.user.name || "Kullanıcı"} · ${auth.user.email}`;
@@ -731,6 +745,8 @@ async function openAccount(tab = "summary") {
     const [account, plans] = await Promise.all([fetchJson("/api/account"), fetchJson("/api/plans")]);
     state.auth.account = account;
     state.auth.billing_enabled = plans.billing_enabled;
+    state.plans = plans.plans;
+    state.featureLabels = plans.features || {};
     state.salesEmail = plans.sales_email || state.salesEmail;
     renderAccount(state.auth);
     renderPlans(plans.plans, plans.billing_enabled);
@@ -748,7 +764,8 @@ function renderPlans(plans, billingEnabled) {
         ? `<button type="button" data-buy-plan="${escapeHtml(plan.code)}" data-buy-cycle="monthly">Aylık başlat</button><button class="yearly" type="button" data-buy-plan="${escapeHtml(plan.code)}" data-buy-cycle="yearly">Yıllık · ${numberFormat.format(plan.yearly_price_try)} TL + KDV</button>`
         : `<p class="price-soon">Çevrim içi ödeme yakında açılıyor. Yıllık: ${numberFormat.format(plan.yearly_price_try)} TL + KDV.</p>${salesLink}`)
       : plan.code === "starter" ? '<button type="button" disabled>Mevcut ücretsiz paket</button>' : salesLink;
-    return `<article class="price-card${plan.code === "expert" ? " featured" : ""}"><span>${escapeHtml(plan.code)}</span><h3>${escapeHtml(plan.name)}</h3><div class="price">${escapeHtml(monthly)}${plan.monthly_price_try ? "<small> + KDV / ay</small>" : ""}</div><ul>${plan.features.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><div class="price-actions">${actions}</div></article>`;
+    const current = state.auth?.account?.plan?.code === plan.code ? '<em class="price-current">Mevcut paketiniz</em>' : "";
+    return `<article class="price-card${plan.code === "expert" ? " featured" : ""}"><span>${escapeHtml(plan.code)}</span><h3>${escapeHtml(plan.name)}</h3>${current}<div class="price">${escapeHtml(monthly)}${plan.monthly_price_try ? "<small> + KDV / ay</small>" : ""}</div><ul>${plan.features.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><div class="price-actions">${actions}</div></article>`;
   }).join("");
 }
 
@@ -2643,6 +2660,7 @@ function renderBulkResult(data) {
 
 $("#bulkCalculate")?.addEventListener("click", async () => {
   const output = $("#bulkOutput");
+  if (!hasCapability("bulk_costing")) { output.innerHTML = featureUpsellHtml("bulk_costing"); return; }
   const file = $("#bulkFile")?.files?.[0];
   if (!file) return showToast("Önce bir CSV veya XLSX dosyası seçin.");
   if (file.size > 2 * 1024 * 1024) return showToast("Dosya 2 MB sınırını aşıyor.");
@@ -2667,6 +2685,7 @@ $("#bulkCalculate")?.addEventListener("click", async () => {
 
 $("#scenarioCompare").addEventListener("click", async () => {
   const output = $("#scenarioOutput");
+  if (!hasCapability("scenario_compare")) { output.innerHTML = featureUpsellHtml("scenario_compare"); return; }
   const gtip = $("#tariffGtip").value.trim();
   const origins = $("#scenarioOrigins").value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 6);
   if (!gtip || origins.length < 2) {
@@ -2684,6 +2703,10 @@ $("#scenarioCompare").addEventListener("click", async () => {
   } catch (error) {
     output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
   }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-open-plans]")) openAccount("plans");
 });
 
 document.addEventListener("click", (event) => {
