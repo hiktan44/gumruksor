@@ -51,7 +51,11 @@ from tariff_engine import (
     TariffSyncStatus,
 )
 from control_engine import ImportControlEngine, ImportControlLookupResult, ControlSyncStatus
-from foreign_tariff import SYNC_ENABLED as FOREIGN_TARIFF_SYNC_ENABLED, ForeignTariffEngine
+from foreign_tariff import (
+    SYNC_ENABLED as FOREIGN_TARIFF_SYNC_ENABLED,
+    UK_MEASURES_ARCHIVE_ENABLED,
+    ForeignTariffEngine,
+)
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -151,6 +155,9 @@ if FOREIGN_TARIFF_SYNC_ENABLED:
     BACKGROUND_LOOPS.append(("foreign-tariff-sync", foreign_tariff_engine.periodic_sync_loop))
 if EBTI_SYNC_ENABLED:
     BACKGROUND_LOOPS.append(("ebti-sync", ebti_engine.periodic_sync_loop))
+if FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED:
+    # BK oranları yalnız emtia başına yayımlanıyor; arşiv kaynağı yormadan kademeli dolar.
+    BACKGROUND_LOOPS.append(("uk-measures-archive", foreign_tariff_engine.measures_archive_loop))
 
 
 async def backfill_change_ledger() -> None:

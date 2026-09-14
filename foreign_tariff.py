@@ -81,7 +81,16 @@ SYNC_ENABLED = (os.environ.get("FOREIGN_TARIFF_SYNC_ENABLED") or "1").strip().lo
 JURISDICTIONS: tuple[str, ...] = ("uk", "eu", "ch")
 JURISDICTION_LABELS = {"uk": "Birleşik Krallık", "eu": "Avrupa Birliği", "ch": "İsviçre"}
 UK_DATASET = "uk_chapters"
+UK_NOMENCLATURE_DATASET = "uk_nomenclature"
 CH_DATASET = "ch_nomenclature"
+# Birleşik Krallık nomenklatürü 21 bölüm hâlinde yayımlanır; tamamı yerel arşive alınır.
+UK_SECTIONS = tuple(range(1, 22))
+# Oranlar yalnız emtia başına yayımlanıyor (toplu uç yok), bu yüzden kalıcı arşive
+# kademeli doldurulur ve yaşlanınca tazelenir.
+UK_MEASURES_ARCHIVE_ENABLED = (os.environ.get("UK_MEASURES_ARCHIVE_ENABLED") or "1").strip().lower() not in {"0", "false", "no", "off"}
+UK_MEASURES_BATCH = max(1, min(int(os.environ.get("UK_MEASURES_BATCH") or 40), 200))
+UK_MEASURES_REFRESH_DAYS = max(1, int(os.environ.get("UK_MEASURES_REFRESH_DAYS") or 30))
+UK_MEASURES_DELAY_SECONDS = max(0.0, float(os.environ.get("UK_MEASURES_DELAY_SECONDS") or 1.5))
 
 COMPARABILITY_NOTE = (
     "Birleşik Krallık 10 haneli tarife kodu Türk 12 haneli GTİP'ine birebir denk değildir; "
@@ -210,6 +219,39 @@ def _plain(value: Any) -> str:
     """Resmî tanımlar HTML işaretlemesi içerebilir; düz metne indirger."""
     text = _TAG_RE.sub(" ", str(value or ""))
     return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_section_nomenclature(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """``/goods_nomenclatures/section/{n}`` gövdesinden bir bölümün tüm kod satırları.
+
+    Bu uç yalnız nomenklatür verir (kod + tanım + geçerlilik); vergi oranı içermez —
+    oranlar emtia başına ayrı çekilir ve :class:`ForeignTariffStore` içinde arşivlenir.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict) or item.get("type") != "goods_nomenclature":
+            continue
+        attributes = item.get("attributes") or {}
+        code = digits_only(attributes.get("goods_nomenclature_item_id"))
+        if len(code) != 10 or code in seen:
+            continue
+        seen.add(code)
+        description = _plain(attributes.get("formatted_description") or attributes.get("description"))
+        if not description:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "description": description[:600],
+                "description_alt": "",
+                "declarable": bool(attributes.get("declarable")),
+                "valid_from": str(attributes.get("validity_start_date") or "")[:10] or None,
+                "valid_to": str(attributes.get("validity_end_date") or "")[:10] or None,
+            }
+        )
+    rows.sort(key=lambda row: row["code"])
+    return rows
 
 
 def parse_heading(payload: dict[str, Any]) -> dict[str, Any]:
@@ -513,6 +555,7 @@ class ForeignTariffStore:
                     description_alt TEXT NOT NULL DEFAULT '',
                     valid_from TEXT,
                     valid_to TEXT,
+                    declarable INTEGER NOT NULL DEFAULT 1,
                     PRIMARY KEY (snapshot_id, kind, code)
                 );
                 CREATE INDEX IF NOT EXISTS idx_foreign_nomenclature ON nomenclature(jurisdiction, kind, code);
@@ -524,6 +567,23 @@ class ForeignTariffStore:
                     fetched_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                -- Emtia oranları kalıcı arşiv: BK erişilemese de son bilinen oran sunulur.
+                CREATE TABLE IF NOT EXISTS commodity_meta (
+                    code TEXT PRIMARY KEY,
+                    description TEXT NOT NULL DEFAULT '',
+                    bti_url TEXT,
+                    geo_children_json TEXT NOT NULL DEFAULT '{}',
+                    source_url TEXT NOT NULL DEFAULT '',
+                    sha256 TEXT NOT NULL DEFAULT '',
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS commodity_measures (
+                    code TEXT NOT NULL,
+                    measure_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (code, measure_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_commodity_measures_code ON commodity_measures(code);
                 """
             )
             ensure_review_columns(connection, "snapshots")
@@ -533,7 +593,12 @@ class ForeignTariffStore:
             _ensure_columns(
                 connection,
                 "nomenclature",
-                (("description_alt", "TEXT NOT NULL DEFAULT ''"), ("valid_from", "TEXT"), ("valid_to", "TEXT")),
+                (
+                    ("description_alt", "TEXT NOT NULL DEFAULT ''"),
+                    ("valid_from", "TEXT"),
+                    ("valid_to", "TEXT"),
+                    ("declarable", "INTEGER NOT NULL DEFAULT 1"),
+                ),
             )
         try:
             self.db_path.chmod(0o600)
@@ -575,6 +640,96 @@ class ForeignTariffStore:
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM cache WHERE fetched_at < ?", (cutoff,))
             return int(cursor.rowcount or 0)
+
+    # ---- kalıcı emtia oran arşivi
+    def store_commodity(self, parsed: dict[str, Any], *, source_url: str, sha256: str) -> None:
+        """Bir emtianın ayrıştırılmış ölçü satırlarını kalıcı olarak saklar (ham gövde değil)."""
+        code = str(parsed.get("code") or "")
+        if len(code) != 10:
+            return
+        now = _now()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO commodity_meta(code,description,bti_url,geo_children_json,source_url,sha256,fetched_at) "
+                "VALUES(?,?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET description=excluded.description, "
+                "bti_url=excluded.bti_url, geo_children_json=excluded.geo_children_json, "
+                "source_url=excluded.source_url, sha256=excluded.sha256, fetched_at=excluded.fetched_at",
+                (
+                    code, str(parsed.get("description") or "")[:600], parsed.get("bti_url"),
+                    json.dumps(parsed.get("geo_children") or {}, ensure_ascii=False),
+                    source_url, sha256, now,
+                ),
+            )
+            connection.execute("DELETE FROM commodity_measures WHERE code=?", (code,))
+            connection.executemany(
+                "INSERT OR REPLACE INTO commodity_measures(code,measure_id,payload_json) VALUES(?,?,?)",
+                [
+                    (code, str(row.get("measure_id") or index), json.dumps(row, ensure_ascii=False))
+                    for index, row in enumerate(parsed.get("measures") or [])
+                ],
+            )
+
+    def archived_commodity(self, code: str) -> dict[str, Any] | None:
+        """Arşivdeki emtiayı ``parse_commodity`` biçiminde geri verir; yoksa None."""
+        with self.connect() as connection:
+            meta = connection.execute("SELECT * FROM commodity_meta WHERE code=?", (code,)).fetchone()
+            if meta is None:
+                return None
+            rows = connection.execute(
+                "SELECT payload_json FROM commodity_measures WHERE code=? ORDER BY measure_id", (code,)
+            ).fetchall()
+        measures: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                measures.append(json.loads(row["payload_json"]))
+            except ValueError:
+                continue
+        try:
+            geo_children = json.loads(meta["geo_children_json"])
+        except ValueError:
+            geo_children = {}
+        return {
+            "code": code,
+            "description": meta["description"],
+            "bti_url": meta["bti_url"],
+            "measures": measures,
+            "geo_children": geo_children,
+            "source_url": meta["source_url"],
+            "sha256": meta["sha256"],
+            "fetched_at": meta["fetched_at"],
+        }
+
+    def commodity_is_fresh(self, code: str, *, max_age_days: int) -> bool:
+        with self.connect() as connection:
+            row = connection.execute("SELECT fetched_at FROM commodity_meta WHERE code=?", (code,)).fetchone()
+        if row is None:
+            return False
+        try:
+            fetched = datetime.fromisoformat(str(row["fetched_at"]))
+        except ValueError:
+            return False
+        return datetime.now(UTC) - fetched <= timedelta(days=max_age_days)
+
+    def codes_needing_measures(self, *, limit: int, max_age_days: int) -> list[str]:
+        """Arşivde hiç olmayan veya yaşlanmış beyan edilebilir kodlar (önce hiç olmayanlar)."""
+        active = self.active_snapshot(UK_NOMENCLATURE_DATASET)
+        if active is None:
+            return []
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat(timespec="seconds")
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT n.code FROM nomenclature n LEFT JOIN commodity_meta m ON m.code=n.code "
+                "WHERE n.snapshot_id=? AND n.declarable=1 AND (m.code IS NULL OR m.fetched_at < ?) "
+                "ORDER BY (m.code IS NOT NULL), m.fetched_at, n.code LIMIT ?",
+                (active["id"], cutoff, int(limit)),
+            ).fetchall()
+        return [str(row["code"]) for row in rows]
+
+    def archive_stats(self) -> dict[str, int]:
+        with self.connect() as connection:
+            commodities = connection.execute("SELECT COUNT(*) FROM commodity_meta").fetchone()[0]
+            measures = connection.execute("SELECT COUNT(*) FROM commodity_measures").fetchone()[0]
+        return {"archived_commodities": int(commodities), "archived_measures": int(measures)}
 
     # ---- anlık görüntüler
     def snapshot_by_sha(self, dataset: str, sha256: str) -> sqlite3.Row | None:
@@ -706,6 +861,7 @@ class ForeignTariffEngine:
         self.link_catalog = load_link_catalog(seed_dir)
         self.sync_interval_seconds = sync_interval_seconds
         self.cache_days = cache_days
+        self.measures_delay_seconds = UK_MEASURES_DELAY_SECONDS
         self._http = http or httpx.AsyncClient(
             timeout=httpx.Timeout(20.0, connect=10.0),
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
@@ -806,7 +962,10 @@ class ForeignTariffEngine:
                 # Her kaynak ayrı ayrı denenir ve kendi zamanlamasına bakar: birinin hatası
                 # diğerini engellemez, yeni eklenen bir veri seti de diğerinin damgası yüzünden
                 # bir gün beklemez (hiç eşitlenmemiş veri seti her zaman hemen çekilir).
-                sources: list[tuple[str, str, Any]] = [("UK", UK_DATASET, self._sync_uk_chapters)]
+                sources: list[tuple[str, str, Any]] = [
+                    ("UK", UK_DATASET, self._sync_uk_chapters),
+                    ("UK-nom", UK_NOMENCLATURE_DATASET, self._sync_uk_nomenclature),
+                ]
                 if CH_SYNC_ENABLED:
                     sources.append(("CH", CH_DATASET, self._sync_swiss_nomenclature))
                 ran = False
@@ -855,6 +1014,27 @@ class ForeignTariffEngine:
             title="Birleşik Krallık tarife nomenklatürü (fasıl listesi)",
         )
 
+    async def _sync_uk_nomenclature(self, retrieved_at: str) -> None:
+        """21 bölümün tamamını indirir: BK kod ağacı böylece tümüyle yerelde durur."""
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        source_url = ""
+        for section in UK_SECTIONS:
+            payload, url = await self._get_json(f"/goods_nomenclatures/section/{section}")
+            source_url = source_url or url
+            for row in parse_section_nomenclature(payload):
+                if row["code"] in seen:
+                    continue
+                seen.add(row["code"])
+                rows.append(row)
+        if len(rows) < 1000:
+            raise ValueError(f"UK nomenklatürü beklenenden küçük döndü ({len(rows)} satır).")
+        self._commit_snapshot(
+            dataset=UK_NOMENCLATURE_DATASET, jurisdiction="uk", kind="uk_commodity", prefix="uk-nomenclature",
+            rows=rows, source_url=source_url or f"{self.base_url}/goods_nomenclatures", retrieved_at=retrieved_at,
+            title="Birleşik Krallık tarife nomenklatürü (tüm bölümler)",
+        )
+
     async def _sync_swiss_nomenclature(self, retrieved_at: str) -> None:
         content, url = await self._get_bytes(CH_NOMENCLATURE_URL, allowed_hosts=_CH_HOSTS)
         rows = await asyncio.to_thread(parse_swiss_nomenclature, content.decode("utf-8-sig", errors="replace"))
@@ -886,11 +1066,12 @@ class ForeignTariffEngine:
             )
             connection.executemany(
                 "INSERT OR REPLACE INTO nomenclature(snapshot_id,jurisdiction,kind,code,description,source_url,"
-                "description_alt,valid_from,valid_to) VALUES(?,?,?,?,?,?,?,?,?)",
+                "description_alt,valid_from,valid_to,declarable) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         snapshot_id, jurisdiction, kind, row["code"], row["description"], source_url,
                         row.get("description_alt") or "", row.get("valid_from"), row.get("valid_to"),
+                        1 if row.get("declarable", True) else 0,
                     )
                     for row in rows
                 ],
@@ -926,6 +1107,36 @@ class ForeignTariffEngine:
         )
         if decision.pending:
             logger.info("%s anlık görüntüsü %s editör onayı bekliyor: %s", title, snapshot_id, "; ".join(decision.reasons))
+
+    async def warm_measures_archive(self, *, limit: int | None = None) -> int:
+        """Arşivde eksik/yaşlanmış emtia oranlarını kademeli doldurur; kaç kod alındığını döndürür."""
+        codes = self.store.codes_needing_measures(
+            limit=limit or UK_MEASURES_BATCH, max_age_days=UK_MEASURES_REFRESH_DAYS
+        )
+        written = 0
+        for code in codes:
+            try:
+                cached = await self._cached_json(f"/commodities/{code}", f"uk:commodity:{code}", refresh=True)
+                parsed = parse_commodity(cached["payload"])
+                self.store.store_commodity(parsed, source_url=cached["source_url"], sha256=cached["sha256"])
+                written += 1
+            except (SecurityViolation, httpx.HTTPError, ValueError) as exc:
+                logger.debug("UK oran arşivi: %s alınamadı (%s)", code, exc)
+            if self.measures_delay_seconds:
+                await asyncio.sleep(self.measures_delay_seconds)
+        return written
+
+    async def measures_archive_loop(self, *, initial_delay: float = 300.0) -> None:
+        """Kaynağı yormadan, koşu başına sınırlı sayıda emtia çekerek arşivi doldurur."""
+        await asyncio.sleep(initial_delay)
+        while True:
+            try:
+                written = await self.warm_measures_archive()
+            except Exception:  # noqa: BLE001 – dolum döngüsü sunucuyu durdurmaz
+                logger.exception("UK oran arşivi dolumu başarısız")
+                written = 0
+            # Dolum sürüyorsa kısa, bittiyse uzun ara.
+            await asyncio.sleep(600.0 if written else 3600.0)
 
     async def periodic_sync_loop(self, *, initial_delay: float = 120.0) -> None:
         await asyncio.sleep(initial_delay)
@@ -966,6 +1177,45 @@ class ForeignTariffEngine:
                 result.results.append(self._link_result(item, code, iso2, as_of))
         return result
 
+    def _local_uk_candidates(self, hs6: str, heading: str) -> tuple[list[dict[str, str]], bool]:
+        """Yerel nomenklatür arşivinden aday kodlar; (adaylar, tam HS-6 eşleşmesi mi)."""
+        active = self.store.active_snapshot(UK_NOMENCLATURE_DATASET)
+        if active is None:
+            return [], False
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT code, description FROM nomenclature WHERE snapshot_id=? AND declarable=1 AND code LIKE ? "
+                "ORDER BY code LIMIT 12",
+                (active["id"], f"{hs6}%"),
+            ).fetchall()
+            if rows:
+                return [{"code": str(r["code"]), "description": str(r["description"])} for r in rows], True
+            rows = connection.execute(
+                "SELECT code, description FROM nomenclature WHERE snapshot_id=? AND declarable=1 AND code LIKE ? "
+                "ORDER BY code LIMIT 12",
+                (active["id"], f"{heading}%"),
+            ).fetchall()
+        return [{"code": str(r["code"]), "description": str(r["description"])} for r in rows], False
+
+    async def _commodity_measures(self, code: str) -> tuple[dict[str, Any], dict[str, Any], bool]:
+        """Emtia ölçülerini arşivden ya da BK'den getirir.
+
+        Dönen üçlü: (ayrıştırılmış emtia, künye, bayat mı). Arşiv tazeyse ağa çıkılmaz;
+        BK erişilemezse arşivdeki son bilinen satırlar ``stale=True`` ile sunulur.
+        """
+        archived = self.store.archived_commodity(code)
+        if archived is not None and self.store.commodity_is_fresh(code, max_age_days=UK_MEASURES_REFRESH_DAYS):
+            return archived, {"source_url": archived["source_url"], "sha256": archived["sha256"], "fetched_at": archived["fetched_at"]}, False
+        try:
+            cached = await self._cached_json(f"/commodities/{code}", f"uk:commodity:{code}", refresh=True)
+            parsed = parse_commodity(cached["payload"])
+            self.store.store_commodity(parsed, source_url=cached["source_url"], sha256=cached["sha256"])
+            return parsed, cached, False
+        except (SecurityViolation, httpx.HTTPError, ValueError):
+            if archived is None:
+                raise
+            return archived, {"source_url": archived["source_url"], "sha256": archived["sha256"], "fetched_at": archived["fetched_at"]}, True
+
     async def _uk_result(self, code: str, iso2: str | None, as_of: str | None) -> JurisdictionResult:
         record = self.link_catalog.get("uk", {})
         outcome = JurisdictionResult(
@@ -976,25 +1226,29 @@ class ForeignTariffEngine:
             links=build_links(record, code, iso2, as_of) if record else [],
             notes=[COMPARABILITY_NOTE],
         )
-        heading = code[:4]
-        try:
-            heading_cache = await self._cached_json(f"/headings/{heading}", f"uk:heading:{heading}")
-            parsed_heading = parse_heading(heading_cache["payload"])
-        except (SecurityViolation, httpx.HTTPError, ValueError) as exc:
-            outcome.match_quality = "unavailable"
-            outcome.notes.append(f"UK tarife verisi şu anda alınamadı: {str(exc)[:160]}")
-            return outcome
-
-        hs6 = code[:6]
-        leaves = [row for row in parsed_heading["commodities"] if row["leaf"]]
-        exact = [row for row in leaves if row["code"].startswith(hs6)]
-        candidates = exact or leaves
-        outcome.candidates = [{"code": row["code"], "description": row["description"]} for row in candidates[:12]]
+        heading, hs6 = code[:4], code[:6]
+        fallback_source = ""
+        candidates, exact = self._local_uk_candidates(hs6, heading)
         if not candidates:
-            outcome.notes.append(f"UK tarifesinde {heading} pozisyonu altında beyan edilebilir kod bulunamadı.")
-            outcome.description = parsed_heading.get("description")
-            outcome.source_url = heading_cache["source_url"]
-            return outcome
+            # Nomenklatür arşivi henüz dolmadıysa pozisyon ucundan ilerle.
+            try:
+                heading_cache = await self._cached_json(f"/headings/{heading}", f"uk:heading:{heading}")
+                parsed_heading = parse_heading(heading_cache["payload"])
+            except (SecurityViolation, httpx.HTTPError, ValueError) as exc:
+                outcome.match_quality = "unavailable"
+                outcome.notes.append(f"UK tarife verisi şu anda alınamadı: {str(exc)[:160]}")
+                return outcome
+            fallback_source = heading_cache["source_url"]
+            leaves = [row for row in parsed_heading["commodities"] if row["leaf"]]
+            matched = [row for row in leaves if row["code"].startswith(hs6)]
+            exact = bool(matched)
+            candidates = [{"code": row["code"], "description": row["description"]} for row in (matched or leaves)]
+            if not candidates:
+                outcome.notes.append(f"UK tarifesinde {heading} pozisyonu altında beyan edilebilir kod bulunamadı.")
+                outcome.description = parsed_heading.get("description")
+                outcome.source_url = fallback_source
+                return outcome
+        outcome.candidates = candidates[:12]
         outcome.match_quality = "exact_hs6" if exact else "heading_only"
         if not exact:
             outcome.notes.append(
@@ -1002,12 +1256,11 @@ class ForeignTariffEngine:
             )
         chosen = candidates[0]
         try:
-            commodity_cache = await self._cached_json(f"/commodities/{chosen['code']}", f"uk:commodity:{chosen['code']}")
-            parsed = parse_commodity(commodity_cache["payload"])
+            parsed, meta, stale = await self._commodity_measures(chosen["code"])
         except (SecurityViolation, httpx.HTTPError, ValueError) as exc:
             outcome.matched_code = chosen["code"]
             outcome.description = chosen["description"]
-            outcome.source_url = heading_cache["source_url"]
+            outcome.source_url = fallback_source or None
             outcome.notes.append(f"UK ölçü satırları alınamadı: {str(exc)[:160]}")
             return outcome
         summary = summarise_commodity(parsed, iso2)
@@ -1017,9 +1270,14 @@ class ForeignTariffEngine:
         outcome.origin_preference = summary["origin_preference"]
         outcome.measures = summary["measures"]
         outcome.bti_url = parsed.get("bti_url")
-        outcome.source_url = commodity_cache["source_url"]
-        outcome.sha256 = commodity_cache["sha256"]
-        outcome.retrieved_at = commodity_cache["fetched_at"]
+        outcome.source_url = meta.get("source_url")
+        outcome.sha256 = meta.get("sha256")
+        outcome.retrieved_at = meta.get("fetched_at")
+        if stale:
+            outcome.notes.append(
+                f"Birleşik Krallık kaynağına şu anda ulaşılamadı; yerel arşivdeki son bilinen oranlar "
+                f"({str(meta.get('fetched_at') or '')[:10]}) gösteriliyor."
+            )
         if iso2 and summary["origin_preference"] is None:
             outcome.notes.append(f"{iso2} menşeli eşya için UK tarifesinde tercihli oran satırı bulunmadı.")
         return outcome
@@ -1075,6 +1333,7 @@ class ForeignTariffEngine:
     # ---- durum ve inceleme
     def status(self) -> dict[str, Any]:
         active = self.store.active_snapshot(UK_DATASET)
+        nomenclature = self.store.active_snapshot(UK_NOMENCLATURE_DATASET)
         swiss = self.store.active_snapshot(CH_DATASET)
         with self.store.connect() as connection:
             pending = connection.execute(
@@ -1087,6 +1346,8 @@ class ForeignTariffEngine:
             "review_mode": self.review_policy.mode,
             "pending_review_count": int(pending),
             "chapter_count": int(active["item_count"]) if active else 0,
+            "uk_code_count": int(nomenclature["item_count"]) if nomenclature else 0,
+            **self.store.archive_stats(),
             "swiss_ready": bool(swiss),
             "swiss_code_count": int(swiss["item_count"]) if swiss else 0,
             "active_snapshot": str(active["id"]) if active else None,
@@ -1200,7 +1461,7 @@ class ForeignTariffEngine:
         if self.ledger is None:
             return 0
         written = 0
-        for dataset, kind in ((UK_DATASET, "chapter"), (CH_DATASET, "ch_tariff")):
+        for dataset, kind in ((UK_DATASET, "chapter"), (UK_NOMENCLATURE_DATASET, "uk_commodity"), (CH_DATASET, "ch_tariff")):
             with self.store.connect() as connection:
                 snapshots = connection.execute(
                     "SELECT * FROM snapshots WHERE dataset=? ORDER BY retrieved_at ASC", (dataset,)
@@ -1231,7 +1492,11 @@ class ForeignTariffEngine:
     def corpus_rows(self, limit: int = 4000) -> list[dict[str, Any]]:
         """Onaylı UK nomenklatür satırlarını hibrit indeks belgesi biçiminde döndürür."""
         documents: list[dict[str, Any]] = []
-        for dataset, label, site in ((UK_DATASET, "UK Fasıl", UK_SITE_URL), (CH_DATASET, "İsviçre tarife no.", CH_SOURCE_PAGE)):
+        for dataset, label, site in (
+            (UK_DATASET, "UK Fasıl", UK_SITE_URL),
+            (UK_NOMENCLATURE_DATASET, "UK tarife kodu", UK_SITE_URL),
+            (CH_DATASET, "İsviçre tarife no.", CH_SOURCE_PAGE),
+        ):
             active = self.store.active_snapshot(dataset)
             if active is None:
                 continue
@@ -1260,6 +1525,7 @@ class ForeignTariffEngine:
 
 __all__ = [
     "CH_DATASET",
+    "UK_NOMENCLATURE_DATASET",
     "COMPARABILITY_NOTE",
     "SYNC_ENABLED",
     "ForeignTariffEngine",
@@ -1280,6 +1546,7 @@ __all__ = [
     "parse_chapters",
     "parse_commodity",
     "parse_heading",
+    "parse_section_nomenclature",
     "parse_swiss_nomenclature",
     "summarise_commodity",
 ]

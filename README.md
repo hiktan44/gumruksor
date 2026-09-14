@@ -189,11 +189,16 @@ yanında Birleşik Krallık, Avrupa Birliği ve İsviçre tarifesi gösterilir. 
 yayımlamadığı için ürün bu farkı gizlemez:
 
 * **Birleşik Krallık** — `trade-tariff.service.gov.uk` JSON:API'si anahtarsız ve makine okunurdur.
-  Fasıl listesi `foreign-tariff-sync` döngüsüyle günlük eşitlenir (değişiklik defteri + inceleme
-  kapısı `foreign_tariff` anahtarıyla); pozisyon ve emtia gövdeleri talep anında çekilip
-  `FOREIGN_TARIFF_CACHE_DAYS` (varsayılan 7 gün) boyunca önbelleğe alınır. Üçüncü ülke vergisi,
-  menşeye özgü tercihli oran (coğrafi grup üyeliği ve istisna ülkeler dâhil), kota, damping ve
-  yasaklar resmî ölçü satırlarından okunur.
+  **Nomenklatürün tamamı yereldedir**: 21 bölüm (`/goods_nomenclatures/section/{n}`) günlük
+  eşitlenir ve kod ağacı tümüyle kendi veritabanımızda durur; aday kod eşleştirmesi ağa çıkmaz.
+  Vergi oranları ise BK'de **yalnız emtia başına** yayımlanır (toplu ölçü ucu yoktur), bu yüzden
+  kalıcı bir **oran arşivinde** tutulur: sorgulanan kod arşive yazılır, `uk-measures-archive`
+  döngüsü eksik/yaşlanmış kodları koşu başına `UK_MEASURES_BATCH` kadar, istekler arasında
+  `UK_MEASURES_DELAY_SECONDS` bekleyerek doldurur ve `UK_MEASURES_REFRESH_DAYS` sonra tazeler.
+  Arşiv tazeyse ağa hiç çıkılmaz; **BK erişilemezse son bilinen oranlar "son alınan tarih"
+  notuyla sunulur** (sessizce boş dönmez). Üçüncü ülke vergisi, menşeye özgü tercihli oran
+  (coğrafi grup üyeliği ve istisna ülkeler dâhil), kota, damping ve yasaklar resmî ölçü
+  satırlarından okunur.
 * **İsviçre** — BAZG, tarife numarası yapısını (`TN_STRUCTURE`, ~28 MB CSV) açık veri olarak
   yayımlıyor: kod, Almanca/İngilizce/Fransızca eşya tanımı ve geçerlilik tarihleri. `ch_nomenclature`
   veri seti olarak günlük eşitlenir (aynı inceleme kapısı ve değişiklik defteri) ve sorguda HS-6 ile

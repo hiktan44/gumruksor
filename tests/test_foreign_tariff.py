@@ -268,10 +268,53 @@ def _ch_csv() -> str:
     ]) + "\n"
 
 
-def _transport(calls: list[str], chapters: dict | None = None, swiss: str | None = None) -> httpx.MockTransport:
+def _section(section: int) -> dict:
+    """``/goods_nomenclatures/section/{n}`` gövdesi: yalnız nomenklatür, oran yok."""
+    base = 8500 + section
+    data = []
+    for index in range(600):  # 21 bölüm × 600 = eşik üstü
+        code = f"{base}{index:06d}"[:10]
+        data.append(
+            {
+                "id": str(index),
+                "type": "goods_nomenclature",
+                "attributes": {
+                    "goods_nomenclature_item_id": code,
+                    "formatted_description": f"Section {section} item {index}",
+                    "declarable": True,
+                    "validity_start_date": "2022-01-01T00:00:00.000Z",
+                    "validity_end_date": None,
+                },
+                "relationships": {"parent": {"data": None}},
+            }
+        )
+    if section == 16:
+        data.append(
+            {
+                "id": "smart",
+                "type": "goods_nomenclature",
+                "attributes": {
+                    "goods_nomenclature_item_id": "8517130000",
+                    "formatted_description": "Smartphones",
+                    "declarable": True,
+                    "validity_start_date": "2022-01-01T00:00:00.000Z",
+                    "validity_end_date": None,
+                },
+                "relationships": {"parent": {"data": None}},
+            }
+        )
+    return {"data": data}
+
+
+def _transport(calls: list[str], chapters: dict | None = None, swiss: str | None = None,
+               commodity_status: int | None = None) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         calls.append(path)
+        if "/goods_nomenclatures/section/" in path:
+            return httpx.Response(200, json=_section(int(path.rsplit("/", 1)[-1])))
+        if commodity_status and "/commodities/" in path:
+            return httpx.Response(commodity_status, json={"error": "down"})
         if "TN_STRUCTURE" in path:
             body = _ch_csv() if swiss is None else swiss
             return httpx.Response(200, content=body.encode("utf-8"), headers={"content-type": "text/csv"})
@@ -279,7 +322,7 @@ def _transport(calls: list[str], chapters: dict | None = None, swiss: str | None
             return httpx.Response(200, json=chapters if chapters is not None else _chapters())
         if "/headings/8517" in path:
             return httpx.Response(200, json=_heading())
-        if "/commodities/8517130000" in path:
+        if "/commodities/" in path:
             return httpx.Response(200, json=_commodity())
         return httpx.Response(404, json={"error": "not found"})
 
@@ -362,14 +405,19 @@ class EngineTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.calls: list[str] = []
 
-    def _engine(self, *, chapters: dict | None = None, swiss: str | None = None, policy: ReviewPolicy | None = None) -> ft.ForeignTariffEngine:
-        client = httpx.AsyncClient(transport=_transport(self.calls, chapters, swiss), base_url="https://www.trade-tariff.service.gov.uk")
+    def _engine(self, *, chapters: dict | None = None, swiss: str | None = None, policy: ReviewPolicy | None = None,
+                commodity_status: int | None = None) -> ft.ForeignTariffEngine:
+        client = httpx.AsyncClient(
+            transport=_transport(self.calls, chapters, swiss, commodity_status),
+            base_url="https://www.trade-tariff.service.gov.uk",
+        )
         engine = ft.ForeignTariffEngine(
             self._tmp.name,
             http=client,
             review_policy=policy or ReviewPolicy(),
             base_url="https://www.trade-tariff.service.gov.uk/api/v2",
         )
+        engine.measures_delay_seconds = 0.0
         self.addCleanup(lambda: asyncio.run(engine.close()))
         return engine
 
@@ -444,8 +492,8 @@ class EngineTests(unittest.TestCase):
         status = asyncio.run(engine.sync(force=True))
         self.assertFalse(status["ready"])
         self.assertFalse(status["swiss_ready"])
-        # İki veri seti, iki bekleyen anlık görüntü.
-        self.assertEqual(status["pending_review_count"], 2)
+        # Üç veri seti, üç bekleyen anlık görüntü.
+        self.assertEqual(status["pending_review_count"], 3)
         pending = engine.pending_reviews()
         self.assertEqual({item["kind"] for item in pending}, {"foreign_tariff"})
         uk = next(item for item in pending if item["source_id"] == ft.UK_DATASET)
@@ -469,10 +517,11 @@ class EngineTests(unittest.TestCase):
         engine = self._engine()
         asyncio.run(engine.sync(force=True))
         rows = engine.corpus_rows()
-        # 3 UK faslı + 3 İsviçre tarife numarası.
-        self.assertEqual(len(rows), 6)
+        # UK faslı + UK tam nomenklatür + İsviçre tarife numarası.
         self.assertEqual({row["corpus"] for row in rows}, {"foreign_tariff"})
         self.assertTrue(all(row["source_url"].startswith("https://") for row in rows))
+        prefixes = {row["id"].rsplit("-", 1)[0] for row in rows}
+        self.assertEqual(prefixes, {ft.UK_DATASET, ft.UK_NOMENCLATURE_DATASET, ft.CH_DATASET})
 
     def test_sync_error_is_recorded_not_raised(self):
         engine = self._engine(chapters={"data": []})
@@ -557,6 +606,55 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(status["swiss_ready"], "UK hatası İsviçre eşitlemesini engellememeli")
         self.assertTrue(any(item.startswith("UK:") for item in status["errors"]))
 
+    def test_full_nomenclature_is_stored_locally(self):
+        engine = self._engine()
+        status = asyncio.run(engine.sync(force=True))
+        # 21 bölüm × 600 satır + 8517130000 (bölüm 16), kod çakışmaları tekilleştirilir.
+        self.assertGreater(status["uk_code_count"], 1000)
+
+    def test_lookup_uses_local_nomenclature_without_heading_call(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        self.calls.clear()
+        result = asyncio.run(engine.lookup("851713000000", jurisdiction="uk"))
+        uk = result.results[0]
+        self.assertEqual(uk.matched_code, "8517130000")
+        self.assertEqual(uk.third_country_duty, "0.00%")
+        self.assertFalse(any("/headings/" in call for call in self.calls), "aday kodlar yerelden gelmeli")
+
+    def test_measures_are_archived_and_reused_without_network(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        asyncio.run(engine.lookup("851713000000", jurisdiction="uk"))
+        self.assertEqual(engine.status()["archived_commodities"], 1)
+        self.assertGreater(engine.status()["archived_measures"], 0)
+        self.calls.clear()
+        result = asyncio.run(engine.lookup("851713000000", jurisdiction="uk"))
+        self.assertEqual(self.calls, [], "taze arşiv varken ağa çıkılmamalı")
+        self.assertEqual(result.results[0].third_country_duty, "0.00%")
+
+    def test_archive_serves_last_known_rates_when_uk_is_down(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        asyncio.run(engine.lookup("851713000000", jurisdiction="uk"))
+        # Arşivi yaşlandır ve kaynağı düşür.
+        with engine.store.connect() as connection:
+            connection.execute("UPDATE commodity_meta SET fetched_at='2020-01-01T00:00:00+00:00'")
+        engine._http = httpx.AsyncClient(
+            transport=_transport(self.calls, commodity_status=503),
+            base_url="https://www.trade-tariff.service.gov.uk",
+        )
+        uk = asyncio.run(engine.lookup("851713000000", jurisdiction="uk")).results[0]
+        self.assertEqual(uk.third_country_duty, "0.00%", "son bilinen oran sunulmalı")
+        self.assertTrue(any("son bilinen oranlar" in note for note in uk.notes))
+
+    def test_warm_archive_fills_missing_codes(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        written = asyncio.run(engine.warm_measures_archive(limit=3))
+        self.assertGreaterEqual(written, 1)
+        self.assertGreaterEqual(engine.status()["archived_commodities"], 1)
+
     def test_ledger_batch_recorded(self):
         recorded: list[dict] = []
 
@@ -572,7 +670,10 @@ class EngineTests(unittest.TestCase):
         engine.ledger = FakeLedger()
         asyncio.run(engine.sync(force=True))
         # Her veri seti kendi defter kaydını yazar.
-        self.assertEqual({item["source_id"] for item in recorded}, {ft.UK_DATASET, ft.CH_DATASET})
+        self.assertEqual(
+            {item["source_id"] for item in recorded},
+            {ft.UK_DATASET, ft.UK_NOMENCLATURE_DATASET, ft.CH_DATASET},
+        )
         self.assertTrue(all(item["kind"] == "foreign_tariff" for item in recorded))
         self.assertTrue(all(item["review_status"] == "approved" for item in recorded))
 
