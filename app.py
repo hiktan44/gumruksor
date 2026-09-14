@@ -39,6 +39,7 @@ from email_service import MailError, ResendEmailSender, render_consultation_emai
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
     bedesten_client,
+    change_ledger,
     classification_engine,
     control_engine,
     customs_advisor_service,
@@ -2629,6 +2630,16 @@ async def web_changes(request: Request):
     limited = _rate_limit_response(request, "change-ledger", limit=60, window_seconds=60)
     if limited:
         return limited
+    params = request.query_params
+    kind = params.get("kind", "").strip().lower() or None
+    if kind and kind not in change_ledger_kinds():
+        return JSONResponse({"error": "Bilinmeyen değişiklik türü."}, status_code=422)
+    gtip = re.sub(r"\D", "", params.get("gtip", ""))[:12] or None
+    since = _normalise_date(params.get("since")) if params.get("since") else None
+    try:
+        limit = max(1, min(int(params.get("limit", "200") or 200), 1000))
+    except ValueError:
+        limit = 200
     return JSONResponse(
         {
             "tariff": {
@@ -2638,8 +2649,51 @@ async def web_changes(request: Request):
             "controls": control_engine.changes(limit=100),
             "trade_measures": trade_measure_engine.store.changes(limit=50),
             "trade_measure_status": trade_measure_engine.status(),
+            # Unified persistent ledger (all kinds, full history, row-level before/after).
+            "ledger": change_ledger.changes(kind=kind, gtip_prefix=gtip, since=since, limit=limit),
+            "batches": change_ledger.batches(kind=kind, limit=30),
+            "ledger_summary": change_ledger.summary(),
             "generated_at": time.time(),
         }
+    )
+
+
+def change_ledger_kinds() -> tuple[str, ...]:
+    from change_ledger import KINDS
+
+    return KINDS
+
+
+@mcp.custom_route("/api/admin/changes", methods=["GET"])
+async def web_admin_changes(request: Request):
+    """Change batches with parse warnings and lineage (admin or editor)."""
+    limited = _rate_limit_response(request, "admin-changes", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_role(request, "editor")
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    params = request.query_params
+    kind = params.get("kind", "").strip().lower() or None
+    if kind and kind not in change_ledger_kinds():
+        return JSONResponse({"error": "Bilinmeyen değişiklik türü."}, status_code=422)
+    batch_id = params.get("batch", "").strip()[:200] or None
+    if batch_id:
+        batch = change_ledger.batch(batch_id)
+        if batch is None:
+            return JSONResponse({"error": "Değişiklik kaydı bulunamadı."}, status_code=404)
+        return JSONResponse(
+            {"batch": batch, "changes": change_ledger.changes(batch_id=batch_id, limit=500)},
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        limit = max(1, min(int(params.get("limit", "50") or 50), 200))
+    except ValueError:
+        limit = 50
+    return JSONResponse(
+        {"batches": change_ledger.batches(kind=kind, limit=limit), "summary": change_ledger.summary()},
+        headers={"Cache-Control": "no-store"},
     )
 
 # Add health check endpoint to the MCP server

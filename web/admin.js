@@ -42,6 +42,7 @@ function switchTab(tabId) {
   if (tabId === "llm") loadLLMExpenses();
   else if (tabId === "payments") loadPayments();
   else if (tabId === "logs") loadLogs();
+  else if (tabId === "changes") loadChanges();
 }
 
 window.switchTab = switchTab;
@@ -287,6 +288,92 @@ async function runLlmDiagnostics(vision) {
 $("#llmDiagRecent")?.addEventListener("click", () => showRecentLlmEvents());
 $("#llmDiagText")?.addEventListener("click", () => runLlmDiagnostics(false));
 $("#llmDiagVision")?.addEventListener("click", () => runLlmDiagnostics(true));
+
+// TAB: DATA CHANGE LEDGER
+let currentChangeKind = "";
+
+function shortSha(value) {
+  return value ? `${escapeHtml(String(value).slice(0, 12))}…` : "—";
+}
+
+async function loadChanges(kind = currentChangeKind) {
+  currentChangeKind = kind;
+  $$("#changeKindPills .filter-pill").forEach((pill) => {
+    pill.classList.toggle("active", (pill.dataset.changeKind || "") === kind);
+  });
+  const body = $("#changeBatches");
+  const detail = $("#changeDetail");
+  detail.innerHTML = "";
+  try {
+    const data = await json(`/api/admin/changes?kind=${encodeURIComponent(kind)}`);
+    const summary = data.summary || {};
+    const parts = Object.values(summary.kinds || {}).map(
+      (item) => `${escapeHtml(item.label)}: ${item.batches} kayıt (+${item.added || 0} / −${item.removed || 0} / ~${item.modified || 0})`
+    );
+    $("#changeSummary").textContent = parts.length ? parts.join(" · ") : "Henüz kayıtlı değişiklik yok; ilk eşitlemede oluşur.";
+    const batches = data.batches || [];
+    body.innerHTML = batches.length
+      ? batches
+          .map(
+            (b) => `
+      <tr data-batch="${escapeHtml(b.id)}" class="row-clickable">
+        <td>${escapeHtml(formatDate(b.detected_at))}${b.backfilled ? "<br><small>geriye dönük</small>" : ""}</td>
+        <td><b>${escapeHtml(b.label)}</b><br><small>${escapeHtml(b.title || b.source_id)}</small>${b.source_url ? `<br><a href="${escapeHtml(b.source_url)}" target="_blank" rel="noopener">kaynak</a>` : ""}</td>
+        <td><small>${shortSha(b.new_snapshot_id)}${b.old_snapshot_id ? ` ← ${shortSha(b.old_snapshot_id)}` : " (ilk)"}<br>sha ${shortSha(b.sha256)}</small></td>
+        <td>${Number(b.total_rows || 0).toLocaleString("tr-TR")}</td>
+        <td>+${b.added} / −${b.removed} / ~${b.modified}${b.truncated ? "<br><small>kısaltıldı</small>" : ""}</td>
+        <td>${(b.parse_warnings || []).length ? `<span class="status-badge status-pending">${b.parse_warnings.length}</span>` : "—"}</td>
+        <td><span class="status-badge status-${escapeHtml(b.review_status === "approved" ? "active" : "pending")}">${escapeHtml(b.review_status)}</span></td>
+      </tr>`
+          )
+          .join("")
+      : '<tr><td colspan="7">Bu türde kayıtlı değişiklik yok.</td></tr>';
+  } catch (error) {
+    body.innerHTML = `<tr><td colspan="7" class="error-cell">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function describeChangeRow(value) {
+  if (!value || typeof value !== "object") return "—";
+  const rate = value.rate_text ?? value.summary ?? value.description ?? value.content_sha256 ?? "";
+  const note = value.footnote ? ` (dipnot: ${value.footnote})` : "";
+  const country = value.country_group ? ` [${value.country_group}]` : value.country ? ` [${value.country}]` : "";
+  return `${escapeHtml(String(rate))}${escapeHtml(note)}${escapeHtml(country)}`;
+}
+
+async function showChangeBatch(batchId) {
+  const detail = $("#changeDetail");
+  detail.innerHTML = "<p>Fark yükleniyor…</p>";
+  try {
+    const data = await json(`/api/admin/changes?batch=${encodeURIComponent(batchId)}`);
+    const batch = data.batch || {};
+    const warnings = (batch.parse_warnings || []).map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+    const rows = (data.changes || [])
+      .map(
+        (c) => `<tr class="change-${escapeHtml(c.change_type)}"><td>${escapeHtml(c.change_type)}</td><td><code>${escapeHtml(c.gtip || c.entity_key)}</code></td><td>${describeChangeRow(c.before)}</td><td>${describeChangeRow(c.after)}</td></tr>`
+      )
+      .join("");
+    detail.innerHTML = `
+      <h3>${escapeHtml(batch.label || "")} · ${escapeHtml(batch.title || batch.source_id || "")}</h3>
+      <p><small>Tespit: ${escapeHtml(formatDate(batch.detected_at))} · SHA-256: <code>${escapeHtml(batch.sha256 || "—")}</code>${batch.source_url ? ` · <a href="${escapeHtml(batch.source_url)}" target="_blank" rel="noopener">kaynak</a>` : ""}${batch.gazette_date ? ` · RG ${escapeHtml(batch.gazette_date)} / ${escapeHtml(batch.gazette_number || "")}` : ""}</small></p>
+      ${warnings ? `<p><b>Ayrıştırma uyarıları</b></p><ul>${warnings}</ul>` : ""}
+      <table class="mini-table">
+        <thead><tr><th>Tür</th><th>GTİP / anahtar</th><th>Önce</th><th>Sonra</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4">Bu geçişte satır düzeyinde fark yok (ilk snapshot veya özet kayıt).</td></tr>'}</tbody>
+      </table>`;
+  } catch (error) {
+    detail.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+$("#changeKindPills")?.addEventListener("click", (event) => {
+  const pill = event.target.closest("[data-change-kind]");
+  if (pill) loadChanges(pill.dataset.changeKind || "");
+});
+$("#changeBatches")?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-batch]");
+  if (row && !event.target.closest("a")) showChangeBatch(row.dataset.batch);
+});
 
 // TAB 2: LLM EXPENSES
 async function loadLLMExpenses(filter = currentLlmFilter) {

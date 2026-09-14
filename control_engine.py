@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
 
+import logging
+
 import httpx
 import openpyxl
 import xlrd
@@ -38,7 +40,10 @@ from pydantic import BaseModel, Field
 
 from bedesten_client import BedestenClient
 from trusted_certificates import GEOTRUST_TLS_RSA_CA_G1_PEM
+from change_ledger import batch_id_for, diff_rows
 from security_firewall import validate_outbound_url
+
+logger = logging.getLogger(__name__)
 
 _CODE_RE = re.compile(
     r"(?<!\d)(\d{4}(?:[.\t ]\d{2}){1,4}|\d{2}(?:[.\t ]\d{2}){1,5}|\d{4})(?!\d)"
@@ -500,6 +505,8 @@ class ImportControlEngine:
         self._request_interval = max(0.75, float(os.environ.get("CONTROL_REQUEST_INTERVAL_SECONDS", "6.5")))
         self._syncing = False
         self._errors: list[str] = []
+        # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
+        self.ledger: Any = None
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -740,6 +747,7 @@ class ImportControlEngine:
                         results.append(exc)
                 successes = 0
                 for (config, _), result in zip(pending, results):
+                    errors_before = len(self._errors)
                     if isinstance(result, Exception):
                         if not config.get("optional"):
                             self._errors.append(f"{config['code']}: {result}")
@@ -792,6 +800,10 @@ class ImportControlEngine:
                     retrieved_at = _now()
                     source_url = document.url or f"https://www.mevzuat.gov.tr/MevzuatMetin/9.5.{document.mevzuat_no}.pdf"
                     with self._connect() as db:
+                        previous = db.execute(
+                            "SELECT * FROM control_snapshots WHERE code=? AND id<>? ORDER BY retrieved_at DESC LIMIT 1",
+                            (config["code"], snapshot_id),
+                        ).fetchone()
                         db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (config["code"],))
                         db.execute(
                             """
@@ -827,6 +839,7 @@ class ImportControlEngine:
                             ],
                         )
                     successes += 1
+                    self._record_ledger_batch(snapshot_id, previous, parse_warnings=self._errors[errors_before:])
                 with self._connect() as db:
                     db.execute(
                         "INSERT OR REPLACE INTO control_meta(key,value) VALUES('last_checked_at',?)",
@@ -837,6 +850,71 @@ class ImportControlEngine:
             finally:
                 self._syncing = False
             return self.status()
+
+    # ---------------------------------------------------------- change ledger
+    def _scope_rows_by_key(self, db: sqlite3.Connection, snapshot_id: str) -> dict[str, dict[str, Any]]:
+        rows = db.execute(
+            "SELECT gtip_prefix, list_kind, description, excluded FROM control_scope WHERE snapshot_id=?", (snapshot_id,)
+        ).fetchall()
+        return {
+            f"{row['gtip_prefix']}|{row['list_kind']}": {
+                "gtip": row["gtip_prefix"], "list_kind": row["list_kind"],
+                "description": row["description"], "excluded": bool(row["excluded"]),
+            }
+            for row in rows
+        }
+
+    def _record_ledger_batch(
+        self, snapshot_id: str, previous: sqlite3.Row | None, *, parse_warnings: list[str] | None = None, backfilled: bool = False
+    ) -> str | None:
+        if self.ledger is None:
+            return None
+        try:
+            with self._connect() as db:
+                snapshot = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+                if snapshot is None:
+                    return None
+                current_rows = self._scope_rows_by_key(db, snapshot_id)
+                previous_rows = self._scope_rows_by_key(db, previous["id"]) if previous is not None else {}
+            changes = diff_rows(current_rows, previous_rows, fields=("description", "excluded")) if previous is not None else []
+            return self.ledger.record_batch(
+                kind="controls",
+                source_id=snapshot["code"],
+                title=snapshot["title"],
+                new_snapshot_id=snapshot["id"],
+                old_snapshot_id=previous["id"] if previous is not None else None,
+                source_url=snapshot["source_url"],
+                sha256=snapshot["document_sha256"],
+                changes=changes,
+                total_rows=len(current_rows),
+                parse_warnings=parse_warnings or [],
+                detected_at=snapshot["retrieved_at"],
+                valid_from=snapshot["valid_from"],
+                gazette_date=snapshot["official_gazette_date"],
+                gazette_number=snapshot["official_gazette_number"],
+                backfilled=backfilled,
+            )
+        except Exception as exc:  # noqa: BLE001 – the ledger must never break a sync
+            logger.warning("Control change ledger write failed: %s", exc)
+            return None
+
+    def backfill_ledger(self) -> int:
+        if self.ledger is None:
+            return 0
+        written = 0
+        with self._connect() as db:
+            snapshots = db.execute("SELECT id, code FROM control_snapshots ORDER BY code, retrieved_at ASC").fetchall()
+        by_code: dict[str, list[sqlite3.Row]] = {}
+        for row in snapshots:
+            by_code.setdefault(row["code"], []).append(row)
+        for versions in by_code.values():
+            previous = None
+            for snapshot in versions:
+                if not self.ledger.has_batch(batch_id_for("controls", snapshot["code"], snapshot["id"])):
+                    if self._record_ledger_batch(snapshot["id"], previous, backfilled=True):
+                        written += 1
+                previous = snapshot
+        return written
 
     def _fresh(self) -> bool:
         with self._connect() as db:

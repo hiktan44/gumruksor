@@ -20,7 +20,7 @@ import sys
 import time
 import unicodedata
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from countries import PENDING_AGREEMENTS, by_regime, column_1_keys, explicit_labels, find_country
 from origin_documents import atr_eligible
+from change_ledger import diff_rows
 from security_firewall import validate_outbound_url
 
 _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
@@ -287,6 +288,14 @@ class LandedCostResult(BaseModel):
 class _ParsedArchive:
     measures: list[dict[str, Any]]
     metadata: dict[str, Any]
+    warnings: list[str] = field(default_factory=list)
+
+
+_MEASURE_ROW_FIELDS = ("gtip", "measure_type", "country_group", "rate", "rate_text", "footnote", "list_name")
+
+
+def _measure_row_key(row: Any) -> str:
+    return f"{row['gtip']}|{row['measure_type']}|{row['country_group']}"
 
 
 _MEASURE_LABELS = {
@@ -349,6 +358,8 @@ class TariffEngine:
         self._sync_lock = asyncio.Lock()
         self._syncing = False
         self._errors: list[str] = []
+        # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
+        self.ledger: Any = None
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -657,6 +668,13 @@ class TariffEngine:
         retrieved_at = checked_at
         parsed = await asyncio.to_thread(self._parse_archive, data, source, archive_url, checksum, retrieved_at)
         with self._connect() as db:
+            previous = db.execute(
+                "SELECT * FROM tariff_snapshots WHERE source_id=? ORDER BY retrieved_at DESC LIMIT 1", (source["id"],)
+            ).fetchone()
+            if previous is not None and previous["measure_count"] and len(parsed.measures) < 0.8 * int(previous["measure_count"]):
+                parsed.warnings.append(
+                    f"satır sayısı önceki sürüme göre %20'den fazla düştü ({previous['measure_count']} → {len(parsed.measures)})"
+                )
             db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (source["id"],))
             db.execute(
                 """INSERT INTO tariff_snapshots
@@ -686,7 +704,72 @@ class TariffEngine:
                 )
             db.commit()
             row = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        self._record_ledger_batch(row, previous, parse_warnings=parsed.warnings)
         return self._snapshot(row)
+
+    # ---------------------------------------------------------- change ledger
+    def _measure_rows_by_key(self, db: sqlite3.Connection, snapshot_id: str) -> dict[str, dict[str, Any]]:
+        rows = db.execute(
+            "SELECT gtip,measure_type,country_group,rate,rate_text,footnote,list_name FROM tariff_measures WHERE snapshot_id=?",
+            (snapshot_id,),
+        ).fetchall()
+        return {_measure_row_key(row): {name: row[name] for name in _MEASURE_ROW_FIELDS} for row in rows}
+
+    @staticmethod
+    def diff_measure_rows(current: dict[str, dict[str, Any]], previous: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        """Row-level diff of two measure snapshots keyed by gtip|measure_type|country_group."""
+        return diff_rows(current, previous, fields=("rate_text", "footnote"))
+
+    def _record_ledger_batch(
+        self, snapshot: sqlite3.Row, previous: sqlite3.Row | None, *, parse_warnings: Iterable[str] = (), backfilled: bool = False
+    ) -> str | None:
+        """Write the transition previous → snapshot to the unified ledger (idempotent)."""
+        if self.ledger is None or snapshot is None:
+            return None
+        with self._connect() as db:
+            current_rows = self._measure_rows_by_key(db, snapshot["id"])
+            previous_rows = self._measure_rows_by_key(db, previous["id"]) if previous is not None else {}
+        changes = self.diff_measure_rows(current_rows, previous_rows) if previous is not None else []
+        try:
+            return self.ledger.record_batch(
+                kind="tariff",
+                source_id=snapshot["source_id"],
+                title=snapshot["source_title"],
+                new_snapshot_id=snapshot["id"],
+                old_snapshot_id=previous["id"] if previous is not None else None,
+                source_url=snapshot["archive_url"],
+                sha256=snapshot["archive_sha256"],
+                changes=changes,
+                total_rows=len(current_rows),
+                parse_warnings=parse_warnings,
+                detected_at=snapshot["retrieved_at"],
+                valid_from=snapshot["valid_from"],
+                backfilled=backfilled,
+            )
+        except Exception as exc:  # noqa: BLE001 – the ledger must never break a sync
+            logger.warning("Tariff change ledger write failed: %s", exc)
+            return None
+
+    def backfill_ledger(self) -> int:
+        """Record every historical snapshot transition that the ledger does not know yet."""
+        if self.ledger is None:
+            return 0
+        written = 0
+        with self._connect() as db:
+            snapshots = db.execute("SELECT * FROM tariff_snapshots ORDER BY source_id, retrieved_at ASC").fetchall()
+        by_source: dict[str, list[sqlite3.Row]] = {}
+        for row in snapshots:
+            by_source.setdefault(row["source_id"], []).append(row)
+        for versions in by_source.values():
+            previous = None
+            for snapshot in versions:
+                from change_ledger import batch_id_for
+
+                if not self.ledger.has_batch(batch_id_for("tariff", snapshot["source_id"], snapshot["id"])):
+                    if self._record_ledger_batch(snapshot, previous, backfilled=True):
+                        written += 1
+                previous = snapshot
+        return written
 
     async def sync(self, *, force: bool = False) -> TariffSyncStatus:
         async with self._sync_lock:
@@ -1416,6 +1499,30 @@ class TariffEngine:
         }
 
     def changes(self, source_id: str, *, limit: int = 200) -> dict[str, Any]:
+        bounded = max(1, min(limit, 1000))
+        if self.ledger is not None:
+            batch = self.ledger.latest_batch("tariff", source_id)
+            if batch and batch.get("old_snapshot_id"):
+                rows = self.ledger.changes(kind="tariff", batch_id=batch["id"], limit=bounded)
+                changes = []
+                for item in rows:
+                    before, after = item.get("before") or {}, item.get("after") or {}
+                    changes.append(
+                        {
+                            "gtip": item.get("gtip"), "measure_type": (after or before).get("measure_type"),
+                            "country_group": (after or before).get("country_group"),
+                            "before": before.get("rate_text") if before else None, "after": after.get("rate_text") if after else None,
+                            "before_footnote": before.get("footnote") if before else None,
+                            "after_footnote": after.get("footnote") if after else None,
+                            "change_type": item.get("change_type"),
+                        }
+                    )
+                return {
+                    "source_id": source_id, "status": "compared", "new_snapshot": batch["new_snapshot_id"],
+                    "old_snapshot": batch["old_snapshot_id"], "detected_at": batch["detected_at"],
+                    "total_changes": int(batch["added"]) + int(batch["removed"]) + int(batch["modified"]),
+                    "changes": changes, "ledger_batch": batch["id"],
+                }
         with self._connect() as db:
             snapshots = db.execute(
                 "SELECT * FROM tariff_snapshots WHERE source_id=? ORDER BY retrieved_at DESC LIMIT 2", (source_id,)
@@ -1438,7 +1545,7 @@ class TariffEngine:
                 changes.append({"gtip": key[0], "measure_type": key[1], "country_group": key[2], "before": before, "after": after, "before_footnote": before_note, "after_footnote": after_note})
         return {
             "source_id": source_id, "status": "compared", "new_snapshot": newer["id"], "old_snapshot": older["id"],
-            "total_changes": len(changes), "changes": changes[: max(1, min(limit, 1000))],
+            "total_changes": len(changes), "changes": changes[:bounded],
         }
 
 
