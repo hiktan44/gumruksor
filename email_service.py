@@ -26,52 +26,224 @@ def _esc(value: Any) -> str:
     return html.escape(str(value if value is not None else ""))
 
 
-def render_precheck_email(result: CustomsPrecheckResult, base_url: str) -> str:
-    """Render the dossier as a compact, inline-styled HTML e-mail."""
-    rows: list[str] = []
-    if result.tariff_lookup is not None:
-        safe = result.tariff_lookup.unambiguous_rates or {}
-        if safe:
-            rate_rows = "".join(
-                f"<tr><td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(label)}</td>"
-                f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>%{_esc(value)}</td></tr>"
-                for label, value in (
-                    ("Gümrük vergisi", safe.get("customs_duty")),
-                    ("İlave gümrük vergisi (İGV)", safe.get("additional_duty")),
-                    ("Ek mali yükümlülük", safe.get("additional_financial_liability")),
-                )
-                if value is not None
-            )
-            if rate_rows:
-                rows.append(
-                    "<h3 style='margin:14px 0 6px;font-size:15px;'>Resmî tarife oranları</h3>"
-                    f"<table style='border-collapse:collapse;font-size:13px;'>{rate_rows}</table>"
-                    f"<p style='margin:4px 0 0;font-size:12px;color:#43536c;'>Kod: {_esc(result.tariff_lookup.gtip)}"
-                    f"{f' · menşe: {_esc(result.tariff_lookup.origin_country)}' if result.tariff_lookup.origin_country else ''}</p>"
-                )
-    if result.origin_documents is not None:
-        docs = "".join(f"<li>{_esc(item.name)}</li>" for item in result.origin_documents.documents)
-        rows.append(
-            f"<h3 style='margin:14px 0 6px;font-size:15px;'>Menşe belgeleri · {_esc(result.origin_documents.regime_name)}</h3>"
-            f"<ul style='margin:4px 0 0;padding-left:18px;font-size:13px;'>{docs}</ul>"
+_H3 = "<h3 style='margin:14px 0 6px;font-size:15px;'>{title}</h3>"
+_UL = "<ul style='margin:4px 0 0;padding-left:18px;font-size:{size}px;'>{items}</ul>"
+_TD = "<td style='padding:4px 10px;border:1px solid #d6dee8;'>"
+_TABLE = "<table style='border-collapse:collapse;font-size:13px;'>{rows}</table>"
+_FINDING_STATUS = {
+    "required": "Zorunlu", "likely": "Muhtemel", "conditional": "Koşullu", "not_found": "Bulunamadı",
+    "unknown": "Belirsiz", "applicable": "Uygulanır", "possible": "Olası",
+}
+_RISK_LABELS = {"moderate": "Orta", "high": "Yüksek", "critical": "Kritik"}
+_REVIEW_LABELS = {"BTB": "Bağlayıcı Tarife Bilgisi", "gümrük_müşaviri": "Gümrük müşaviri", "yetkili_kurum": "Yetkili kurum"}
+_COST_LABELS = (
+    ("customs_value_estimate", "Gümrük kıymeti (tahmini)"),
+    ("customs_duty", "Gümrük vergisi"),
+    ("additional_duty", "İlave gümrük vergisi (İGV)"),
+    ("additional_financial_liability", "Ek mali yükümlülük"),
+    ("vat_base_estimate", "KDV matrahı (tahmini)"),
+    ("vat", "KDV"),
+    ("known_landed_total", "Bilinen kalemlerle toplam maliyet"),
+    ("unit_landed_cost", "Birim maliyet"),
+)
+
+
+def _items(values: Any, *, limit: int | None = None) -> str:
+    values = list(values or [])
+    if limit is not None:
+        values = values[:limit]
+    return "".join(f"<li>{_esc(item)}</li>" for item in values)
+
+
+def _citations(values: list[str]) -> str:
+    return f" <small>[{_esc(', '.join(values))}]</small>" if values else ""
+
+
+def _amount(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    text = f"{value:,.2f}"
+    return text.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _tariff_rates_section(result: CustomsPrecheckResult) -> str | None:
+    if result.tariff_lookup is None:
+        return None
+    safe = result.tariff_lookup.unambiguous_rates or {}
+    if not safe:
+        return None
+    rate_rows = "".join(
+        f"<tr>{_TD}{_esc(label)}</td>{_TD}%{_esc(value)}</td></tr>"
+        for label, value in (
+            ("Gümrük vergisi", safe.get("customs_duty")),
+            ("İlave gümrük vergisi (İGV)", safe.get("additional_duty")),
+            ("Ek mali yükümlülük", safe.get("additional_financial_liability")),
         )
-    if result.missing_information:
-        missing = "".join(f"<li>{_esc(item)}</li>" for item in result.missing_information[:8])
-        rows.append(
-            f"<h3 style='margin:14px 0 6px;font-size:15px;'>Eksik veya teyit gereken bilgiler</h3>"
-            f"<ul style='margin:4px 0 0;padding-left:18px;font-size:13px;'>{missing}</ul>"
-        )
+        if value is not None
+    )
+    if not rate_rows:
+        return None
+    origin = f" · menşe: {_esc(result.tariff_lookup.origin_country)}" if result.tariff_lookup.origin_country else ""
+    return (
+        _H3.format(title="Resmî tarife oranları")
+        + _TABLE.format(rows=rate_rows)
+        + f"<p style='margin:4px 0 0;font-size:12px;color:#43536c;'>Kod: {_esc(result.tariff_lookup.gtip)}{origin}</p>"
+    )
+
+
+def _origin_documents_section(result: CustomsPrecheckResult) -> str | None:
+    if result.origin_documents is None:
+        return None
+    docs = "".join(f"<li>{_esc(item.name)}</li>" for item in result.origin_documents.documents)
+    return _H3.format(title=f"Menşe belgeleri · {_esc(result.origin_documents.regime_name)}") + _UL.format(size=13, items=docs)
+
+
+def _missing_information_section(result: CustomsPrecheckResult) -> str | None:
+    if not result.missing_information:
+        return None
+    return _H3.format(title="Eksik veya teyit gereken bilgiler") + _UL.format(
+        size=13, items=_items(result.missing_information, limit=8)
+    )
+
+
+def _sources_section(result: CustomsPrecheckResult) -> str | None:
     sources = "".join(
         f"<li style='margin:3px 0;'><a href='{_esc(source.url)}' style='color:#006678;'>{_esc(source.title)}</a>"
         f"{f' · {_esc(source.authority)}' if source.authority else ''}</li>"
         for source in result.sources[:12]
         if source.url
     )
-    if sources:
-        rows.append(
-            "<h3 style='margin:14px 0 6px;font-size:15px;'>Resmî kaynaklar</h3>"
-            f"<ul style='margin:4px 0 0;padding-left:18px;font-size:12px;'>{sources}</ul>"
+    if not sources:
+        return None
+    return _H3.format(title="Resmî kaynaklar") + _UL.format(size=12, items=sources)
+
+
+def _candidates_section(result: CustomsPrecheckResult) -> str | None:
+    if not result.candidate_gtips:
+        return None
+    rows = "".join(
+        f"<tr>{_TD}<code>{_esc(item.code)}</code></td>{_TD}{_esc(item.confidence)}</td>{_TD}{_esc(item.explanation)}"
+        f"{_citations(item.citations)}</td></tr>"
+        for item in result.candidate_gtips
+    )
+    return _H3.format(title="Aday GTİP / CN kodları (bağlayıcı değildir)") + _TABLE.format(
+        rows=f"<tr><th style='padding:4px 10px;border:1px solid #d6dee8;'>Kod</th><th style='padding:4px 10px;border:1px solid #d6dee8;'>Güven</th><th style='padding:4px 10px;border:1px solid #d6dee8;'>Gerekçe</th></tr>{rows}"
+    )
+
+
+def _findings_section(title: str, findings: list[Any]) -> str | None:
+    if not findings:
+        return None
+    rows = "".join(
+        f"<tr>{_TD}{_esc(item.name)}</td>{_TD}{_esc(_FINDING_STATUS.get(item.status, item.status))}"
+        f"{f' · %{_esc(item.rate)}' if getattr(item, 'rate', None) else ''}</td>{_TD}{_esc(item.explanation)}"
+        f"{_citations(item.citations)}</td></tr>"
+        for item in findings
+    )
+    return _H3.format(title=title) + _TABLE.format(
+        rows=f"<tr><th style='padding:4px 10px;border:1px solid #d6dee8;'>Kalem</th><th style='padding:4px 10px;border:1px solid #d6dee8;'>Durum</th><th style='padding:4px 10px;border:1px solid #d6dee8;'>Açıklama</th></tr>{rows}"
+    )
+
+
+def _cost_section(result: CustomsPrecheckResult) -> str | None:
+    cost = result.deterministic_cost
+    if not isinstance(cost, dict):
+        return None
+    currency = _esc(cost.get("currency") or "")
+    rows = "".join(
+        f"<tr>{_TD}{_esc(label)}</td>{_TD}{amount} {currency}</td></tr>"
+        for key, label in _COST_LABELS
+        if (amount := _amount(cost.get(key))) is not None
+    )
+    if not rows:
+        return None
+    notes: list[str] = []
+    if cost.get("status") == "rates_missing":
+        notes.append("Eksik oranlar nedeniyle toplam bilinçli olarak tamamlanmamıştır.")
+    missing = cost.get("missing_rates")
+    if isinstance(missing, list) and missing:
+        notes.append("Eksik kalemler: " + ", ".join(str(item) for item in missing[:8]))
+    if cost.get("note"):
+        notes.append(str(cost["note"]))
+    note_html = "".join(f"<p style='margin:4px 0 0;font-size:12px;color:#43536c;'>{_esc(note)}</p>" for note in notes)
+    return _H3.format(title="Kullanıcı oranlarıyla maliyet taslağı") + _TABLE.format(rows=rows) + note_html
+
+
+def _expert_packet_section(result: CustomsPrecheckResult) -> str | None:
+    packet = result.expert_review_packet
+    lines = [
+        f"Risk düzeyi: {_RISK_LABELS.get(packet.risk_level, packet.risk_level)}",
+        "Uzman incelemesi gerekli: " + ("evet" if packet.escalation_required else "hayır"),
+    ]
+    if packet.review_types:
+        lines.append("Önerilen inceleme: " + ", ".join(_REVIEW_LABELS.get(item, item) for item in packet.review_types))
+    lines.extend(packet.reasons[:8])
+    questions = _items(packet.questions_for_reviewer, limit=8)
+    body = _UL.format(size=13, items=_items(lines))
+    if questions:
+        body += "<p style='margin:6px 0 0;font-size:13px;'>İnceleyiciye sorular:</p>" + _UL.format(size=13, items=questions)
+    return _H3.format(title="Uzman inceleme paketi") + body
+
+
+def _next_steps_section(result: CustomsPrecheckResult) -> str | None:
+    if not result.next_steps:
+        return None
+    return _H3.format(title="Sonraki güvenli adımlar") + (
+        f"<ol style='margin:4px 0 0;padding-left:18px;font-size:13px;'>{_items(result.next_steps, limit=12)}</ol>"
+    )
+
+
+def _safety_notes_section(result: CustomsPrecheckResult) -> str | None:
+    if not result.safety_notes:
+        return None
+    return _H3.format(title="Güvenlik notları") + _UL.format(size=12, items=_items(result.safety_notes, limit=8))
+
+
+def _image_observation_section(result: CustomsPrecheckResult) -> str | None:
+    if not result.image_observation:
+        return None
+    return _H3.format(title="Fotoğrafta görülenler") + f"<p style='margin:4px 0 0;font-size:13px;'>{_esc(result.image_observation)}</p>"
+
+
+def precheck_sections(result: CustomsPrecheckResult, base_url: str, *, detailed: bool = False) -> list[str]:
+    """Inline-styled HTML fragments shared by the e-mail and the PDF report.
+
+    The default set is the compact e-mail digest; ``detailed=True`` adds the
+    findings, cost draft, expert packet and next steps for the PDF report (which
+    renders its own source ledger, so the short source list is omitted there).
+    ``base_url`` is accepted for parity with the renderers; sections never embed
+    client-supplied markup, every value goes through ``_esc``.
+    """
+    del base_url  # reserved: sections are link-free so e-mail and PDF stay identical
+    sections: list[str | None] = [_tariff_rates_section(result), _origin_documents_section(result)]
+    if detailed:
+        sections.extend(
+            [
+                _candidates_section(result),
+                _findings_section("TAREKS · TSE · kimyasal · laboratuvar kontrolleri", result.controls),
+                _findings_section("Gerekli belge ve izinler", result.required_documents),
+                _findings_section("Vergi ve mali yükümlülük bulguları", result.taxes),
+                _cost_section(result),
+            ]
         )
+    sections.append(_missing_information_section(result))
+    if detailed:
+        sections.extend(
+            [
+                _image_observation_section(result),
+                _expert_packet_section(result),
+                _next_steps_section(result),
+                _safety_notes_section(result),
+            ]
+        )
+    else:
+        sections.append(_sources_section(result))
+    return [section for section in sections if section]
+
+
+def render_precheck_email(result: CustomsPrecheckResult, base_url: str) -> str:
+    """Render the dossier as a compact, inline-styled HTML e-mail."""
+    rows = precheck_sections(result, base_url)
     return f"""<div style="font-family:Arial,Helvetica,sans-serif;color:#0b1e3f;max-width:640px;">
   <p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#006678;">Ticaret Bilgi Masası · İthalat ön değerlendirme dosyası</p>
   <h2 style="margin:0 0 8px;font-size:19px;">{_esc(result.summary)}</h2>
