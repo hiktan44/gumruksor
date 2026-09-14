@@ -22,13 +22,13 @@ async def build_origin_scenarios(
 ) -> list[dict[str, Any]]:
     """Look up the same tariff line for every origin and attach the document rule.
 
-    ``as_of`` is accepted for forward compatibility with the date-based query
-    (PRD 2.x); the tariff engine does not take it yet, so it is not forwarded.
+    ``as_of`` (YYYY-MM-DD) selects the official version in force on that day
+    (PRD Faz 1.4); None means today's active tables.
     """
     rows: list[dict[str, Any]] = []
     for origin in origins:
         lookup = await engine.lookup(
-            gtip, origin_country=origin, dispatch_country=dispatch_country, atr_certificate=atr_certificate
+            gtip, origin_country=origin, dispatch_country=dispatch_country, atr_certificate=atr_certificate, as_of=as_of
         )
         documents = origin_document_requirements(origin, gtip=lookup.gtip, dispatch_country=dispatch_country)
         rows.append(

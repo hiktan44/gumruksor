@@ -398,6 +398,7 @@
             <label class="field"><span>Menşe ülke <b>*</b></span><input id="tariffOrigin" list="countryList" autocomplete="off" required maxlength="100" placeholder="Örn. Çin"></label>
             <label class="field"><span>Sevk ülkesi</span><input id="tariffDispatch" list="countryList" autocomplete="off" maxlength="100" placeholder="Menşeden farklıysa, örn. Almanya"></label>
             <label class="field"><span>A.TR dolaşım belgesi</span><select id="tariffAtr"><option value="">Belirtilmedi</option><option value="true">İbraz edilecek</option><option value="false">Yok</option></select></label>
+            <label class="field"><span>Yürürlük tarihi</span><input type="date" id="tariffAsOf" title="Boş bırakılırsa bugün yürürlükteki tablolar kullanılır; geçmiş tarih Ekip ve üzeri paketlerde"></label>
             <label class="field"><span>Fatura bedeli</span><input id="tariffInvoice" type="text" inputmode="decimal" data-number data-min="0.01" placeholder="Maliyet için"></label>
             <label class="field"><span>Navlun</span><input id="tariffFreight" type="text" inputmode="decimal" data-number data-min="0" value="0"></label>
             <label class="field"><span>Sigorta</span><input id="tariffInsurance" type="text" inputmode="decimal" data-number data-min="0" value="0"></label>

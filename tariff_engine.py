@@ -21,7 +21,7 @@ import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal
 from urllib.parse import urljoin, urlsplit
@@ -38,6 +38,10 @@ from countries import PENDING_AGREEMENTS, by_regime, column_1_keys, explicit_lab
 from origin_documents import atr_eligible
 from change_ledger import batch_id_for, diff_rows
 from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
+from temporal import (
+    close_previous, covers, derive_validity, ensure_validity_columns, normalise_as_of, parse_iso_date, snapshot_validity,
+    today_iso, validity_basis,
+)
 from security_firewall import validate_outbound_url
 
 _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
@@ -151,6 +155,9 @@ class TariffSnapshot(BaseModel):
     valid_from: str
     measure_count: int
     active: bool
+    valid_to: str | None = None
+    valid_from_basis: str = "config"
+    valid_to_basis: str | None = None
 
 
 class TariffLookupResult(BaseModel):
@@ -179,6 +186,10 @@ class TariffLookupResult(BaseModel):
     unresolved_measure_types: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     trade_measures: dict[str, Any] | None = None
+    # Temporal validity (PRD Faz 1.4): the as-of date answered and how the interval was established.
+    as_of_date: str | None = None
+    validity_basis: Literal["current", "legal", "observed", "unavailable"] = "current"
+    snapshot_validity: list[dict[str, Any]] = Field(default_factory=list)
     excise_tax: dict[str, Any] | None = None
     as_of: str
 
@@ -217,6 +228,8 @@ class TariffDecisionTreeResult(BaseModel):
     exact_gtip_selected: bool = False
     warnings: list[str] = Field(default_factory=list)
     as_of: str
+    as_of_date: str | None = None
+    validity_basis: Literal["current", "legal", "observed", "unavailable"] = "current"
 
 
 class TariffSyncStatus(BaseModel):
@@ -365,6 +378,8 @@ class TariffEngine:
         self.ledger: Any = None
         # Editorial review gate; the server replaces it with policy_from_env().
         self.review_policy: ReviewPolicy = ReviewPolicy()
+        # Landing-page text of the last discovery per source (validity date derivation).
+        self._landing_text: dict[str, str] = {}
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -399,6 +414,8 @@ class TariffEngine:
                 """
             )
             ensure_review_columns(db, "tariff_snapshots")
+            ensure_validity_columns(db, "tariff_snapshots")
+            ensure_validity_columns(db, "tariff_measures", (("valid_from", "TEXT"), ("valid_to", "TEXT")))
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -429,6 +446,7 @@ class TariffEngine:
     async def _discover_archive(self, source: dict[str, Any]) -> str:
         response = await self._get(source["landing_url"])
         soup = BeautifulSoup(response.text, "lxml")
+        self._landing_text[source["id"]] = soup.get_text(" ", strip=True)[:200_000]
         wanted = _key(source.get("archive_text", ""))
         candidates: list[tuple[int, str]] = []
         for anchor in soup.select("a[href]"):
@@ -687,15 +705,22 @@ class TariffEngine:
                 parsed.warnings.append(
                     f"satır sayısı önceki sürüme göre %20'den fazla düştü ({previous['measure_count']} → {len(parsed.measures)})"
                 )
+            validity = derive_validity(
+                [self._landing_text.get(source["id"], ""), json.dumps(parsed.metadata, ensure_ascii=False)],
+                floor=source["valid_from"], context=source["id"],
+            )
+            parsed.warnings.extend(validity.warnings)
             # Inserted inactive; activation happens after the review decision below.
             db.execute(
                 """INSERT INTO tariff_snapshots
-                (id,source_id,source_title,landing_url,archive_url,archive_sha256,retrieved_at,checked_at,valid_from,measure_count,active,metadata_json,status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,0,?,'pending_review')""",
+                (id,source_id,source_title,landing_url,archive_url,archive_sha256,retrieved_at,checked_at,valid_from,measure_count,active,metadata_json,status,
+                 valid_from_basis,gazette_date,gazette_number,legal_act)
+                VALUES (?,?,?,?,?,?,?,?,?,?,0,?,'pending_review',?,?,?,?)""",
                 (
                     snapshot_id, source["id"], source["title"], source["landing_url"], archive_url, checksum,
-                    retrieved_at, checked_at, source["valid_from"], len(parsed.measures),
+                    retrieved_at, checked_at, validity.valid_from, len(parsed.measures),
                     json.dumps(parsed.metadata, ensure_ascii=False, separators=(",", ":")),
+                    validity.basis, validity.gazette_date, validity.gazette_number, validity.legal_act,
                 ),
             )
             for item in parsed.measures:
@@ -732,14 +757,84 @@ class TariffEngine:
                 (decision.status, warnings_json, diff_json, snapshot_id),
             )
             if not decision.pending:
-                db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (source["id"],))
-                db.execute("UPDATE tariff_snapshots SET active=1 WHERE id=?", (snapshot_id,))
+                self._activate(db, source["id"], snapshot_id)
             db.commit()
             row = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
         self._record_ledger_batch(row, previous, parse_warnings=parsed.warnings, changes=changes, review_status=decision.status)
         if decision.pending:
             logger.info("Tariff snapshot %s waits for editorial review: %s", snapshot_id, "; ".join(decision.reasons))
         return self._snapshot(row)
+
+    # ---------------------------------------------------------- temporal validity
+    @staticmethod
+    def _activate(db: sqlite3.Connection, source_id: str, snapshot_id: str) -> None:
+        """Make ``snapshot_id`` the live version and close the interval of the one it replaces."""
+        new = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        previous = db.execute(
+            "SELECT * FROM tariff_snapshots WHERE source_id=? AND active=1 AND id<>?", (source_id, snapshot_id)
+        ).fetchall()
+        for old in previous:
+            valid_to, basis = close_previous(str(new["valid_from"]), str(old["valid_from"]), str(new["retrieved_at"]))
+            db.execute("UPDATE tariff_snapshots SET valid_to=?, valid_to_basis=? WHERE id=?", (valid_to, basis, old["id"]))
+        db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (source_id,))
+        db.execute("UPDATE tariff_snapshots SET active=1, valid_to=NULL, valid_to_basis=NULL WHERE id=?", (snapshot_id,))
+
+    def _select_snapshots(self, db: sqlite3.Connection, as_of: str | None) -> list[sqlite3.Row]:
+        """Active snapshots for today; for an as-of date the approved version covering that day."""
+        if not as_of or as_of >= today_iso():
+            return db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
+        rows = db.execute(
+            "SELECT * FROM tariff_snapshots WHERE status='approved' ORDER BY source_id, retrieved_at DESC"
+        ).fetchall()
+        chosen: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            if row["source_id"] in chosen or not covers(row, as_of):
+                continue
+            chosen[row["source_id"]] = row
+        return [chosen[key] for key in sorted(chosen)]
+
+    @staticmethod
+    def _stamp_validity(result: "TariffLookupResult", snapshots: list[sqlite3.Row], as_of: str | None) -> None:
+        result.as_of_date = as_of or today_iso()
+        result.snapshot_validity = [snapshot_validity(row) for row in snapshots]
+        if not snapshots:
+            result.validity_basis = "unavailable"
+            return
+        bases = {validity_basis(row, as_of) for row in snapshots}
+        if "observed" in bases:
+            result.validity_basis = "observed"
+        elif "legal" in bases:
+            result.validity_basis = "legal"
+        else:
+            result.validity_basis = "current"
+        if as_of and as_of < today_iso():
+            if result.validity_basis == "observed":
+                result.warnings.append(
+                    f"{as_of} tarihi için seçilen sürümün sınırı yasal yürürlük tarihinden değil, indirme tarihlerinden türetildi; "
+                    "o günkü resmî metin ayrıca doğrulanmalıdır."
+                )
+            else:
+                result.warnings.append(f"Sonuç {as_of} tarihinde yürürlükte olan resmî sürüm(ler)den üretildi.")
+
+    def backfill_validity(self) -> int:
+        """Close open intervals of superseded approved snapshots (observed boundaries)."""
+        updated = 0
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM tariff_snapshots WHERE status='approved' ORDER BY source_id, retrieved_at ASC"
+            ).fetchall()
+            by_source: dict[str, list[sqlite3.Row]] = {}
+            for row in rows:
+                by_source.setdefault(row["source_id"], []).append(row)
+            for versions in by_source.values():
+                for older, newer in zip(versions, versions[1:]):
+                    if older["active"] or older["valid_to"]:
+                        continue
+                    valid_to, basis = close_previous(str(newer["valid_from"]), str(older["valid_from"]), str(newer["retrieved_at"]))
+                    db.execute("UPDATE tariff_snapshots SET valid_to=?, valid_to_basis=? WHERE id=?", (valid_to, basis, older["id"]))
+                    updated += 1
+            db.commit()
+        return updated
 
     # ---------------------------------------------------------- editorial review
     def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -769,11 +864,11 @@ class TariffEngine:
             if row is None:
                 raise KeyError(snapshot_id)
             if action == "approve":
-                db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (row["source_id"],))
                 db.execute(
-                    "UPDATE tariff_snapshots SET active=1, status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    "UPDATE tariff_snapshots SET status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
                     (reviewed_by, now, note, snapshot_id),
                 )
+                self._activate(db, row["source_id"], snapshot_id)
             else:
                 db.execute(
                     "UPDATE tariff_snapshots SET active=0, status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
@@ -898,6 +993,9 @@ class TariffEngine:
             archive_url=row["archive_url"], archive_sha256=row["archive_sha256"], retrieved_at=row["retrieved_at"],
             checked_at=checked_at or row["checked_at"], valid_from=row["valid_from"], measure_count=row["measure_count"],
             active=bool(row["active"]) if active is None else active,
+            valid_to=row["valid_to"] if "valid_to" in row.keys() else None,
+            valid_from_basis=(row["valid_from_basis"] if "valid_from_basis" in row.keys() else None) or "config",
+            valid_to_basis=row["valid_to_basis"] if "valid_to_basis" in row.keys() else None,
         )
 
     def status(self) -> TariffSyncStatus:
@@ -1071,7 +1169,11 @@ class TariffEngine:
         if engine is None:
             return
         try:
-            report = engine.lookup(result.gtip, result.origin_country)
+            as_of_day = parse_iso_date(result.as_of_date) if result.as_of_date else None
+            if as_of_day is not None and as_of_day < date.today():
+                report = engine.lookup(result.gtip, result.origin_country, today=as_of_day)
+            else:
+                report = engine.lookup(result.gtip, result.origin_country)
         except Exception:  # noqa: BLE001 – önlem verisi tarife sonucunu düşürmemeli
             logger.exception("Trade measure lookup failed for %s", result.gtip)
             return
@@ -1142,17 +1244,24 @@ class TariffEngine:
         dispatch_country: str | None = None,
         atr_certificate: bool | None = None,
         auto_sync: bool = True,
+        as_of: str | None = None,
     ) -> TariffLookupResult:
         normalised = _normalise_gtip(gtip)
         if not normalised or len(normalised) not in {4, 6, 8, 10, 12}:
             raise ValueError("Tarife sorgusu için 4, 6, 8, 10 veya 12 haneli HS/CN/GTİP kodu gereklidir.")
+        as_of = normalise_as_of(as_of)
         match_mode: Literal["exact", "prefix"] = "exact" if len(normalised) == 12 else "prefix"
         if auto_sync and not self.status().ready:
             await self.sync()
         with self._connect() as db:
-            snapshots = db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
+            snapshots = self._select_snapshots(db, as_of)
             if not snapshots:
-                result = TariffLookupResult(status="unavailable", gtip=normalised, origin_country=origin_country, dispatch_country=dispatch_country, as_of=_now(), warnings=["Resmî tarife tabloları henüz eşitlenmedi."])
+                message = (
+                    f"{as_of} tarihini kapsayan onaylı resmî tarife sürümü arşivde yok."
+                    if as_of and as_of < today_iso() else "Resmî tarife tabloları henüz eşitlenmedi."
+                )
+                result = TariffLookupResult(status="unavailable", gtip=normalised, origin_country=origin_country, dispatch_country=dispatch_country, as_of=_now(), warnings=[message])
+                self._stamp_validity(result, [], as_of)
                 self._attach_trade_measures(result)
                 return result
             all_rows: list[tuple[sqlite3.Row, sqlite3.Row]] = []
@@ -1180,6 +1289,7 @@ class TariffEngine:
                 as_of=_now(),
                 warnings=["Bu kod aktif resmî tarife/İGV tablolarında bulunamadı; kod ve fasıl doğrulaması gerekir."],
             )
+            self._stamp_validity(result, snapshots, as_of)
             self._attach_trade_measures(result)
             return result
 
@@ -1247,7 +1357,7 @@ class TariffEngine:
                     f"Resmî tablolar {measure_type} için aynı menşeye farklı sütun etiketleri kullanıyor: "
                     + " / ".join(sorted(groups))
                 )
-        if any(int(str(snapshot["valid_from"])[:4]) < datetime.now().year for snapshot in snapshots):
+        if not as_of and any(int(str(snapshot["valid_from"])[:4]) < datetime.now().year for snapshot in snapshots):
             warnings.append(
                 "Aktif tarife snapshot'ı cari yıldan eskidir; oran otomatik karar için kullanılmadan önce yıllık cetvel güncellemesi doğrulanmalıdır."
             )
@@ -1379,6 +1489,7 @@ class TariffEngine:
             alternatives=alternatives[:120], snapshots=[self._snapshot(row) for row in snapshots],
             measure_coverage=coverage, unresolved_measure_types=unresolved, warnings=warnings, as_of=_now(),
         )
+        self._stamp_validity(result, snapshots, as_of)
         self._attach_trade_measures(result)
         return result
 
@@ -1388,6 +1499,7 @@ class TariffEngine:
         *,
         origin_country: str | None = None,
         auto_sync: bool = True,
+        as_of: str | None = None,
     ) -> TariffDecisionTreeResult:
         """Return the next official tariff level without guessing a child code.
 
@@ -1423,7 +1535,7 @@ class TariffEngine:
                 as_of=_now(),
             )
 
-        current = await self.lookup(normalised, origin_country=origin_country, auto_sync=False)
+        current = await self.lookup(normalised, origin_country=origin_country, auto_sync=False, as_of=as_of)
         if current.status in {"not_found", "unavailable"} or current.matched_gtip_count < 1:
             return TariffDecisionTreeResult(
                 status="not_found" if current.status == "not_found" else "unavailable",
@@ -1431,7 +1543,7 @@ class TariffEngine:
                 level=level_by_length[len(normalised)],
                 origin_country=origin_country,
                 warnings=current.warnings,
-                as_of=current.as_of,
+                as_of=current.as_of, as_of_date=current.as_of_date, validity_basis=current.validity_basis,
             )
 
         if len(normalised) == 12:
@@ -1443,7 +1555,7 @@ class TariffEngine:
                 requires_user_selection=False,
                 exact_gtip_selected=True,
                 warnings=current.warnings,
-                as_of=current.as_of,
+                as_of=current.as_of, as_of_date=current.as_of_date, validity_basis=current.validity_basis,
             )
 
         child_length, next_level = next_by_length[len(normalised)]
@@ -1496,7 +1608,7 @@ class TariffEngine:
             requires_user_selection=True,
             exact_gtip_selected=False,
             warnings=warnings,
-            as_of=current.as_of,
+            as_of=current.as_of, as_of_date=current.as_of_date, validity_basis=current.validity_basis,
         )
 
     async def calculate(
@@ -1507,10 +1619,11 @@ class TariffEngine:
         *,
         dispatch_country: str | None = None,
         atr_certificate: bool | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Apply only one unambiguous, unfootnoted official rate per measure type."""
         lookup = await self.lookup(
-            gtip, origin_country=origin_country, dispatch_country=dispatch_country, atr_certificate=atr_certificate
+            gtip, origin_country=origin_country, dispatch_country=dispatch_country, atr_certificate=atr_certificate, as_of=as_of
         )
         safe_rates = lookup.unambiguous_rates
         conflicts = [
@@ -1585,6 +1698,8 @@ class TariffEngine:
         return {
             "tariff": lookup.model_dump(mode="json"),
             "cost": cost.model_dump(mode="json"),
+            "as_of_date": lookup.as_of_date,
+            "validity_basis": lookup.validity_basis,
             "legal_notice": (
                 "Hesap, gösterilen snapshot ve kullanıcı girdileriyle hazırlanmış ön çalışmadır. "
                 "GTİP, menşe, kıymet, belge ve yürürlük durumu gümrük işlemi öncesinde doğrulanmalıdır."

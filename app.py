@@ -65,6 +65,7 @@ from mevzuat_mcp_server import (
     app as mcp,
 )
 from security_firewall import AgentTokenVerifier, SecurityViolation, guard_data, redact_data
+from temporal import normalise_as_of, parse_iso_date, today_iso
 from exchange_rates import ExchangeRateError, parse_registration_date
 from eylemio_client import EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, summary_lines as trade_measure_summary
@@ -2103,6 +2104,19 @@ async def web_classification_evidence(request: Request):
         return JSONResponse({"error": "Resmî sınıflandırma kanıtları şu anda sorgulanamadı."}, status_code=502)
 
 
+
+def _as_of_param(request: Request, body: dict[str, Any] | None, *, query: bool = False) -> str | None:
+    """Validate the optional as-of date; a past date requires the temporal_query feature.
+
+    Today (or no date) is the normal current lookup and stays open to everyone.
+    """
+    raw = (request.query_params.get("as_of") if query else None) or (body or {}).get("as_of")
+    as_of = normalise_as_of(raw)  # ValueError → 422 by the caller
+    if as_of and as_of < today_iso():
+        require_feature(request, "temporal_query")
+    return as_of
+
+
 @mcp.custom_route("/api/tariff/lookup", methods=["POST"])
 async def web_tariff_lookup(request: Request):
     """Look up official customs/IGV rows for a 6/8/10/12 digit tariff code and origin."""
@@ -2113,13 +2127,19 @@ async def web_tariff_lookup(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Tarife isteği bir nesne olmalıdır.")
+        as_of = _as_of_param(request, body)
         result = await tariff_engine.lookup(
             str(body.get("gtip", "")),
             origin_country=str(body.get("origin_country", "")).strip()[:100] or None,
             dispatch_country=str(body.get("dispatch_country", "") or "").strip()[:100] or None,
             atr_certificate=_tri_state(body.get("atr_certificate")),
+            as_of=as_of,
         )
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2137,11 +2157,17 @@ async def web_tariff_tree(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Tarife karar ağacı isteği bir nesne olmalıdır.")
+        as_of = _as_of_param(request, body)
         result = await tariff_engine.decision_tree(
             str(body.get("gtip", "")),
             origin_country=str(body.get("origin_country", "")).strip() or None,
+            as_of=as_of,
         )
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2163,11 +2189,18 @@ async def web_tariff_cost(request: Request):
         origin = str(body.pop("origin_country", "")).strip()[:100]
         dispatch = str(body.pop("dispatch_country", "") or "").strip()[:100] or None
         atr_certificate = _tri_state(body.pop("atr_certificate", None))
+        as_of = _as_of_param(request, {"as_of": body.pop("as_of", None)})
         if not origin:
             raise ValueError("Menşe ülke gereklidir.")
         inputs = LandedCostInput.model_validate(body)
-        result = await tariff_engine.calculate(gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate)
+        result = await tariff_engine.calculate(
+            gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
+        )
         return JSONResponse(result)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except ValidationError as exc:
         message = exc.errors(include_url=False)[0].get("msg", "Alanları kontrol edin.")
         return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
@@ -2211,7 +2244,14 @@ async def web_trade_measures(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("İstek bir nesne olmalıdır.")
-        report = trade_measure_engine.lookup(str(body.get("gtip", "")), (body.get("origin_country") or None))
+        as_of = _as_of_param(request, body)
+        report = trade_measure_engine.lookup(
+            str(body.get("gtip", "")), (body.get("origin_country") or None), today=parse_iso_date(as_of) if as_of else None
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     payload = report.as_dict()
@@ -2435,11 +2475,17 @@ async def web_tariff_scenarios(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     try:
-        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(await request.json())
+        body = await request.json()
+        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(body)
+        as_of = _as_of_param(request, body)
         rows = await build_origin_scenarios(
-            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
         )
-        return JSONResponse({"gtip": gtip, "dispatch_country": dispatch, "rows": rows, "generated_at": time.time()})
+        return JSONResponse({"gtip": gtip, "dispatch_country": dispatch, "as_of": as_of, "rows": rows, "generated_at": time.time()})
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2522,8 +2568,13 @@ async def web_control_lookup(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Kontrol isteği bir nesne olmalıdır.")
-        result = await control_engine.lookup(str(body.get("gtip", "")))
+        as_of = _as_of_param(request, body)
+        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of)
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:

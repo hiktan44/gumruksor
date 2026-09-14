@@ -1278,3 +1278,10 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .savings-best td:first-child { font-weight: 700; color: var(--teal-dark, var(--teal)); }
 .savings-negative { color: var(--danger); }
 .savings-list { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: .63rem; line-height: 1.7; }
+
+/* Temporal validity badge */
+.validity-badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; vertical-align: middle; }
+.validity-current { background: rgba(16,185,129,0.18); color: #059669; }
+.validity-legal { background: rgba(14,165,233,0.18); color: #0369a1; }
+.validity-observed { background: rgba(245,158,11,0.2); color: #b45309; }
+.validity-unavailable { background: rgba(248,113,113,0.2); color: #b91c1c; }

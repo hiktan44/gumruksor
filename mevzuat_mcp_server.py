@@ -7,6 +7,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pydantic import Field
+from datetime import date
 from typing import Callable, Coroutine, Any, Literal, Optional
 
 from fastmcp import FastMCP
@@ -123,6 +124,9 @@ async def backfill_change_ledger() -> None:
                 "classification": classification_engine.backfill_ledger(),
                 "trade_measures": trade_measure_engine.store.backfill_ledger(),
                 "measure_rows": trade_measure_engine.store.ensure_measure_rows(),
+                # Temporal validity: close open intervals of superseded snapshots (PRD Faz 1.4).
+                "tariff_validity": tariff_engine.backfill_validity(),
+                "control_validity": control_engine.backfill_validity(),
             }
         )
         if any(counts.values()):
@@ -2652,6 +2656,7 @@ async def lookup_tariff_measures(
         None, max_length=100,
         description="Sevk/çıkış ülkesi menşeden farklıysa; AB'den A.TR ile gelen üçüncü ülke menşeli eşyada gümrük vergisi ve İGV ayrı sütunlardan değerlendirilir.",
     ),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); o gün geçerli olan resmî sürüm seçilir. Boşsa bugün."),
 ) -> TariffLookupResult:
     """Return source-row-level customs duty and additional-duty evidence.
 
@@ -2661,7 +2666,7 @@ async def lookup_tariff_measures(
     A rate is automatic only when every matching subline has the same unfootnoted rate.
     """
     return await tariff_engine.lookup(
-        gtip, origin_country=origin_country, dispatch_country=dispatch_country, atr_certificate=atr_certificate
+        gtip, origin_country=origin_country, dispatch_country=dispatch_country, atr_certificate=atr_certificate, as_of=as_of
     )
 
 
@@ -2710,6 +2715,7 @@ async def get_customs_exchange_rate(
 async def lookup_trade_measures(
     gtip: str = Field(..., min_length=4, max_length=20, description="4-12 haneli GTİP; kısa kodlar ön ek olarak eşlenir."),
     origin_country: Optional[str] = Field(None, max_length=100, description="Menşe ülke; damping önlemleri ülkeye göre süzülür."),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); süre/bitiş değerlendirmesi o güne göre yapılır."),
 ) -> dict:
     """Return official anti-dumping / countervailing, safeguard and surveillance coverage for a code.
 
@@ -2718,7 +2724,8 @@ async def lookup_trade_measures(
     yazıldığı gibi döner ve hesaba otomatik girilmez.
     """
     try:
-        report = trade_measure_engine.lookup(gtip, origin_country)
+        as_of_day = date.fromisoformat(as_of) if as_of else None
+        report = trade_measure_engine.lookup(gtip, origin_country, today=as_of_day)
     except ValueError as exc:
         return {"error": str(exc)}
     payload = report.as_dict()
@@ -2823,6 +2830,7 @@ async def resolve_turkish_tariff_tree(
         description="Kullanıcının seçtiği 4/6/8/10/12 haneli tarife dalı.",
     ),
     origin_country: Optional[str] = Field(None, max_length=100),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); boşsa bugün."),
 ) -> TariffDecisionTreeResult:
     """Expose every immediate official child without ranking or auto-selecting one.
 
@@ -2830,7 +2838,7 @@ async def resolve_turkish_tariff_tree(
     For a shorter prefix, rates are safe only when returned as unambiguous across
     every descendant.  The tool never proves that the goods belong in a branch.
     """
-    return await tariff_engine.decision_tree(gtip, origin_country=origin_country)
+    return await tariff_engine.decision_tree(gtip, origin_country=origin_country, as_of=as_of)
 
 
 @app.tool(
@@ -2912,6 +2920,7 @@ async def calculate_import_landed_cost(
         ),
         dispatch_country=dispatch_country,
         atr_certificate=atr_certificate,
+        as_of=as_of,
     )
 
 
@@ -2965,6 +2974,7 @@ async def sync_import_control_rules(
 )
 async def lookup_import_controls(
     gtip: str = Field(..., pattern=r"^(?:\d[. ]*){12}$", description="Noktalı veya düz 12 haneli Türk GTİP."),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); o gün geçerli tebliğ sürümleri kullanılır."),
 ) -> ImportControlLookupResult:
     """Find GTIP annex matches without claiming automatic physical inspection.
 
@@ -2972,7 +2982,7 @@ async def lookup_import_controls(
     annex. Product nature, exemptions and the authority's risk result must still
     be checked. Private laboratories are never presented as automatically required.
     """
-    return await control_engine.lookup(gtip)
+    return await control_engine.lookup(gtip, as_of=as_of)
 
 
 @app.tool(

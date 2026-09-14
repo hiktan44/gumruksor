@@ -2525,6 +2525,20 @@ function renderTradeMeasures(trade) {
     <p class="rate-warning">${escapeHtml(tradeSourceText(trade.sources))}. Oran ve tutarlar resmî tabloda yazıldığı gibidir; firma bazlı oranlar ve kontenjan muafiyetleri için tebliğ metnini doğrulayın.</p></details>`;
 }
 
+const VALIDITY_LABELS = {
+  current: ["Bugün yürürlükte", "Aktif resmî sürüm"],
+  legal: ["Yasal yürürlük aralığı", "Sürüm sınırları resmî yürürlük tarihlerinden"],
+  observed: ["Gözlemlenen aralık", "Sürüm sınırı indirme tarihlerinden türetildi; o günkü resmî metni ayrıca doğrulayın"],
+  unavailable: ["Sürüm yok", "Bu tarihi kapsayan onaylı sürüm arşivde yok"],
+};
+
+function validityBadgeHtml(result) {
+  if (!result || !result.validity_basis) return "";
+  const [label, title] = VALIDITY_LABELS[result.validity_basis] || [result.validity_basis, ""];
+  const when = result.as_of_date ? ` · ${escapeHtml(result.as_of_date)}` : "";
+  return ` <span class="validity-badge validity-${escapeHtml(result.validity_basis)}" title="${escapeHtml(title)}">${escapeHtml(label)}${when}</span>`;
+}
+
 function renderTariffTool(data) {
   exportStore.tool = data;
   const tariff = data.tariff || data;
@@ -2537,7 +2551,7 @@ function renderTariffTool(data) {
     ${cost.unit_landed_cost != null ? `<div class="formula-line"><strong>Birim maliyet</strong><code>${numberFormat.format(cost.unit_landed_cost)} ${escapeHtml(cost.currency)}</code></div>` : ""}
     ${(cost.missing_rates || []).length ? `<div class="result-caution"><b>Toplam için eksik girdiler:</b> ${cost.missing_rates.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}
     <p class="rate-warning">Kredili/vadeli ödemede KKDF eklenir, peşin ödemede bu kalem %0'dır. Beyanname damga vergisi ve TL giderler kur girildiğinde TL özetinde gösterilir. Kesin tutar için beyan öncesi gümrük müşaviri teyidi alın.</p></div>${renderLiraSummary(cost.try_summary)}` : "";
-  return `<div class="answer-head"><span class="answer-status${tariff.status === "matched" ? "" : " warning"}">${escapeHtml(tariff.status)}</span><div><h2>${escapeHtml(tariff.gtip)} · ${escapeHtml(tariff.origin_country || "menşe seçilmedi")}</h2><p>Ülke grubu: ${escapeHtml(tariff.resolved_country_group || "çözümlenmedi")} · ${escapeHtml(tariff.as_of)}</p></div></div>
+  return `<div class="answer-head"><span class="answer-status${tariff.status === "matched" ? "" : " warning"}">${escapeHtml(tariff.status)}</span><div><h2>${escapeHtml(tariff.gtip)} · ${escapeHtml(tariff.origin_country || "menşe seçilmedi")}</h2><p>Ülke grubu: ${escapeHtml(tariff.resolved_country_group || "çözümlenmedi")} · ${escapeHtml(tariff.as_of)}${validityBadgeHtml(tariff)}</p></div></div>
     ${tariffMatchSummary(tariff)}
     ${renderTradeMeasures(tariff.trade_measures)}
     ${renderExciseTax(tariff.excise_tax)}
@@ -2592,7 +2606,13 @@ $("#tariffForm").addEventListener("submit", async (event) => {
     origin_country: $("#tariffOrigin").value.trim(),
     dispatch_country: $("#tariffDispatch")?.value.trim() || null,
     atr_certificate: $("#tariffAtr")?.value || null,
+    as_of: $("#tariffAsOf")?.value || null,
   };
+  if (common.as_of && common.as_of < new Date().toISOString().slice(0, 10) && !hasCapability("temporal_query")) {
+    output.innerHTML = featureUpsellHtml("temporal_query");
+    button.disabled = false;
+    return;
+  }
   try {
     const invoice = nullableNumber("#tariffInvoice");
     const data = invoice == null

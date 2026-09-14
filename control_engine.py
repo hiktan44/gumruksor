@@ -42,6 +42,10 @@ from bedesten_client import BedestenClient
 from trusted_certificates import GEOTRUST_TLS_RSA_CA_G1_PEM
 from change_ledger import batch_id_for, diff_rows
 from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
+from temporal import (
+    close_previous, covers, ensure_validity_columns, extract_effective_date, normalise_as_of, snapshot_validity, today_iso,
+    validity_basis,
+)
 from security_firewall import validate_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -131,6 +135,9 @@ class ImportControlLookupResult(BaseModel):
     matches: list[ImportControlMatch] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     as_of: str
+    as_of_date: str | None = None
+    validity_basis: Literal["current", "legal", "observed", "unavailable"] = "current"
+    snapshot_validity: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ControlSnapshot(BaseModel):
@@ -143,6 +150,8 @@ class ControlSnapshot(BaseModel):
     valid_from: str
     scope_count: int
     active: bool
+    valid_to: str | None = None
+    valid_from_basis: str = "config"
 
 
 class ControlSyncStatus(BaseModel):
@@ -570,6 +579,8 @@ class ImportControlEngine:
                 if column not in snapshot_columns:
                     db.execute(f"ALTER TABLE control_snapshots ADD COLUMN {column} TEXT")
             ensure_review_columns(db, "control_snapshots")
+            ensure_validity_columns(db, "control_snapshots")
+            ensure_validity_columns(db, "control_snapshots", (("effective_clause", "TEXT"),))
             columns = {row[1] for row in db.execute("PRAGMA table_info(control_scope)").fetchall()}
             if "excluded" not in columns:
                 db.execute("ALTER TABLE control_scope ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0")
@@ -805,6 +816,10 @@ class ImportControlEngine:
                     exemptions_json = json.dumps(extract_exemptions(text), ensure_ascii=False)
                     retrieved_at = _now()
                     source_url = document.url or f"https://www.mevzuat.gov.tr/MevzuatMetin/9.5.{document.mevzuat_no}.pdf"
+                    effective_date, effective_clause, effective_basis = extract_effective_date(
+                        text, document.resmi_gazete_tarihi, floor=self.valid_from
+                    )
+                    valid_from = effective_date or self.valid_from
                     with self._connect() as db:
                         existing = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
                         if existing is not None and row_review_fields(existing)["status"] != "approved":
@@ -824,16 +839,18 @@ class ImportControlEngine:
                                 document_sha256, retrieved_at, valid_from, scope_count,
                                 authority, system, risk_based,
                                 physical_inspection_possible, laboratory_test_possible,
-                                required_documents_excerpt, required_documents_json, exemptions_json, active, status
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending_review')
+                                required_documents_excerpt, required_documents_json, exemptions_json, active, status,
+                                valid_from_basis, effective_clause
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending_review',?,?)
                             """,
                             (
                                 snapshot_id, config["code"], document.mevzuat_adi, config["category"],
                                 document.mevzuat_id, source_url, document.resmi_gazete_tarihi,
-                                document.resmi_gazete_sayisi, digest, retrieved_at, self.valid_from,
+                                document.resmi_gazete_sayisi, digest, retrieved_at, valid_from,
                                 sum(not row.excluded for row in scope), process["authority"], process["system"],
                                 int(process["risk_based"]), int(process["physical_inspection_possible"]),
                                 int(process["laboratory_test_possible"]), documents, documents_json, exemptions_json,
+                                effective_basis, effective_clause,
                             ),
                         )
                         db.execute("DELETE FROM control_scope WHERE snapshot_id=?", (snapshot_id,))
@@ -871,8 +888,7 @@ class ImportControlEngine:
                             (decision.status, warnings_json, diff_json, snapshot_id),
                         )
                         if not decision.pending:
-                            db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (config["code"],))
-                            db.execute("UPDATE control_snapshots SET active=1 WHERE id=?", (snapshot_id,))
+                            self._activate(db, config["code"], snapshot_id)
                     successes += 1
                     self._record_ledger_batch(snapshot_id, previous, parse_warnings=parse_warnings, changes=changes, review_status=decision.status)
                     if decision.pending:
@@ -983,6 +999,43 @@ class ImportControlEngine:
         except (ValueError, TypeError):
             return False
 
+    # ---------------------------------------------------------- temporal validity
+    @staticmethod
+    def _activate(db: sqlite3.Connection, code: str, snapshot_id: str) -> None:
+        new = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        for old in db.execute("SELECT * FROM control_snapshots WHERE code=? AND active=1 AND id<>?", (code, snapshot_id)).fetchall():
+            valid_to, basis = close_previous(str(new["valid_from"]), str(old["valid_from"]), str(new["retrieved_at"]))
+            db.execute("UPDATE control_snapshots SET valid_to=?, valid_to_basis=? WHERE id=?", (valid_to, basis, old["id"]))
+        db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (code,))
+        db.execute("UPDATE control_snapshots SET active=1, valid_to=NULL, valid_to_basis=NULL WHERE id=?", (snapshot_id,))
+
+    def _select_snapshot_ids(self, db: sqlite3.Connection, as_of: str | None) -> list[sqlite3.Row] | None:
+        """None → use the active flag; otherwise the approved rows covering ``as_of`` (one per code)."""
+        if not as_of or as_of >= today_iso():
+            return None
+        rows = db.execute("SELECT * FROM control_snapshots WHERE status='approved' ORDER BY code, retrieved_at DESC").fetchall()
+        chosen: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            if row["code"] not in chosen and covers(row, as_of):
+                chosen[row["code"]] = row
+        return list(chosen.values())
+
+    def backfill_validity(self) -> int:
+        updated = 0
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM control_snapshots WHERE status='approved' ORDER BY code, retrieved_at ASC").fetchall()
+            by_code: dict[str, list[sqlite3.Row]] = {}
+            for row in rows:
+                by_code.setdefault(row["code"], []).append(row)
+            for versions in by_code.values():
+                for older, newer in zip(versions, versions[1:]):
+                    if older["active"] or older["valid_to"]:
+                        continue
+                    valid_to, basis = close_previous(str(newer["valid_from"]), str(older["valid_from"]), str(newer["retrieved_at"]))
+                    db.execute("UPDATE control_snapshots SET valid_to=?, valid_to_basis=? WHERE id=?", (valid_to, basis, older["id"]))
+                    updated += 1
+        return updated
+
     # ---------------------------------------------------------- editorial review
     def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
         item = {
@@ -1011,11 +1064,11 @@ class ImportControlEngine:
             if row is None:
                 raise KeyError(snapshot_id)
             if action == "approve":
-                db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (row["code"],))
                 db.execute(
-                    "UPDATE control_snapshots SET active=1, status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    "UPDATE control_snapshots SET status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
                     (reviewed_by, now, note, snapshot_id),
                 )
+                self._activate(db, row["code"], snapshot_id)
             else:
                 db.execute(
                     "UPDATE control_snapshots SET active=0, status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
@@ -1037,6 +1090,8 @@ class ImportControlEngine:
             id=row["id"], code=row["code"], title=row["title"], mevzuat_id=row["mevzuat_id"],
             document_sha256=row["document_sha256"], retrieved_at=row["retrieved_at"],
             valid_from=row["valid_from"], scope_count=row["scope_count"], active=bool(row["active"]),
+            valid_to=row["valid_to"] if "valid_to" in row.keys() else None,
+            valid_from_basis=(row["valid_from_basis"] if "valid_from_basis" in row.keys() else None) or "config",
         )
 
     @staticmethod
@@ -1085,31 +1140,56 @@ class ImportControlEngine:
             scope_count=count, errors=list(self._errors), sync_interval_seconds=self.sync_interval_seconds,
         )
 
-    async def lookup(self, gtip: str) -> ImportControlLookupResult:
+    async def lookup(self, gtip: str, *, as_of: str | None = None) -> ImportControlLookupResult:
         code = _normalise_gtip(gtip)
         if code is None or len(code) not in {4, 6, 8, 10, 12}:
             raise ValueError("Kontrol sorgusu için 4, 6, 8, 10 veya 12 haneli GTİP gereklidir.")
+        as_of = normalise_as_of(as_of)
         if not self.status().ready:
             return ImportControlLookupResult(
                 status="unavailable", gtip=code,
                 scope_determination="unavailable",
                 warnings=["Resmî kontrol tebliğleri arka planda eşitleniyor; uygunluk hakkında sonuç verilmedi. Kısa süre sonra yeniden deneyin."],
-                as_of=_now(),
+                as_of=_now(), as_of_date=as_of or today_iso(), validity_basis="unavailable",
             )
         with self._connect() as db:
+            selected = self._select_snapshot_ids(db, as_of)
+            if selected is None:
+                selected_rows = db.execute("SELECT * FROM control_snapshots WHERE active=1").fetchall()
+                snapshot_filter, params = "d.active=1", []
+            else:
+                selected_rows = selected
+                if not selected_rows:
+                    return ImportControlLookupResult(
+                        status="unavailable", gtip=code, scope_determination="unavailable",
+                        warnings=[f"{as_of} tarihini kapsayan onaylı kontrol tebliği sürümü arşivde yok."],
+                        as_of=_now(), as_of_date=as_of, validity_basis="unavailable",
+                    )
+                placeholders = ",".join("?" for _ in selected_rows)
+                snapshot_filter, params = f"d.id IN ({placeholders})", [row["id"] for row in selected_rows]
             rows = db.execute(
-                """
+                f"""
                 SELECT d.*, s.gtip_prefix, s.description, s.source_line, s.source_offset, s.excluded, s.list_kind
                 FROM control_scope s
                 JOIN control_snapshots d ON d.id=s.snapshot_id
-                WHERE d.active=1 AND (
+                WHERE {snapshot_filter} AND (
                     substr(?,1,length(s.gtip_prefix))=s.gtip_prefix
                     OR substr(s.gtip_prefix,1,length(?))=?
                 )
                 ORDER BY length(s.gtip_prefix) DESC, d.code
                 """,
-                (code, code, code),
+                (*params, code, code, code),
             ).fetchall()
+        validity_rows = [row for row in selected_rows if any(row["id"] == hit["id"] for hit in rows)] or selected_rows
+        bases = {validity_basis(row, as_of) for row in validity_rows}
+        basis = "observed" if "observed" in bases else "legal" if "legal" in bases else "current"
+        temporal_warnings: list[str] = []
+        if as_of and as_of < today_iso():
+            temporal_warnings.append(
+                f"Sonuç {as_of} tarihinde yürürlükte olan tebliğ sürümlerinden üretildi"
+                + ("; sürüm sınırı indirme tarihlerinden türetildi, o günkü resmî metin ayrıca doğrulanmalıdır." if basis == "observed" else ".")
+            )
+        validity_info = [snapshot_validity(row) for row in validity_rows]
         excluded_by_rule: dict[str, list[sqlite3.Row]] = {}
         for row in rows:
             if row["excluded"]:
@@ -1164,7 +1244,8 @@ class ImportControlEngine:
         return ImportControlLookupResult(
             status="matched" if matches else "not_found", gtip=code, matches=matches,
             scope_determination="annex_match" if matches else "no_indexed_match",
-            warnings=warnings, as_of=_now(),
+            warnings=warnings + temporal_warnings, as_of=_now(),
+            as_of_date=as_of or today_iso(), validity_basis=basis, snapshot_validity=validity_info,
         )
 
     def changes(self, code: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
