@@ -433,7 +433,9 @@ class AssistantRouteTests(unittest.TestCase):
         self.assertEqual(response.json()["code"], "quota_exceeded")
 
     def test_rate_limit_is_ten_per_minute(self) -> None:
-        with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()):
+        # Sabit pencereli sayaç dakika sınırında sıfırlanır; saat dondurularak test kararlı tutulur.
+        with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()), \
+                patch("time.time", return_value=1_770_000_000.0):
             codes = [self.post({"question": "Oran nedir?"}).status_code for _ in range(11)]
         self.assertEqual(codes[:10], [200] * 10)
         self.assertEqual(codes[10], 429)
