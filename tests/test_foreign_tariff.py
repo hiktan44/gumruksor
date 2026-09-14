@@ -472,6 +472,26 @@ class EngineTests(unittest.TestCase):
         self.assertIsNone(swiss.matched_code)
         self.assertTrue(swiss.links)
 
+    def test_new_dataset_is_not_blocked_by_the_other_stamp(self):
+        """Yeni eklenen bir veri seti, diğerinin taze damgası yüzünden beklememeli."""
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        # İsviçre verisini sıfırla: kurulumda UK zaten eşitlenmiş gibi davran.
+        with engine.store.connect() as connection:
+            connection.execute("DELETE FROM snapshots WHERE dataset=?", (ft.CH_DATASET,))
+            connection.execute("DELETE FROM metadata WHERE key LIKE 'last_checked_at%'")
+        engine.store.set_metadata(f"last_checked_at:{ft.UK_DATASET}", ft._now())
+        engine.store.set_metadata("last_checked_at", ft._now())
+        status = asyncio.run(engine.sync())  # force YOK
+        self.assertTrue(status["swiss_ready"], "hiç eşitlenmemiş veri seti hemen çekilmeli")
+
+    def test_recent_stamp_skips_resync(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        before = len(self.calls)
+        asyncio.run(engine.sync())  # force YOK, ikisi de taze
+        self.assertEqual(len(self.calls), before, "aralık dolmadan yeniden indirilmemeli")
+
     def test_swiss_corpus_rows_included(self):
         engine = self._engine()
         asyncio.run(engine.sync(force=True))
