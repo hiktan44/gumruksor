@@ -1806,6 +1806,7 @@ async def web_customs_ingest_shipping_document(request: Request):
         )
     data = result.model_dump(mode="json")
     data["document_type_label"] = result.document_type_label
+    data["payment_method_label"] = result.payment_method_label
     return JSONResponse(redact_data(data, contact_data=True))
 
 

@@ -4,6 +4,8 @@ import base64
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -15,10 +17,12 @@ from starlette.testclient import TestClient
 import app as web_app
 import shipping_documents as sd
 from shipping_documents import (
+    PAYMENT_METHOD_LABELS,
     ShippingDocumentExtraction,
     decode_document_data_url,
     extract_shipping_document,
     normalise_extraction,
+    payment_terms_to_method,
     _to_number,
 )
 
@@ -65,7 +69,10 @@ RAW_REPLY = {
     "invoice_total": "24,500.00",
     "currency": "usd",
     "freight_amount": None,
+    "freight_currency": None,
     "insurance_amount": None,
+    "insurance_currency": None,
+    "payment_terms": None,
     "quantity": "3600",
     "quantity_unit": "pcs",
     "marks_and_numbers": "N/M",
@@ -111,6 +118,10 @@ class NormalisationTests(unittest.TestCase):
         self.assertEqual(model.document_type_label, "Konşimento (Bill of Lading)")
         self.assertTrue(model.user_confirmation_required)
         self.assertIn("HS kodları öneridir", model.warning)
+        self.assertIsNone(model.freight_currency)
+        self.assertIsNone(model.payment_terms)
+        self.assertIsNone(model.payment_method)
+        self.assertEqual(model.payment_method_label, "")
 
     def test_unknown_codes_fall_back_safely(self) -> None:
         model = ShippingDocumentExtraction.model_validate({
@@ -135,6 +146,116 @@ class NormalisationTests(unittest.TestCase):
             decode_document_data_url(_data_url(b"", "image/png"))
 
 
+class CostFieldTests(unittest.TestCase):
+    """PRD Faz 2.5: navlun, sigorta, ödeme şekli alanlarının doğrulanması."""
+
+    def test_payment_terms_to_method_table(self) -> None:
+        cases = [
+            ("Peşin", "cash_in_advance"),
+            ("PEŞİN ÖDEME", "cash_in_advance"),
+            ("advance", "cash_in_advance"),
+            ("T/T in advance", "cash_in_advance"),
+            ("100% advance payment by TT", "cash_in_advance"),
+            ("Cash in advance (CIA)", "cash_in_advance"),
+            ("Mal mukabili", "cash_against_goods"),
+            ("open account 60 days", "cash_against_goods"),
+            ("Cash against goods", "cash_against_goods"),
+            ("Vesaik mukabili", "cash_against_documents"),
+            ("CAD", "cash_against_documents"),
+            ("D/P at sight", "cash_against_documents"),
+            ("Documents against payment", "cash_against_documents"),
+            ("Akreditif", "letter_of_credit"),
+            ("Vadeli akreditif", "letter_of_credit"),
+            ("L/C at sight", "letter_of_credit"),
+            ("Irrevocable letter of credit", "letter_of_credit"),
+            ("Kabul kredili", "acceptance_credit"),
+            ("D/A 90 days", "acceptance_credit"),
+            ("Documents against acceptance", "acceptance_credit"),
+            # Karışık ifadede KKDF'ye konu vadeli/vesaik kısmı kazanır.
+            ("30% T/T in advance, balance D/P", "cash_against_documents"),
+            # Tanınmayan ifadeler ve navlun ödeme şekli None kalır.
+            ("Freight collect", None),
+            ("Net 30 days", None),
+            ("", None),
+            (None, None),
+            (["Peşin"], None),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(payment_terms_to_method(text), expected)
+        self.assertEqual(set(PAYMENT_METHOD_LABELS), {
+            "cash_in_advance", "cash_against_goods", "cash_against_documents", "letter_of_credit", "acceptance_credit",
+        })
+
+    def test_cost_fields_are_validated(self) -> None:
+        model = ShippingDocumentExtraction.model_validate({
+            "provider": "zai", "model": "glm",
+            "invoice_total": "24.500,00", "currency": "usd",
+            "freight_amount": "1,250.00", "freight_currency": "usd",
+            "insurance_amount": 80, "insurance_currency": "eur",
+            "payment_terms": "Payment: L/C at sight",
+        })
+        self.assertEqual(model.invoice_total, 24500.0)
+        self.assertEqual(model.currency, "USD")
+        self.assertEqual(model.freight_amount, 1250.0)
+        self.assertEqual(model.freight_currency, "USD")
+        self.assertEqual(model.insurance_amount, 80.0)
+        self.assertEqual(model.insurance_currency, "EUR")
+        self.assertEqual(model.payment_terms, "Payment: L/C at sight")
+        self.assertEqual(model.payment_method, "letter_of_credit")
+        self.assertEqual(model.payment_method_label, "Akreditif")
+
+    def test_invalid_cost_values_fall_back_to_null(self) -> None:
+        model = ShippingDocumentExtraction.model_validate({
+            "provider": "zai", "model": "glm",
+            "invoice_total": "-100", "freight_amount": -5, "insurance_amount": "yok",
+            "freight_currency": "dollars", "insurance_currency": "€", "currency": "TL",
+            "payment_terms": "   ", "payment_method": "bitcoin",
+        })
+        self.assertIsNone(model.invoice_total)
+        self.assertIsNone(model.freight_amount)
+        self.assertIsNone(model.insurance_amount)
+        self.assertIsNone(model.freight_currency)
+        self.assertIsNone(model.insurance_currency)
+        self.assertEqual(model.currency, "TRY")
+        self.assertIsNone(model.payment_terms)
+        self.assertIsNone(model.payment_method)
+
+    def test_explicit_payment_method_is_kept_when_terms_are_unknown(self) -> None:
+        model = ShippingDocumentExtraction.model_validate({
+            "provider": "zai", "model": "glm", "payment_terms": "Net 30", "payment_method": "cash-against-goods",
+        })
+        self.assertEqual(model.payment_method, "cash_against_goods")
+        derived = ShippingDocumentExtraction.model_validate({
+            "provider": "zai", "model": "glm", "payment_terms": "Mal mukabili", "payment_method": "letter_of_credit",
+        })
+        # Açık anahtar geçerliyse korunur; ham metinden türetme yalnız anahtar yokken yapılır.
+        self.assertEqual(derived.payment_method, "letter_of_credit")
+
+    def test_normalisation_derives_method_from_terms_and_ignores_bad_model_key(self) -> None:
+        data = normalise_extraction({
+            **RAW_REPLY, "payment_terms": "Vesaik mukabili", "payment_method": "letter_of_credit",
+            "freight_currency": "eur", "insurance_currency": "n/a",
+        })
+        self.assertEqual(data["payment_terms"], "Vesaik mukabili")
+        # Sunucu ham metni esas alır; model anahtarı yalnız metin tanınmazsa yedektir.
+        self.assertEqual(data["payment_method"], "cash_against_documents")
+        self.assertEqual(data["freight_currency"], "EUR")
+        self.assertIsNone(data["insurance_currency"])
+        fallback = normalise_extraction({**RAW_REPLY, "payment_terms": "Net 30", "payment_method": "cash_in_advance"})
+        self.assertEqual(fallback["payment_method"], "cash_in_advance")
+        self.assertIsNone(normalise_extraction({**RAW_REPLY, "payment_method": "cash"})["payment_method"])
+
+    def test_prompt_and_schema_cover_cost_fields(self) -> None:
+        for key in ("freight_currency", "insurance_currency", "payment_terms"):
+            self.assertIn(key, sd._SHIPPING_SCHEMA["properties"])
+            self.assertIn(key, sd._SHIPPING_SCHEMA["required"])
+            self.assertIn(key, sd._SHIPPING_PROMPT)
+        self.assertNotIn("payment_method", sd._SHIPPING_SCHEMA["properties"])
+        self.assertIn("hesaplama veya tahmin", sd._SHIPPING_PROMPT)
+        self.assertIn("freight prepaid/collect", sd._SHIPPING_PROMPT)
+
+
 class ExtractionFlowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         env = {key: value for key, value in os.environ.items() if key not in {"ZAI_API_KEY", "OPENROUTER_API_KEY", "LLM_BASE_URL"}}
@@ -157,6 +278,34 @@ class ExtractionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["messages"][1]["content"][1]["type"], "image_url")
         self.assertTrue(kwargs["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
         self.assertIn("GTİP/HS kodu ÜRETME", kwargs["messages"][0]["content"])
+
+    async def test_invoice_cost_fields_are_extracted_with_mock_llm(self) -> None:
+        reply = {
+            **RAW_REPLY,
+            "document_type": "commercial_invoice",
+            "invoice_total": "24,500.00", "currency": "USD",
+            "freight_amount": "1.250,00", "freight_currency": "USD",
+            "insurance_amount": "45.50", "insurance_currency": None,
+            "payment_terms": "Payment terms: 30% T/T in advance, balance against copy of B/L (mal mukabili)",
+            "payment_method": "cash_in_advance",  # model tahmini; sunucu ham metni esas alır
+        }
+        chat = AsyncMock(return_value=(json.dumps(reply), "glm-4.6v"))
+        with patch.object(sd, "_openrouter_chat", chat):
+            result = await extract_shipping_document(_png_bytes(), "image/png")
+        self.assertEqual(result.document_type, "commercial_invoice")
+        self.assertEqual(result.invoice_total, 24500.0)
+        self.assertEqual(result.currency, "USD")
+        self.assertEqual(result.freight_amount, 1250.0)
+        self.assertEqual(result.freight_currency, "USD")
+        self.assertEqual(result.insurance_amount, 45.5)
+        self.assertIsNone(result.insurance_currency)
+        self.assertEqual(result.payment_method, "cash_against_goods")
+        self.assertEqual(result.payment_method_label, "Mal mukabili")
+        self.assertEqual(result.hs_codes, ["610910000011", "610910"])  # yalnız öneri; forma yazılmaz
+        self.assertTrue(result.user_confirmation_required)
+        prompt = chat.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("payment_terms", prompt)
+        self.assertIn("freight_currency", prompt)
 
     async def test_text_pdf_is_redacted_and_quarantined_before_the_model(self) -> None:
         text = (
@@ -254,6 +403,21 @@ class ShippingDocumentRouteTests(unittest.TestCase):
         self.assertEqual(data["hs_codes"], ["610910000011", "610910"])
         self.assertNotIn("export@example.com", data["shipper"])
         self.assertTrue(data["user_confirmation_required"])
+        self.assertIn("payment_method_label", data)
+        self.assertIn("freight_currency", data)
+
+    def test_payment_method_label_is_returned_for_the_form(self) -> None:
+        extraction = ShippingDocumentExtraction.model_validate({
+            **normalise_extraction({**RAW_REPLY, "payment_terms": "Kabul kredili", "freight_amount": "900", "freight_currency": "EUR"}),
+            "provider": "zai", "model": "glm-4.6v",
+        })
+        with patch.object(web_app, "extract_shipping_document", AsyncMock(return_value=extraction)):
+            response = self._post({"document_data_url": _data_url(_png_bytes(), "image/png")})
+        data = response.json()
+        self.assertEqual(data["payment_method"], "acceptance_credit")
+        self.assertEqual(data["payment_method_label"], "Kabul kredili")
+        self.assertEqual(data["freight_amount"], 900.0)
+        self.assertEqual(data["freight_currency"], "EUR")
 
     def test_missing_or_invalid_document_is_rejected(self) -> None:
         self.assertEqual(self._post({}).status_code, 422)
@@ -271,6 +435,37 @@ class ShippingDocumentRouteTests(unittest.TestCase):
         with patch.object(web_app, "extract_shipping_document", AsyncMock(side_effect=RuntimeError("Z.ai model zinciri yanıt vermedi."))):
             response = self._post({"document_data_url": _data_url(_png_bytes(), "image/png")})
         self.assertEqual(response.status_code, 503)
+
+
+class FrontendTransferTests(unittest.TestCase):
+    """web/app.js belgeden alan aktarımı: sözdizimi ve boş-alan / rozet / HS kuralları."""
+
+    APP_JS = Path(__file__).resolve().parent.parent / "web" / "app.js"
+
+    def test_app_js_parses(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node bulunamadı")
+        completed = subprocess.run([node, "--check", str(self.APP_JS)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_transfer_rules_are_encoded(self) -> None:
+        source = self.APP_JS.read_text(encoding="utf-8")
+        expected = [
+            "dataset.fromDocument",
+            "belgeden alındı, doğrulayın",
+            'fillFromDocument("#paymentMethod"',
+            'fillFromDocument("#incoterm"',
+            'fillFromDocument("#invoiceValue"',
+            '["freight_amount", "freight_currency", "#freight", "navlun"]',
+            '["insurance_amount", "insurance_currency", "#insurance", "sigorta"]',
+            *(f'{code}: "{label}"' for code, label in PAYMENT_METHOD_LABELS.items()),
+        ]
+        for snippet in expected:
+            self.assertTrue(snippet in source, f"app.js içinde bulunamadı: {snippet}")
+        # KKDF oranı ve HS/GTİP kodu belgeden forma yazılmaz.
+        for forbidden in ('"#kkdfRate"', '"#candidateGtip"'):
+            self.assertFalse(f"fillFromDocument({forbidden}" in source or f"fillIfEmpty({forbidden}" in source, forbidden)
 
 
 if __name__ == "__main__":

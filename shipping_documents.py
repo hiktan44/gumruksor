@@ -2,8 +2,14 @@
 
 Kullanıcının yüklediği PDF veya fotoğraftan, gümrük ön değerlendirmesi için
 gereken alanlar (gönderici/alıcı, eşya tanımı, kap/ağırlık, yükleme-boşaltma
-limanı, Incoterm, fatura tutarı, konteyner numaraları) çıkarılır ve düzenlemesi
-için kullanıcıya sunulur.
+limanı, Incoterm, fatura tutarı, navlun/sigorta tutarı ve para birimi, ödeme
+şekli, konteyner numaraları) çıkarılır ve düzenlemesi için kullanıcıya sunulur.
+
+Ödeme şekli belgedeki ham ifade (``payment_terms``) olarak okunur ve
+``payment_terms_to_method`` ile KKDF değerlendirmesinde kullanılan normalize
+anahtara (``payment_method``: cash_in_advance, cash_against_goods,
+cash_against_documents, letter_of_credit, acceptance_credit) çevrilir;
+tanınmayan ifade ``None`` kalır.
 
 Güvenlik ve doğruluk ilkeleri:
 
@@ -22,9 +28,10 @@ from __future__ import annotations
 import base64
 import io
 import re
+import unicodedata
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from customs_advisor import (
     _llm_provider,
@@ -47,6 +54,61 @@ _DATA_URL_RE = re.compile(
 )
 _HS_RE = re.compile(r"\d{4}(?:[.\s]?\d{2}){0,4}")
 _INCOTERMS = {"EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP", "DAF", "DES", "DEQ", "DDU"}
+_CURRENCY_RE = re.compile(r"[A-Z]{3}")
+
+PaymentMethod = Literal[
+    "cash_in_advance",
+    "cash_against_goods",
+    "cash_against_documents",
+    "letter_of_credit",
+    "acceptance_credit",
+]
+
+# Normalize ödeme şekli → formdaki / maliyet motorundaki Türkçe etiket. ``tariff_engine`` KKDF
+# önerisini ``payment_method`` metnindeki "peşin", "mal mukabili", "vadeli", "kredi" belirteçlerinden
+# türetir; etiketler bu belirteçlerle uyumludur (akreditif ve vesaik mukabili motor tarafından
+# "doğrulayın" uyarısıyla geçer; vade bilgisi belgeden çıkarılamaz).
+PAYMENT_METHOD_LABELS: dict[str, str] = {
+    "cash_in_advance": "Peşin",
+    "cash_against_goods": "Mal mukabili",
+    "cash_against_documents": "Vesaik mukabili",
+    "letter_of_credit": "Akreditif",
+    "acceptance_credit": "Kabul kredili",
+}
+
+# Sıra önemlidir: daha özgül kalıplar (kabul kredili, vesaik) genel olanlardan (kredi, peşin) önce denenir.
+_PAYMENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("acceptance_credit", re.compile(r"kabul\s*kredi|acceptance\s*credit|documents?\s*against\s*acceptance|\bd\s*/?\s*a\b")),
+    ("cash_against_documents", re.compile(r"vesaik\s*mukabil|cash\s*against\s*documents?|documents?\s*against\s*payment|\bcad\b|\bd\s*/?\s*p\b")),
+    ("cash_against_goods", re.compile(r"mal\s*mukabil|cash\s*against\s*goods|open\s*account|\bo\s*/?\s*a\b")),
+    ("letter_of_credit", re.compile(r"akreditif|letter\s*of\s*credit|\bl\s*/?\s*c\b|\bdlc\b|\bilc\b")),
+    ("cash_in_advance", re.compile(r"pesin|\badvance\b|\bcia\b|\bcwo\b|pre-?payment|prepayment")),
+)
+
+
+def _fold(text: str) -> str:
+    """Case- and accent-insensitive form ("PEŞİN Ödeme" → "pesin odeme") shared with the engine's key logic."""
+    folded = unicodedata.normalize("NFKD", " ".join(text.split()).casefold().replace("ı", "i"))
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+def payment_terms_to_method(text: Any) -> str | None:
+    """Map free-text payment terms ("Mal mukabili", "T/T in advance", "D/P at sight") to the normalized key.
+
+    Pure and deterministic; returns ``None`` when no known pattern is present so the caller never
+    guesses a KKDF-relevant payment method the document does not state. Mixed terms ("30% advance,
+    balance D/P") resolve to the deferred/document-based part, which is the KKDF-relevant one.
+    """
+    if text is None or isinstance(text, (dict, list, bool)):
+        return None
+    lowered = _fold(str(text))
+    if not lowered:
+        return None
+    for key, pattern in _PAYMENT_PATTERNS:
+        if pattern.search(lowered):
+            return key
+    return None
+
 
 DocumentType = Literal[
     "bill_of_lading",
@@ -141,6 +203,12 @@ def _text_or_empty(value: Any, limit: int) -> str:
     return " ".join(str(value).split())[:limit]
 
 
+def _currency_code(value: Any) -> str | None:
+    """ISO 4217 three-letter code in upper case ("TL" → "TRY"); None when the value is not a code."""
+    code = _text_or_empty(value, 10).upper().replace("TL", "TRY")
+    return code if _CURRENCY_RE.fullmatch(code) else None
+
+
 class ShippingDocumentExtraction(BaseModel):
     """Editable fields read from a shipping document; never a customs decision."""
 
@@ -169,10 +237,17 @@ class ShippingDocumentExtraction(BaseModel):
     containers: list[str] = Field(default_factory=list, max_length=40)
     incoterm: str = Field("", max_length=3)
     freight_terms: Literal["prepaid", "collect", ""] = ""
+    # Fatura tutarı ve para birimi (``currency`` fatura para birimidir; navlun/sigorta ayrı para
+    # birimiyle yazılmışsa ``freight_currency`` / ``insurance_currency`` dolar, yoksa null kalır).
     invoice_total: float | None = None
     currency: str = Field("", max_length=3)
     freight_amount: float | None = None
+    freight_currency: str | None = Field(None, max_length=3)
     insurance_amount: float | None = None
+    insurance_currency: str | None = Field(None, max_length=3)
+    # Ödeme şekli: belgedeki ham ifade ve KKDF için kullanılan normalize anahtar (bkz. PAYMENT_METHOD_LABELS).
+    payment_terms: str | None = Field(None, max_length=200)
+    payment_method: PaymentMethod | None = None
     quantity: float | None = None
     quantity_unit: str = Field("", max_length=40)
     marks_and_numbers: str = Field("", max_length=500)
@@ -194,8 +269,40 @@ class ShippingDocumentExtraction(BaseModel):
     @field_validator("currency", mode="before")
     @classmethod
     def _currency(cls, value: Any) -> str:
-        code = _text_or_empty(value, 10).upper().replace("TL", "TRY")
-        return code if re.fullmatch(r"[A-Z]{3}", code) else ""
+        return _currency_code(value) or ""
+
+    @field_validator("freight_currency", "insurance_currency", mode="before")
+    @classmethod
+    def _optional_currency(cls, value: Any) -> str | None:
+        return _currency_code(value)
+
+    @field_validator("invoice_total", "freight_amount", "insurance_amount", mode="before")
+    @classmethod
+    def _non_negative_amount(cls, value: Any) -> float | None:
+        number = _to_number(value)
+        return number if number is not None and number >= 0 else None
+
+    @field_validator("payment_terms", mode="before")
+    @classmethod
+    def _payment_terms(cls, value: Any) -> str | None:
+        return _text_or_empty(value, 200) or None
+
+    @field_validator("payment_method", mode="before")
+    @classmethod
+    def _payment_method(cls, value: Any) -> str | None:
+        key = _text_or_empty(value, 40).lower().replace(" ", "_").replace("-", "_")
+        return key if key in PAYMENT_METHOD_LABELS else None
+
+    @model_validator(mode="after")
+    def _derive_payment_method(self) -> "ShippingDocumentExtraction":
+        # Normalize anahtar belgedeki ham ifadeden türetilir; model yalnızca ham metni kopyalar.
+        if self.payment_method is None and self.payment_terms:
+            self.payment_method = payment_terms_to_method(self.payment_terms)
+        return self
+
+    @property
+    def payment_method_label(self) -> str:
+        return PAYMENT_METHOD_LABELS.get(self.payment_method or "", "")
 
     @field_validator("freight_terms", mode="before")
     @classmethod
@@ -241,7 +348,14 @@ Kurallar:
   invoice_total / freight_amount / insurance_amount belgedeki para birimiyle. Birim kg değilse
   (lbs vb.) alanı null bırak ve unreadable_fields'a yaz.
 - incoterm yalnızca üç harfli Incoterms kodu (FOB, CIF, EXW, DAP...). freight_terms "prepaid",
-  "collect" veya "". currency ISO 4217 üç harf (USD, EUR, TRY, CNY...).
+  "collect" veya "". currency fatura tutarının ISO 4217 üç harfli para birimi (USD, EUR, TRY, CNY...).
+- freight_amount / insurance_amount: yalnızca belgede "Freight", "Navlun", "Ocean freight",
+  "Insurance", "Sigorta" gibi açık bir satır veya kalem varsa tutarı yaz; hesaplama veya tahmin
+  yapma, yoksa null. freight_currency / insurance_currency: o kalemin yanında yazan ISO 4217 kodu;
+  yazmıyorsa null (fatura para birimini kopyalama). CIF/CFR fiyatın içindeki navlunu ayırma.
+- payment_terms: belgedeki ödeme şekli ifadesini olduğu gibi kopyala ("Payment: T/T 30% advance",
+  "Mal mukabili", "L/C at sight", "D/P", "Vesaik mukabili"...). Belgede ödeme şekli yazmıyorsa
+  null bırak; navlun ödeme şekli (freight prepaid/collect) ödeme şekli DEĞİLDİR.
 - shipper / consignee / notify_party: firma adı ve ülke; kişisel telefon, e-posta ve vergi
   numaralarını yazma.
 - goods_description: belgedeki eşya tanımını kısaltmadan, Türkçeye çevirmeden aynen aktar.
@@ -256,13 +370,14 @@ document_type, document_number, document_date, shipper, consignee, notify_party,
 vessel_or_flight, port_of_loading, port_of_discharge, place_of_delivery, country_of_origin,
 country_of_dispatch, goods_description, hs_codes, packages_count, package_type, gross_weight_kg,
 net_weight_kg, volume_cbm, containers, incoterm, freight_terms, invoice_total, currency,
-freight_amount, insurance_amount, quantity, quantity_unit, marks_and_numbers, unreadable_fields,
-confidence.
+freight_amount, freight_currency, insurance_amount, insurance_currency, payment_terms, quantity,
+quantity_unit, marks_and_numbers, unreadable_fields, confidence.
 """.strip()
 
 _STRING = {"type": "string"}
 _NULLABLE_NUMBER = {"type": ["number", "null"]}
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
+_NULLABLE_STRING = {"type": ["string", "null"]}
 
 _SHIPPING_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -296,7 +411,10 @@ _SHIPPING_SCHEMA: dict[str, Any] = {
         "invoice_total": _NULLABLE_NUMBER,
         "currency": _STRING,
         "freight_amount": _NULLABLE_NUMBER,
+        "freight_currency": _NULLABLE_STRING,
         "insurance_amount": _NULLABLE_NUMBER,
+        "insurance_currency": _NULLABLE_STRING,
+        "payment_terms": _NULLABLE_STRING,
         "quantity": _NULLABLE_NUMBER,
         "quantity_unit": _STRING,
         "marks_and_numbers": _STRING,
@@ -308,8 +426,9 @@ _SHIPPING_SCHEMA: dict[str, Any] = {
         "carrier", "vessel_or_flight", "port_of_loading", "port_of_discharge", "place_of_delivery",
         "country_of_origin", "country_of_dispatch", "goods_description", "hs_codes", "packages_count",
         "package_type", "gross_weight_kg", "net_weight_kg", "volume_cbm", "containers", "incoterm",
-        "freight_terms", "invoice_total", "currency", "freight_amount", "insurance_amount", "quantity",
-        "quantity_unit", "marks_and_numbers", "unreadable_fields", "confidence",
+        "freight_terms", "invoice_total", "currency", "freight_amount", "freight_currency", "insurance_amount",
+        "insurance_currency", "payment_terms", "quantity", "quantity_unit", "marks_and_numbers",
+        "unreadable_fields", "confidence",
     ],
     "additionalProperties": False,
 }
@@ -344,6 +463,13 @@ def normalise_extraction(raw: dict[str, Any]) -> dict[str, Any]:
     ][:20]
     for key in ("document_type", "incoterm", "freight_terms", "currency", "confidence"):
         data[key] = raw.get(key)
+    for key in ("freight_currency", "insurance_currency"):
+        data[key] = _currency_code(raw.get(key))
+    data["payment_terms"] = _text_or_empty(raw.get("payment_terms"), 200) or None
+    # Normalize anahtar sunucuda ham metinden türetilir; modelin kendi anahtarı yalnızca geçerliyse yedek olur.
+    data["payment_method"] = payment_terms_to_method(data["payment_terms"]) or (
+        raw.get("payment_method") if raw.get("payment_method") in PAYMENT_METHOD_LABELS else None
+    )
     return data
 
 
