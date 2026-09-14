@@ -185,3 +185,7 @@ foreign_tariff.sqlite3-*
 # AB EBTI karar deposu (calisma aninda olusur, MEVZUAT_DATA_DIR altinda tutulur).
 ebti_decisions.sqlite3
 ebti_decisions.sqlite3-*
+
+# AB TARIC sorgu arsivi (calisma aninda olusur).
+eu_taric.sqlite3
+eu_taric.sqlite3-*

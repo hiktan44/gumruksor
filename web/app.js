@@ -3135,6 +3135,64 @@ function renderEbtiResults(data) {
     <div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Karar</th><th>Kod / geçerlilik</th><th>Eşya tanımı</th><th>Sınıflandırma gerekçesi</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+const EU_TARIC_KIND_LABELS = {
+  third_country_duty: "Üçüncü ülke gümrük vergisi", customs_union_duty: "Gümrük birliği vergisi",
+  preference: "Tercihli tarife", suspension: "Vergi askıya alma", quota: "Tarife kontenjanı",
+  anti_dumping: "Damping önlemi", countervailing: "Telafi edici vergi", safeguard: "Korunma önlemi",
+  additional_duty: "Ek vergi", agricultural_component: "Tarım bileşeni", prohibition: "İthalat yasağı",
+  restriction: "İthalat kontrolü / kısıtlama", surveillance: "Gözetim", other: "Diğer önlem",
+};
+
+function renderEuTaric(data) {
+  if (data.status === "disabled") {
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || "AB TARIC sorgusu şu anda kapalı.")}</p>`;
+  }
+  if (data.status !== "ok") {
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || "AB TARIC verisi alınamadı.")}</p>`;
+  }
+  const s = data.summary || {};
+  const rows = (s.measures || []).slice(0, 15).map((m) => `<tr>
+    <td>${escapeHtml(EU_TARIC_KIND_LABELS[m.kind] || m.measure_type || "—")}</td>
+    <td>${escapeHtml(m.partner_area || m.partner_area_code || "—")}</td>
+    <td>${escapeHtml(m.duty_text || "—")}</td>
+    <td><small>${escapeHtml([...(m.documents || []), ...(m.additional_codes || [])].join(", ") || "—")}</small></td>
+  </tr>`).join("");
+  const extras = (s.additional_duties || []).map((m) => `<li><b>${escapeHtml(EU_TARIC_KIND_LABELS[m.kind] || m.measure_type)}</b> — ${escapeHtml(m.partner_area || "")} ${escapeHtml(m.duty_text || "")}</li>`).join("");
+  const docs = (s.required_documents || []).map((d) => escapeHtml(d)).join(", ");
+  return `<div class="answer-head"><span class="answer-status">${escapeHtml(s.snapshot_month || "")} anlık görüntüsü</span><div><h2>AB TARIC önlemleri — ${escapeHtml(data.goods_code)}</h2><p>${escapeHtml(s.goods_description || "")}</p></div></div>
+    <section class="answer-section">
+      <p><b>Üçüncü ülke vergisi:</b> ${escapeHtml(s.mfn_rate || "—")}
+         &nbsp;|&nbsp; <b>${escapeHtml(data.partner_country || "")} için oran:</b> ${escapeHtml(s.partner_rate || "—")}${s.partner_rate_kind ? ` <small>(${escapeHtml(EU_TARIC_KIND_LABELS[s.partner_rate_kind] || s.partner_rate_kind)})</small>` : ""}</p>
+      ${docs ? `<p><b>Gereken belge:</b> ${docs}</p>` : ""}
+      ${extras ? `<h4>Ek vergiler</h4><ul class="savings-list">${extras}</ul>` : ""}
+      ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Önlem</th><th>Ülke / grup</th><th>Oran</th><th>Belge / ek kod</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      <p class="rate-warning">${escapeHtml(data.conditional_note || "")}</p>
+      <p class="rate-warning">${escapeHtml(data.customs_union_note || "")}</p>
+      <p><small>${escapeHtml(data.source_note || "")}${data.from_archive ? ` (arşivden, son alınma: ${escapeHtml(String(data.fetched_at || "").slice(0, 10))})` : ""}</small></p>
+      ${(data.warnings || []).length ? `<ul class="savings-list">${data.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+    </section>`;
+}
+
+$("#euTaricLookup")?.addEventListener("click", async () => {
+  const output = $("#euTaricOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const gtip = $("#tariffGtip").value.trim();
+  if (!gtip || gtip.replace(/\D/g, "").length < 6) {
+    output.innerHTML = '<p class="missing-list">AB sorgusu için en az 6 haneli bir GTİP girin.</p>';
+    return;
+  }
+  const params = new URLSearchParams({ gtip });
+  const origin = $("#tariffOrigin")?.value.trim();
+  if (origin) params.set("origin", origin);
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>AB TARIC sorgulanıyor</b><span>Komisyonun resmî aylık ham verisinden önlemler çözümleniyor…</span></div></div>';
+  try {
+    const data = await fetchJson(`/api/foreign/eu-taric?${params.toString()}`);
+    output.innerHTML = renderEuTaric(data);
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+});
+
 $("#ebtiSearch")?.addEventListener("click", async () => {
   const output = $("#ebtiOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
