@@ -294,6 +294,7 @@ class FillTests(unittest.TestCase):
             monthly_budget_usd=budget,
             unit_cost_usd=0.015,
             fill_delay_seconds=0.0,
+            failed_retry_days=7,
         )
         self.addCleanup(lambda: asyncio.run(engine.close()))
         return engine
@@ -522,8 +523,35 @@ class FillTests(unittest.TestCase):
         self.assertEqual(engine.spend_status()["lookups"], 4)
         self.assertIsNotNone(engine.archived("6109100000", "TR"))
         self.assertIsNone(engine.archived("6109100002", "TR"))
-        # Reddedilen kod kaydedilmediği için bir sonraki turda yeniden denenir.
-        self.assertEqual(engine.fill_plan()["pending_pairs"], 1)
+        # Kendi başına da başarısız olan kod kaydedilir: kuyruktan çıkar, kısa pencereyle döner.
+        self.assertEqual(engine.fill_plan()["pending_pairs"], 0)
+
+    def test_broken_code_is_recorded_and_not_retried_every_round(self):
+        # Aktör bazı kodlarda çöküyor; kaydedilmezse her turda yeniden denenip kuyruğu tıkar.
+        codes = [f"61091000{index:02d}00" for index in range(3)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=3)
+        engine._http = httpx.AsyncClient(transport=self._picky_transport({"6109100001"}))
+        first = asyncio.run(engine.fill_once())
+        self.assertEqual(first["fetched"], 2)
+        self.assertEqual(first["failed"], 1)
+        calls_after_first = len(self.calls)
+        second = asyncio.run(engine.fill_once())
+        self.assertEqual(second["status"], "complete")
+        self.assertEqual(len(self.calls), calls_after_first, "çöken kod her turda yeniden denenmemeli")
+        # Kısa pencere dolunca yeniden denenir (çökme geçici olabilir).
+        self._age_rows(engine, 8)
+        third = asyncio.run(engine.fill_once())
+        self.assertEqual(third["failed"], 1)
+        self.assertGreater(len(self.calls), calls_after_first)
+
+    def test_broken_code_window_is_shorter_than_not_declarable(self):
+        engine = self._engine(codes=("610910000000",), origins="TR", batch=1)
+        engine._http = httpx.AsyncClient(transport=self._picky_transport({"6109100000"}))
+        asyncio.run(engine.fill_once())
+        calls = len(self.calls)
+        self._age_rows(engine, 6)  # 7 günlük pencere dolmadı
+        self.assertEqual(asyncio.run(engine.fill_once())["status"], "complete")
+        self.assertEqual(len(self.calls), calls)
 
     def test_rejected_code_reason_is_reported_without_the_token(self):
         engine = self._engine(codes=("610910000000",), origins="TR", batch=5)
@@ -540,6 +568,8 @@ class FillTests(unittest.TestCase):
         # 500 geçici bir sorundur: tek tek yeniden denenmez, tur boşuna uzamaz.
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(engine.spend_status()["lookups"], 0)
+        # Geçici hata kaydedilmez: bütün grup bir sonraki turda yeniden denenir.
+        self.assertEqual(engine.fill_plan()["pending_pairs"], 5)
 
     def test_fill_tables_are_added_to_an_existing_database(self):
         # Eski şemalı veritabanı: ALTER TABLE korumalı göç sütunları eklemeli.

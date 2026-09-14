@@ -236,9 +236,13 @@ sorgu yok) aşılmamış olmalı ve kod × ülke çifti arşivde **taze** olmama
 `EU_TARIC_FILL_BATCH` kadar çift işler, aktöre tek çağrıda en fazla `EU_TARIC_MAX_CODES` kod
 gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. Aktör bir grubu
 `400` ile reddederse (grupta tek bir geçersiz kod bütün grubu düşürebiliyor) kodlar **tek tek**
-yeniden denenir; geçerli olanlar kurtarılır, reddedilen kod kaydedilmeden bırakılır ve bir
-sonraki turda yeniden denenir. Geçersiz kod ücretlendirilmediği için bu kurtarma ek maliyet
-doğurmaz. `500` gibi geçici hatalarda tek tek deneme yapılmaz, tur boşuna uzamaz. Çağrılar
+yeniden denenir ve geçerli olanlar kurtarılır. Kendi başına çalıştırılıp yine `400` alan kod
+`actor_failed` olarak kaydedilir ve `EU_TARIC_FAILED_RETRY_DAYS` (varsayılan 7 gün) boyunca
+yeniden denenmez — aktör bazı kodlarda çöküyor (`Actor run did not succeed … status: FAILED`)
+ve kaydedilmezse bu kodlar her turda yeniden denenip kuyruğu tıkar; pencere kısa tutulur çünkü
+çökme geçici de olabilir. Geçersiz kod ücretlendirilmediği için bu kurtarma ek maliyet
+doğurmaz. `500` gibi geçici hatalarda tek tek deneme **yapılmaz** ve hiçbir şey kaydedilmez;
+bütün grup bir sonraki turda yeniden denenir. Çağrılar
 arasında `EU_TARIC_FILL_DELAY_SECONDS` kadar beklenir (BK arşivindeki
 `UK_MEASURES_DELAY_SECONDS` deseni). Aktörün hata metni — jeton maskelenerek — dolum
 hatalarına yazılır, böylece reddin sebebi görülebilir. AB'de beyana elverişli

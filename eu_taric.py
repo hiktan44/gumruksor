@@ -96,6 +96,8 @@ EU_TARIC_UNIT_COST_USD = max(0.0, _env_float("EU_TARIC_UNIT_COST_USD", 0.015))
 EU_TARIC_REFRESH_DAYS = max(1, _env_int("EU_TARIC_REFRESH_DAYS", 90))
 # AB'de beyana elverişli olmayan kod her turda değil, bu aralıkla yeniden yoklanır.
 EU_TARIC_NOT_DECLARABLE_RETRY_DAYS = max(1, _env_int("EU_TARIC_NOT_DECLARABLE_RETRY_DAYS", 180))
+# Aktörün çökmesi geçici de olabilir; beyana elverişsiz koddan daha kısa aralıkla yoklanır.
+EU_TARIC_FAILED_RETRY_DAYS = max(1, _env_int("EU_TARIC_FAILED_RETRY_DAYS", 7))
 # Ardışık aktör çağrıları arasında bekleme (``UK_MEASURES_DELAY_SECONDS`` deseni): kaynağın
 # eşzamanlılık/kaynak sınırlarına toptan 400 ile takılmamak için.
 EU_TARIC_FILL_DELAY_SECONDS = max(0.0, _env_float("EU_TARIC_FILL_DELAY_SECONDS", 3.0))
@@ -388,6 +390,7 @@ class EuTaricEngine:
         unit_cost_usd: float = EU_TARIC_UNIT_COST_USD,
         refresh_days: int = EU_TARIC_REFRESH_DAYS,
         not_declarable_retry_days: int = EU_TARIC_NOT_DECLARABLE_RETRY_DAYS,
+        failed_retry_days: int = EU_TARIC_FAILED_RETRY_DAYS,
         fill_delay_seconds: float = EU_TARIC_FILL_DELAY_SECONDS,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
@@ -417,6 +420,7 @@ class EuTaricEngine:
         self.unit_cost_usd = max(0.0, float(unit_cost_usd or 0.0))
         self.refresh_days = max(1, int(refresh_days or 1))
         self.not_declarable_retry_days = max(1, int(not_declarable_retry_days or 1))
+        self.failed_retry_days = max(1, int(failed_retry_days or 1))
         self.fill_delay_seconds = max(0.0, float(fill_delay_seconds or 0.0))
         self._fill_lock = asyncio.Lock()
         self._fill_errors: list[str] = []
@@ -693,13 +697,15 @@ class EuTaricEngine:
                 "SELECT goods_code, partner_country, status, MAX(attempted_at) AS attempted_at "
                 "FROM fill_attempts GROUP BY goods_code, partner_country",
             ).fetchall()
+        cutoffs = {
+            "not_declarable": self._cutoff(self.not_declarable_retry_days),
+            "actor_failed": self._cutoff(self.failed_retry_days),
+        }
         fresh_cutoff = self._cutoff(self.refresh_days)
-        retry_cutoff = self._cutoff(self.not_declarable_retry_days)
         pairs: set[tuple[str, str]] = set()
         for row in rows:
             attempted = str(row["attempted_at"] or "")
-            cutoff = retry_cutoff if row["status"] == "not_declarable" else fresh_cutoff
-            if attempted >= cutoff:
+            if attempted >= cutoffs.get(row["status"], fresh_cutoff):
                 pairs.add((row["goods_code"], row["partner_country"]))
         return pairs
 
@@ -744,35 +750,48 @@ class EuTaricEngine:
             queue = queue[: max(0, int(limit))]
         return queue, len(never), len(due), skipped
 
-    async def _run_chunk(self, chunk: list[str], origin: str) -> tuple[list[dict[str, Any]], set[str]]:
+    async def _run_chunk(
+        self, chunk: list[str], origin: str
+    ) -> tuple[list[dict[str, Any]], dict[str, str], set[str]]:
         """Bir grubu çalıştırır; aktör grubu 400 ile reddederse kodları tek tek dener.
 
-        Tek bir geçersiz kod yüzünden gruptaki diğer kodların kaybolmasını önler. Geçersiz
-        kod aktörde ücretlendirilmediği için tek tek deneme ek maliyet doğurmaz.
+        Döner: (sonuçlar, **kendi başına** çalıştırılıp başarısız olan kodlar → sebep,
+        geçici olarak düşen kodlar). Ayrım önemlidir: kendi başına başarısız olan kod
+        kaydedilir ve bir süre yeniden denenmez (aktör bazı kodlarda çöküyor); geçici
+        hata ise hiç kaydedilmez, bir sonraki turda yeniden denenir.
         """
         try:
             async with self._lock:
                 items = await self._run_actor(chunk, origin)
             await asyncio.sleep(self.fill_delay_seconds)
-            return items, set()
+            return items, {}, set()
         except ActorRequestError as exc:
             self._fill_errors.append(f"{_now()}: {exc}")
-            if exc.status_code != 400 or len(chunk) == 1:
-                return [], set(chunk)
+            if exc.status_code != 400:
+                # 500 ve benzeri geçicidir: kaydedilmez, sonraki turda yeniden denenir.
+                return [], {}, set(chunk)
+            if len(chunk) == 1:
+                # Tek kodluk çağrı 400 aldı: kodun kendisi sorunlu, kayda geçer.
+                return [], {chunk[0]: str(exc)}, set()
         except (SecurityViolation, RuntimeError, ValueError) as exc:
             self._fill_errors.append(f"{_now()}: {str(exc)[:200]}")
-            return [], set(chunk)
+            return [], {}, set(chunk)
         items: list[dict[str, Any]] = []
-        rejected: set[str] = set()
+        broken: dict[str, str] = {}
+        transient: set[str] = set()
         for code in chunk:
             await asyncio.sleep(self.fill_delay_seconds)
             try:
                 async with self._lock:
                     items.extend(await self._run_actor([code], origin))
             except (SecurityViolation, RuntimeError, ValueError) as exc:
-                self._fill_errors.append(f"{_now()}: {code}: {str(exc)[:160]}")
-                rejected.add(code)
-        return items, rejected
+                message = str(exc)[:160]
+                self._fill_errors.append(f"{_now()}: {code}: {message}")
+                if isinstance(exc, ActorRequestError) and exc.status_code == 400:
+                    broken[code] = message
+                else:
+                    transient.add(code)
+        return items, broken, transient
 
     def fill_plan(self) -> dict[str, Any]:
         """Dolumun mevcut durumu: aday sayısı, kalan iş ve tahmini maliyet (ücret doğurmaz)."""
@@ -794,6 +813,7 @@ class EuTaricEngine:
             "refresh_due_pairs": due,
             "refresh_days": self.refresh_days,
             "not_declarable_retry_days": self.not_declarable_retry_days,
+            "failed_retry_days": self.failed_retry_days,
             "batch": self.fill_batch,
             "estimated_total_usd": round(total * self.unit_cost_usd, 2),
             "estimated_pending_usd": round((never + due) * self.unit_cost_usd, 2),
@@ -829,11 +849,21 @@ class EuTaricEngine:
             for origin, origin_codes in by_origin.items():
                 for start in range(0, len(origin_codes), EU_TARIC_MAX_CODES):
                     chunk = origin_codes[start : start + EU_TARIC_MAX_CODES]
-                    items, rejected = await self._run_chunk(chunk, origin)
-                    if rejected:
-                        # Aktör grubu reddetti: geçerli kodlar da düşmesin diye tek tek denendi.
-                        failed += len(rejected)
-                        chunk = [code for code in chunk if code not in rejected]
+                    items, broken, transient = await self._run_chunk(chunk, origin)
+                    if broken:
+                        # Kod kendi başına denendi ve yine başarısız: kaydedilir ki her turda
+                        # yeniden denenip kuyruğu tıkamasın (aktör bazı kodlarda çöküyor).
+                        failed += len(broken)
+                        await asyncio.to_thread(
+                            self._record_attempts,
+                            period,
+                            [(code, origin, "actor_failed", reason) for code, reason in broken.items()],
+                        )
+                    if transient:
+                        # Geçici hata: kaydedilmez, bir sonraki turda yeniden denenir.
+                        failed += len(transient)
+                    skip = set(broken) | transient
+                    chunk = [code for code in chunk if code not in skip]
                     if not chunk:
                         continue
                     found = {
@@ -917,6 +947,7 @@ __all__ = [
     "EU_TARIC_FILL_LEVEL",
     "EU_TARIC_MONTHLY_BUDGET_USD",
     "EU_TARIC_NOT_DECLARABLE_RETRY_DAYS",
+    "EU_TARIC_FAILED_RETRY_DAYS",
     "EU_TARIC_REFRESH_DAYS",
     "EU_TARIC_UNIT_COST_USD",
     "candidate_codes",
