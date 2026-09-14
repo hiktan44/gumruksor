@@ -34,29 +34,77 @@ class Plan:
     yearly_price_try: int | None
     quotas: dict[str, int | None]
     features: tuple[str, ...]
+    # PRD katmani (Essentials/Pro/Premium/Premium+): yalnizca ic eslestirme; kullaniciya
+    # gosterilen ad `name`, Stripe/veritabani anahtari `code` olarak degismez.
+    tier: str = "essentials"
+    tier_name: str = "Essentials"
+    # Paketle acilan ozellik kilitleri (FEATURES anahtarlari). Kotadan bagimsizdir.
+    capabilities: frozenset[str] = frozenset()
 
+
+# Ozellik kilidi kodlari ve kullaniciya gosterilen etiketleri. Yeni bir kilit eklenirken
+# once buraya kaydedilir; bilinmeyen kod `capabilities_for` tarafindan kabul edilmez.
+FEATURES: dict[str, str] = {
+    "detailed_query": "Detaylı sorgu (hukuki dayanak, dipnot ve istisnalar)",
+    "scenario_compare": "Menşe senaryosu karşılaştırma ve tasarruf önerisi",
+    "pdf_report": "Sunucu tarafı PDF rapor",
+    "bulk_costing": "Toplu beyanname hesabı (CSV/XLSX)",
+    "temporal_query": "Tarih bazlı mevzuat sorgusu (geçmiş yürürlük)",
+    "change_alerts": "Uyum uyarıları ve değişiklik özeti",
+    "api_access": "Kurumsal API / ajan erişimi",
+    "data_review": "Veri inceleme kuyruğu (editoryal onay)",
+}
+
+_PRO_CAPABILITIES = frozenset({"detailed_query", "scenario_compare", "pdf_report"})
+_PREMIUM_CAPABILITIES = _PRO_CAPABILITIES | {"bulk_costing", "temporal_query", "change_alerts"}
+_PREMIUM_PLUS_CAPABILITIES = _PREMIUM_CAPABILITIES | {"api_access"}
 
 PLANS: dict[str, Plan] = {
     "starter": Plan(
         "starter", "Başlangıç", 0, 0,
         {"vision": 5, "classification": 15, "precheck": 10, "dossier": 10},
         ("Temel ürün araştırması", "10 kanıt dosyası", "Resmî kaynak bağlantıları"),
+        tier="essentials", tier_name="Essentials", capabilities=frozenset(),
     ),
     "expert": Plan(
         "expert", "Uzman", 790, 7_900,
         {"vision": 100, "classification": 300, "precheck": 150, "dossier": 500},
-        ("Yoğun ürün analizi", "500 kanıt dosyası", "JSON dışa aktarma"),
+        ("Yoğun ürün analizi", "500 kanıt dosyası", "JSON dışa aktarma", "Menşe senaryoları ve PDF rapor"),
+        tier="pro", tier_name="Pro", capabilities=_PRO_CAPABILITIES,
     ),
     "team": Plan(
         "team", "Ekip", 2_490, 24_900,
         {"vision": 500, "classification": 1_500, "precheck": 750, "dossier": 5_000},
-        ("Ekip kotası", "5.000 kanıt dosyası", "Öncelikli kullanım"),
+        ("Ekip kotası", "5.000 kanıt dosyası", "Öncelikli kullanım", "Toplu hesap ve tarih bazlı sorgu"),
+        tier="premium", tier_name="Premium", capabilities=_PREMIUM_CAPABILITIES,
     ),
     "institutional": Plan(
         "institutional", "Kurumsal", 7_500, None,
         {"vision": None, "classification": None, "precheck": None, "dossier": None},
         ("Özel kota", "Kurumsal entegrasyon", "Özel destek"),
+        tier="premium_plus", tier_name="Premium+", capabilities=_PREMIUM_PLUS_CAPABILITIES,
     ),
+}
+
+# PRD katman adlari ile veritabani/Stripe paket kodlari arasinda cevrim.
+PLAN_ALIASES: dict[str, str] = {plan.tier: plan.code for plan in PLANS.values()}
+
+
+def resolve_plan_code(value: Any) -> str | None:
+    """Return the persisted plan code for a plan code or PRD tier alias; None if unknown."""
+    key = str(value or "").strip().lower().replace("+", "_plus").replace("-", "_")
+    if key in PLANS:
+        return key
+    return PLAN_ALIASES.get(key)
+
+
+ROLES: tuple[str, ...] = ("user", "consultant", "editor", "admin")
+# Rol bazli ek yetkiler: yonetici her kilidi acar; editor yalnizca veri incelemesi yapar.
+_ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
+    "admin": frozenset(FEATURES),
+    "editor": frozenset({"data_review"}),
+    "consultant": frozenset({"detailed_query"}),
+    "user": frozenset(),
 }
 
 _OPERATIONS = {"vision", "classification", "precheck", "dossier"}
@@ -158,6 +206,13 @@ class AccountService:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=10000")
         return connection
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        """Additive migration: add a column when an older database lacks it."""
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _ensure_schema(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -276,6 +331,7 @@ class AccountService:
                 );
                 """
             )
+            self._ensure_column(connection, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         self.db_path.chmod(0o600)
 
     # ------------------------------------------------------------------ watchlist
@@ -367,12 +423,76 @@ class AccountService:
         return [
             {
                 "code": plan.code, "name": plan.name,
+                "tier": plan.tier, "tier_name": plan.tier_name,
                 "monthly_price_try": plan.monthly_price_try,
                 "yearly_price_try": plan.yearly_price_try,
                 "quotas": plan.quotas, "features": list(plan.features),
+                "capabilities": sorted(plan.capabilities),
             }
             for plan in PLANS.values()
         ]
+
+    @staticmethod
+    def feature_catalog() -> dict[str, str]:
+        return dict(FEATURES)
+
+    @staticmethod
+    def plans_with_feature(feature: str) -> list[dict[str, str]]:
+        return [
+            {"code": plan.code, "name": plan.name}
+            for plan in PLANS.values()
+            if feature in plan.capabilities
+        ]
+
+    def role_of(self, user: dict[str, Any]) -> str:
+        """Effective role: admin allow-list wins, then the stored role, then consultant status."""
+        if self.is_admin(user):
+            return "admin"
+        google_sub = str(user.get("sub", ""))
+        if not google_sub:
+            return "user"
+        with self._connect() as connection:
+            row = connection.execute("SELECT role FROM users WHERE google_sub=?", (google_sub,)).fetchone()
+            stored = str(row["role"]) if row and row["role"] in ROLES else "user"
+            if stored == "user":
+                consultant = connection.execute(
+                    "SELECT 1 FROM consultant_profiles WHERE google_sub=? AND status='active'", (google_sub,)
+                ).fetchone()
+                if consultant:
+                    return "consultant"
+        return stored
+
+    def capabilities_for(self, user: dict[str, Any], *, plan_code: str | None = None, role: str | None = None) -> frozenset[str]:
+        """Feature keys the user may use: plan capabilities plus role capabilities."""
+        role = role or self.role_of(user)
+        if plan_code is None:
+            plan_code = self._active_plan_code(str(user.get("sub", "")))
+        plan = PLANS.get(plan_code, PLANS["starter"])
+        allowed = set(plan.capabilities) | set(_ROLE_CAPABILITIES.get(role, frozenset()))
+        return frozenset(key for key in allowed if key in FEATURES)
+
+    def _active_plan_code(self, google_sub: str) -> str:
+        if not google_sub:
+            return "starter"
+        with self._connect() as connection:
+            row = self._subscription(connection, google_sub)
+        plan_code = str(row["plan_code"]) if row and row["status"] == "active" else "starter"
+        return plan_code if plan_code in PLANS else "starter"
+
+    def admin_set_role(self, actor: dict[str, Any], google_sub: str, role: str) -> None:
+        role = str(role or "").strip().lower()
+        if role not in ROLES:
+            raise AccountError("Rol geçersiz.")
+        now = _now()
+        with self._connect() as connection:
+            if not connection.execute("SELECT 1 FROM users WHERE google_sub=?", (google_sub,)).fetchone():
+                raise AccountError("Kullanıcı bulunamadı.")
+            connection.execute("UPDATE users SET role=? WHERE google_sub=?", (role, google_sub))
+            connection.execute(
+                "INSERT INTO audit_log(actor_sub,actor_email,action,target_type,target_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (str(actor.get("sub", "")), str(actor.get("email", "")), "role.set", "user", google_sub,
+                 _json({"role": role}, max_bytes=1_000), now),
+            )
 
     def is_admin(self, user: dict[str, Any]) -> bool:
         email = str(user.get("email", "")).strip().casefold()
@@ -430,10 +550,13 @@ class AccountService:
                 quota_entry["granted"] = extra
                 quota_entry["base_limit"] = base_limit
             quotas[key] = quota_entry
+        role = self.role_of(user)
         return {
-            "plan": {"code": plan.code, "name": plan.name},
+            "plan": {"code": plan.code, "name": plan.name, "tier": plan.tier, "tier_name": plan.tier_name},
             "subscription": dict(row) if row else {"status": "active", "plan_code": "starter"},
             "period": period, "quotas": quotas, "is_admin": self.is_admin(user),
+            "role": role,
+            "capabilities": sorted(self.capabilities_for(user, plan_code=plan_code, role=role)),
         }
 
     def subscription_for_user(self, user: dict[str, Any]) -> dict[str, Any] | None:
@@ -697,7 +820,7 @@ class AccountService:
     def admin_overview(self) -> dict[str, Any]:
         with self._connect() as connection:
             users = connection.execute(
-                "SELECT u.google_sub,u.email,u.name,u.created_at,u.last_login_at,COALESCE(s.plan_code,'starter') plan_code,COALESCE(s.status,'active') subscription_status,s.period_end "
+                "SELECT u.google_sub,u.email,u.name,u.role,u.created_at,u.last_login_at,COALESCE(s.plan_code,'starter') plan_code,COALESCE(s.status,'active') subscription_status,s.period_end "
                 "FROM users u LEFT JOIN subscriptions s ON s.google_sub=u.google_sub ORDER BY u.last_login_at DESC LIMIT 500"
             ).fetchall()
             usage = connection.execute(
@@ -719,8 +842,10 @@ class AccountService:
         }
 
     def admin_set_plan(self, actor: dict[str, Any], google_sub: str, plan_code: str, status: str) -> None:
-        if plan_code not in PLANS or status not in {"active", "pending", "past_due", "cancelled"}:
+        resolved = resolve_plan_code(plan_code)
+        if resolved is None or status not in {"active", "pending", "past_due", "cancelled"}:
             raise AccountError("Paket veya abonelik durumu geçersiz.")
+        plan_code = resolved
         now = _now()
         with self._connect() as connection:
             if not connection.execute("SELECT 1 FROM users WHERE google_sub=?", (google_sub,)).fetchone():

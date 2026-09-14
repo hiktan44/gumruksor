@@ -47,6 +47,7 @@ from tariff_engine import (
     TariffSyncStatus,
 )
 from control_engine import ImportControlEngine, ImportControlLookupResult, ControlSyncStatus
+from change_ledger import ChangeLedger
 from classification_evidence import (
     ClassificationEvidenceEngine,
     ClassificationEvidenceSearchResult,
@@ -82,6 +83,12 @@ tariff_engine.excise_tax = excise_tax_index
 eylemio_client = EylemioClient()
 control_engine = ImportControlEngine()
 classification_engine = ClassificationEvidenceEngine()
+# Unified, persistent change ledger shared by every official data engine.
+change_ledger = ChangeLedger()
+tariff_engine.ledger = change_ledger
+control_engine.ledger = change_ledger
+classification_engine.ledger = change_ledger
+trade_measure_engine.store.ledger = change_ledger
 customs_advisor_service = CustomsAdvisor(
     tariff_engine=tariff_engine,
     control_engine=control_engine,
@@ -92,6 +99,28 @@ customs_advisor_service = CustomsAdvisor(
 # Extra background coroutines registered by the web layer (e.g. watch-list notifier).
 BACKGROUND_LOOPS: list[tuple[str, "Callable[[], Coroutine[Any, Any, None]]"]] = []
 BACKGROUND_LOOPS.append(("trade-measures-sync", trade_measure_engine.periodic_sync_loop))
+
+
+async def backfill_change_ledger() -> None:
+    """One-off at startup: import historical snapshot transitions into the ledger."""
+    await asyncio.sleep(20)
+    try:
+        counts = await asyncio.to_thread(
+            lambda: {
+                "tariff": tariff_engine.backfill_ledger(),
+                "controls": control_engine.backfill_ledger(),
+                "classification": classification_engine.backfill_ledger(),
+                "trade_measures": trade_measure_engine.store.backfill_ledger(),
+                "measure_rows": trade_measure_engine.store.ensure_measure_rows(),
+            }
+        )
+        if any(counts.values()):
+            logger.info("Change ledger backfill: %s", counts)
+    except Exception:  # noqa: BLE001
+        logger.exception("Change ledger backfill failed")
+
+
+BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
 
 
 @asynccontextmanager
