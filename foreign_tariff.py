@@ -784,27 +784,28 @@ class ForeignTariffEngine:
         async with self._sync_lock:
             self._syncing = True
             try:
-                last_checked = self.store.get_metadata("last_checked_at")
-                if not force and last_checked:
-                    try:
-                        elapsed = (datetime.now(UTC) - datetime.fromisoformat(last_checked)).total_seconds()
-                        if elapsed < self.sync_interval_seconds:
-                            return self.status()
-                    except ValueError:
-                        pass
                 retrieved_at = _now()
-                self.store.set_metadata("last_checked_at", retrieved_at)
                 self._errors.clear()
-                # Her kaynak ayrı ayrı denenir; birinin hatası diğerini engellemez.
-                for label, coroutine in (
-                    ("UK", self._sync_uk_chapters(retrieved_at)),
-                    *((("CH", self._sync_swiss_nomenclature(retrieved_at)),) if CH_SYNC_ENABLED else ()),
-                ):
+                # Her kaynak ayrı ayrı denenir ve kendi zamanlamasına bakar: birinin hatası
+                # diğerini engellemez, yeni eklenen bir veri seti de diğerinin damgası yüzünden
+                # bir gün beklemez (hiç eşitlenmemiş veri seti her zaman hemen çekilir).
+                sources: list[tuple[str, str, Any]] = [("UK", UK_DATASET, self._sync_uk_chapters)]
+                if CH_SYNC_ENABLED:
+                    sources.append(("CH", CH_DATASET, self._sync_swiss_nomenclature))
+                ran = False
+                for label, dataset, handler in sources:
+                    if not force and not self._dataset_due(dataset):
+                        continue
+                    ran = True
+                    self.store.set_metadata(f"last_checked_at:{dataset}", retrieved_at)
                     try:
-                        await coroutine
+                        await handler(retrieved_at)
                     except Exception as exc:  # noqa: BLE001
                         self._errors.append(f"{label}: {type(exc).__name__}: {str(exc)[:250]}")
                         logger.warning("Yurt dışı tarife eşitlemesi başarısız (%s): %s", label, exc)
+                if not ran:
+                    return self.status()
+                self.store.set_metadata("last_checked_at", retrieved_at)
                 self.store.purge_cache(max_age_days=self.cache_days)
             except Exception as exc:  # noqa: BLE001 – eşitleme hatası sunucuyu durdurmaz
                 self._errors.append(f"{type(exc).__name__}: {str(exc)[:300]}")
@@ -812,6 +813,19 @@ class ForeignTariffEngine:
             finally:
                 self._syncing = False
         return self.status()
+
+    def _dataset_due(self, dataset: str) -> bool:
+        """Hiç eşitlenmemiş veri seti hemen çekilir; diğerleri kendi aralığını bekler."""
+        if self.store.active_snapshot(dataset) is None:
+            return True
+        stamp = self.store.get_metadata(f"last_checked_at:{dataset}")
+        if not stamp:
+            return True
+        try:
+            elapsed = (datetime.now(UTC) - datetime.fromisoformat(stamp)).total_seconds()
+        except ValueError:
+            return True
+        return elapsed >= self.sync_interval_seconds
 
     async def _sync_uk_chapters(self, retrieved_at: str) -> None:
         payload, url = await self._get_json("/chapters")

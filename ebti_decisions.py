@@ -515,7 +515,14 @@ class EbtiDecisionEngine:
         await asyncio.sleep(initial_delay)
         while True:
             status = await self.sync()
-            await asyncio.sleep(self.sync_interval_seconds if status.get("ready") else 1800)
+            if not status.get("ready"):
+                delay = 1800.0
+            elif status.get("ingested") == self.max_files_per_run:
+                # Koşu başına dosya sınırına takıldı: geriye dönük dolum sürüyor, kısa ara ver.
+                delay = 600.0
+            else:
+                delay = float(self.sync_interval_seconds)
+            await asyncio.sleep(delay)
 
     # ---- arama
     def search(self, query: str = "", *, code_prefix: str | None = None, limit: int = 8) -> EbtiSearchResult:
