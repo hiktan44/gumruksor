@@ -293,6 +293,7 @@ class FillTests(unittest.TestCase):
             fill_batch=batch,
             monthly_budget_usd=budget,
             unit_cost_usd=0.015,
+            fill_delay_seconds=0.0,
         )
         self.addCleanup(lambda: asyncio.run(engine.close()))
         return engine
@@ -492,6 +493,53 @@ class FillTests(unittest.TestCase):
         payload = asyncio.run(engine.lookup("610910001000", origin="TR")).as_dict()
         self.assertFalse(payload["stale"])
         self.assertEqual(payload["age_days"], 0)
+
+    def _picky_transport(self, bad: set[str]) -> httpx.MockTransport:
+        """Aktör taklidi: grupta geçersiz kod varsa tüm grubu 400 ile reddeder."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            codes = body["goodsCodes"]
+            self.calls.append({"body": body})
+            offending = [code for code in codes if code in bad]
+            if offending:
+                return httpx.Response(
+                    400,
+                    json={"error": {"type": "invalid-input", "message": f"Unknown goods code {offending[0]}"}},
+                )
+            return httpx.Response(200, json=[_item(code) for code in codes])
+
+        return httpx.MockTransport(handler)
+
+    def test_one_bad_code_does_not_take_down_its_whole_chunk(self):
+        codes = [f"61091000{index:02d}00" for index in range(5)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=5)
+        engine._http = httpx.AsyncClient(transport=self._picky_transport({"6109100002"}))
+        report = asyncio.run(engine.fill_once())
+        # Grup 400 aldı, ardından kodlar tek tek denendi: 4 geçerli kod kurtarıldı.
+        self.assertEqual(report["fetched"], 4)
+        self.assertEqual(report["charged"], 4)
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(engine.spend_status()["lookups"], 4)
+        self.assertIsNotNone(engine.archived("6109100000", "TR"))
+        self.assertIsNone(engine.archived("6109100002", "TR"))
+        # Reddedilen kod kaydedilmediği için bir sonraki turda yeniden denenir.
+        self.assertEqual(engine.fill_plan()["pending_pairs"], 1)
+
+    def test_rejected_code_reason_is_reported_without_the_token(self):
+        engine = self._engine(codes=("610910000000",), origins="TR", batch=5)
+        engine._http = httpx.AsyncClient(transport=self._picky_transport({"6109100000"}))
+        asyncio.run(engine.fill_once())
+        errors = " ".join(engine.fill_plan()["errors"])
+        self.assertIn("Unknown goods code", errors)
+        self.assertNotIn("test-token", errors)
+
+    def test_server_error_does_not_trigger_per_code_retries(self):
+        codes = [f"61091000{index:02d}00" for index in range(5)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=5, status=500)
+        asyncio.run(engine.fill_once())
+        # 500 geçici bir sorundur: tek tek yeniden denenmez, tur boşuna uzamaz.
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(engine.spend_status()["lookups"], 0)
 
     def test_fill_tables_are_added_to_an_existing_database(self):
         # Eski şemalı veritabanı: ALTER TABLE korumalı göç sütunları eklemeli.

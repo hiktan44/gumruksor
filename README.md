@@ -234,7 +234,14 @@ sorgulanacak koddur (`hs6` düzeyi daha kaba ve daha ucuzdur). Dolum üç kapıd
 açık olmalı, **aylık harcama tavanı** (`EU_TARIC_MONTHLY_BUDGET_USD`, varsayılan `0` = hiç
 sorgu yok) aşılmamış olmalı ve kod × ülke çifti arşivde **taze** olmamalıdır. Her tur
 `EU_TARIC_FILL_BATCH` kadar çift işler, aktöre tek çağrıda en fazla `EU_TARIC_MAX_CODES` kod
-gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. AB'de beyana elverişli
+gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. Aktör bir grubu
+`400` ile reddederse (grupta tek bir geçersiz kod bütün grubu düşürebiliyor) kodlar **tek tek**
+yeniden denenir; geçerli olanlar kurtarılır, reddedilen kod kaydedilmeden bırakılır ve bir
+sonraki turda yeniden denenir. Geçersiz kod ücretlendirilmediği için bu kurtarma ek maliyet
+doğurmaz. `500` gibi geçici hatalarda tek tek deneme yapılmaz, tur boşuna uzamaz. Çağrılar
+arasında `EU_TARIC_FILL_DELAY_SECONDS` kadar beklenir (BK arşivindeki
+`UK_MEASURES_DELAY_SECONDS` deseni). Aktörün hata metni — jeton maskelenerek — dolum
+hatalarına yazılır, böylece reddin sebebi görülebilir. AB'de beyana elverişli
 olmayan kod `not_declarable` olarak işaretlenir (aktör bunları ücretlendirmez) ve
 `EU_TARIC_NOT_DECLARABLE_RETRY_DAYS` (varsayılan 180 gün) geçmeden tekrar denenmez;
 başarısız tur hiç kaydedilmez, bir sonraki turda yeniden denenir.

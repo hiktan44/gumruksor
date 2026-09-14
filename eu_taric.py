@@ -96,6 +96,9 @@ EU_TARIC_UNIT_COST_USD = max(0.0, _env_float("EU_TARIC_UNIT_COST_USD", 0.015))
 EU_TARIC_REFRESH_DAYS = max(1, _env_int("EU_TARIC_REFRESH_DAYS", 90))
 # AB'de beyana elverişli olmayan kod her turda değil, bu aralıkla yeniden yoklanır.
 EU_TARIC_NOT_DECLARABLE_RETRY_DAYS = max(1, _env_int("EU_TARIC_NOT_DECLARABLE_RETRY_DAYS", 180))
+# Ardışık aktör çağrıları arasında bekleme (``UK_MEASURES_DELAY_SECONDS`` deseni): kaynağın
+# eşzamanlılık/kaynak sınırlarına toptan 400 ile takılmamak için.
+EU_TARIC_FILL_DELAY_SECONDS = max(0.0, _env_float("EU_TARIC_FILL_DELAY_SECONDS", 3.0))
 
 _FILL_LEVELS: dict[str, int] = {"hs6": 6, "hs8": 8, "cn8": 8, "hs10": 10, "taric10": 10}
 
@@ -357,6 +360,14 @@ def _ensure_columns(db: sqlite3.Connection, table: str, columns: dict[str, str])
             db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
+class ActorRequestError(RuntimeError):
+    """Aktörün reddettiği istek; ``status_code`` 400 ise kod başına yeniden denenir."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class EuTaricEngine:
     """Apify aktörünü çağırır, sonucu kalıcı arşive yazar ve aynı sorgu için bir daha ücret ödemez."""
 
@@ -377,6 +388,7 @@ class EuTaricEngine:
         unit_cost_usd: float = EU_TARIC_UNIT_COST_USD,
         refresh_days: int = EU_TARIC_REFRESH_DAYS,
         not_declarable_retry_days: int = EU_TARIC_NOT_DECLARABLE_RETRY_DAYS,
+        fill_delay_seconds: float = EU_TARIC_FILL_DELAY_SECONDS,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
         root.mkdir(parents=True, exist_ok=True)
@@ -405,6 +417,7 @@ class EuTaricEngine:
         self.unit_cost_usd = max(0.0, float(unit_cost_usd or 0.0))
         self.refresh_days = max(1, int(refresh_days or 1))
         self.not_declarable_retry_days = max(1, int(not_declarable_retry_days or 1))
+        self.fill_delay_seconds = max(0.0, float(fill_delay_seconds or 0.0))
         self._fill_lock = asyncio.Lock()
         self._fill_errors: list[str] = []
         self._initialise()
@@ -482,6 +495,27 @@ class EuTaricEngine:
             )
 
     # ---- Apify çağrısı
+    def _safe_detail(self, response: httpx.Response, limit: int = 200) -> str:
+        """Hata gövdesinden kısa bir açıklama çıkarır; jeton geçerse maskelenir."""
+        try:
+            body = response.content[:2000].decode("utf-8", "replace")
+        except (AttributeError, ValueError):
+            return ""
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                error = parsed.get("error")
+                if isinstance(error, dict):
+                    body = str(error.get("message") or error.get("type") or body)
+                elif error:
+                    body = str(error)
+        except ValueError:
+            pass
+        text = re.sub(r"\s+", " ", body).strip()
+        if self._token:
+            text = text.replace(self._token, "***")
+        return text[:limit]
+
     async def _run_actor(self, goods_codes: list[str], partner: str) -> list[dict[str, Any]]:
         if not self._token:
             raise SecurityViolation("Apify jetonu yapılandırılmamış.", code="config_missing")
@@ -504,8 +538,13 @@ class EuTaricEngine:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # Jeton hiçbir hata metnine sızmamalı.
-            raise RuntimeError(f"Apify aktörü {exc.response.status_code} döndürdü.") from None
+            # Kaynağın kendi hata metni tanı için gerekli; jeton yine de ayrıca temizlenir.
+            detail = self._safe_detail(exc.response)
+            status_code = exc.response.status_code
+            raise ActorRequestError(
+                f"Apify aktörü {status_code} döndürdü{(': ' + detail) if detail else '.'}",
+                status_code=status_code,
+            ) from None
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Apify aktörüne ulaşılamadı: {type(exc).__name__}") from None
         except (UnicodeEncodeError, TypeError) as exc:  # bozuk jeton/başlık: jeton metne sızmasın
@@ -705,6 +744,36 @@ class EuTaricEngine:
             queue = queue[: max(0, int(limit))]
         return queue, len(never), len(due), skipped
 
+    async def _run_chunk(self, chunk: list[str], origin: str) -> tuple[list[dict[str, Any]], set[str]]:
+        """Bir grubu çalıştırır; aktör grubu 400 ile reddederse kodları tek tek dener.
+
+        Tek bir geçersiz kod yüzünden gruptaki diğer kodların kaybolmasını önler. Geçersiz
+        kod aktörde ücretlendirilmediği için tek tek deneme ek maliyet doğurmaz.
+        """
+        try:
+            async with self._lock:
+                items = await self._run_actor(chunk, origin)
+            await asyncio.sleep(self.fill_delay_seconds)
+            return items, set()
+        except ActorRequestError as exc:
+            self._fill_errors.append(f"{_now()}: {exc}")
+            if exc.status_code != 400 or len(chunk) == 1:
+                return [], set(chunk)
+        except (SecurityViolation, RuntimeError, ValueError) as exc:
+            self._fill_errors.append(f"{_now()}: {str(exc)[:200]}")
+            return [], set(chunk)
+        items: list[dict[str, Any]] = []
+        rejected: set[str] = set()
+        for code in chunk:
+            await asyncio.sleep(self.fill_delay_seconds)
+            try:
+                async with self._lock:
+                    items.extend(await self._run_actor([code], origin))
+            except (SecurityViolation, RuntimeError, ValueError) as exc:
+                self._fill_errors.append(f"{_now()}: {code}: {str(exc)[:160]}")
+                rejected.add(code)
+        return items, rejected
+
     def fill_plan(self) -> dict[str, Any]:
         """Dolumun mevcut durumu: aday sayısı, kalan iş ve tahmini maliyet (ücret doğurmaz)."""
         period = month_key()
@@ -760,14 +829,12 @@ class EuTaricEngine:
             for origin, origin_codes in by_origin.items():
                 for start in range(0, len(origin_codes), EU_TARIC_MAX_CODES):
                     chunk = origin_codes[start : start + EU_TARIC_MAX_CODES]
-                    try:
-                        async with self._lock:
-                            items = await self._run_actor(chunk, origin)
-                    except (SecurityViolation, RuntimeError, ValueError) as exc:
-                        message = str(exc)[:200]
-                        self._fill_errors.append(f"{_now()}: {message}")
-                        failed += len(chunk)
-                        # Hatalı tur kaydedilmez; bir sonraki turda yeniden denenir.
+                    items, rejected = await self._run_chunk(chunk, origin)
+                    if rejected:
+                        # Aktör grubu reddetti: geçerli kodlar da düşmesin diye tek tek denendi.
+                        failed += len(rejected)
+                        chunk = [code for code in chunk if code not in rejected]
+                    if not chunk:
                         continue
                     found = {
                         code: item
@@ -857,6 +924,7 @@ __all__ = [
     "parse_iso_datetime",
     "EuTaricEngine",
     "EuTaricResult",
+    "ActorRequestError",
     "KIND_LABELS",
     "SOURCE_NOTE",
     "classify_measure",
