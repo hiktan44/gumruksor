@@ -1092,10 +1092,56 @@ function renderExpertReviewPacket(packet) {
     <button class="secondary-action" id="downloadExpertPacket" type="button">Müşavir / BTB dosyasını JSON indir</button></section>`;
 }
 
+const WORKFLOW_STATUS_LABELS = { done: "Tamam", pending: "Bekliyor", blocked: "Engelli", not_applicable: "Uygulanmaz" };
+
+function workflowSummary(steps) {
+  const counts = { done: 0, pending: 0, blocked: 0, not_applicable: 0 };
+  steps.forEach((step) => { if (step.status in counts) counts[step.status] += 1; });
+  const applicable = steps.length - counts.not_applicable;
+  return { ...counts, total: steps.length, completion_ratio: applicable > 0 ? counts.done / applicable : 1 };
+}
+
+// PRD Faz 2.4: the static guide is replaced by the workflow computed server-side from the
+// precheck result. No result (or a dossier saved before the field existed) keeps the static guide.
+function renderWorkflow(steps) {
+  const output = $("#workflowOutput");
+  const guide = $("#guideStatic");
+  if (!output || !guide) return;
+  if (!Array.isArray(steps) || !steps.length) {
+    output.hidden = true; output.innerHTML = ""; guide.hidden = false;
+    return;
+  }
+  const summary = workflowSummary(steps);
+  const percent = Math.round(summary.completion_ratio * 100);
+  output.innerHTML = `
+    <div class="workflow-head">
+      <h3>Hesaplanan işlem akışı · ${steps.length} adım</h3>
+      <div class="workflow-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" aria-label="Tamamlanma oranı"><i style="width:${percent}%"></i></div>
+      <small>%${percent} tamamlandı (uygulanmayan adımlar hariç)</small>
+      <div class="workflow-counts"><span>${summary.done} tamam</span><span>${summary.pending} bekliyor</span><span>${summary.blocked} engelli</span><span>${summary.not_applicable} uygulanmaz</span></div>
+    </div>
+    <ol class="workflow-list">${steps.map((step) => `
+      <li class="workflow-step ${escapeHtml(step.status)}">
+        <b>${Number(step.order) || ""}</b>
+        <div>
+          <h4>${escapeHtml(step.title)}</h4>
+          <p>${escapeHtml(step.summary)}</p>
+          ${step.next_action ? `<p class="workflow-next">${escapeHtml(step.next_action)}</p>` : ""}
+          ${step.legal_basis ? `<small class="workflow-legal">${escapeHtml(step.legal_basis)}</small>` : ""}
+          ${(step.evidence_refs || []).length ? `<small class="workflow-refs">Kaynak alanlar: ${step.evidence_refs.map((ref) => escapeHtml(ref)).join(", ")}</small>` : ""}
+        </div>
+        <span class="workflow-badge ${escapeHtml(step.status)}">${escapeHtml(WORKFLOW_STATUS_LABELS[step.status] || step.status)}</span>
+      </li>`).join("")}</ol>
+    <p class="workflow-legal-note">Adım durumları yalnızca ön değerlendirme sonucundaki alanlardan kural tabanlı türetilir; yapay zekâ yorumu içermez ve bağlayıcı idari karar değildir. GTİP forma otomatik yazılmaz.</p>`;
+  guide.hidden = true;
+  output.hidden = false;
+}
+
 function renderCustomsResult(data) {
   exportStore.precheck = data;
   state.currentCustomsResult = data;
   saveLocalScenario(data);
+  renderWorkflow(data.workflow);
   const sourceMap = customsSourceMap(data);
   const statusLabels = {
     preliminary: "Ön değerlendirme",
