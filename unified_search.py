@@ -182,6 +182,61 @@ def format_gtip(digits: str | None) -> str:
     return clean
 
 
+def merge_hybrid_cards(
+    results: list[dict[str, Any]],
+    hybrid: dict[str, Any] | None,
+    seen_gtips: set[str],
+    bounded_limit: int,
+    enrich: Any,
+) -> list[dict[str, Any]]:
+    """Mevcut LIKE kartlarını koruyarak hibrit indeks eşleşmelerini ekler ve ``mode`` alanı yazar."""
+    mode = str((hybrid or {}).get("mode") or "lexical")
+    for card in results:
+        card.setdefault("mode", "like")
+    if not hybrid:
+        return results
+    for item in hybrid.get("items", []):
+        if len(results) >= bounded_limit:
+            break
+        codes = [re.sub(r"\D", "", str(code)) for code in (item.get("gtip_codes") or [])]
+        codes = [code for code in codes if code]
+        gtip = codes[0] if codes else ""
+        if gtip and gtip in seen_gtips:
+            continue
+        description = str(item.get("snippet") or item.get("title") or "").strip()
+        if not description:
+            continue
+        if gtip:
+            seen_gtips.add(gtip)
+            card = enrich(gtip, description, source="hybrid_index")
+        else:
+            card = {
+                "gtip": "",
+                "code": "",
+                "name": str(item.get("title") or description)[:200],
+                "formatted_gtip": "",
+                "description": description[:320],
+                "chapter_code": "",
+                "chapter_name": "",
+                "list_name": "",
+                "has_excise": False,
+                "excise_label": None,
+                "vat_rate": None,
+                "vat_label": "",
+                "vat_basis": None,
+                "vat_ambiguous": False,
+                "has_controls": False,
+                "control_badges": [],
+                "source": "hybrid_index",
+            }
+        card["mode"] = mode
+        card["corpus"] = item.get("corpus")
+        card["source_url"] = item.get("source_url") or card.get("source_url") or ""
+        card["hybrid_score"] = item.get("score")
+        results.append(card)
+    return results
+
+
 class UnifiedSearchEngine:
     """Bütünleşik gümrük arama, otomatik tamamlama ve mevzuat fihristi."""
 
@@ -207,8 +262,17 @@ class UnifiedSearchEngine:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def autocomplete(self, query: str, limit: int = 12) -> list[dict[str, Any]]:
-        """Arama kutusuna yazıldıkça (search-as-you-type) anında GTİP, tanım ve vergi önerileri sunar."""
+    def autocomplete(
+        self,
+        query: str,
+        limit: int = 12,
+        hybrid: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Arama kutusuna yazıldıkça (search-as-you-type) anında GTİP, tanım ve vergi önerileri sunar.
+
+        ``hybrid`` verilirse (``HybridIndex.search`` çıktısı) mevcut LIKE sonuçları korunur ve
+        listede olmayan hibrit eşleşmeler sona eklenir; her kart ``mode`` alanı taşır.
+        """
         text = str(query or "").strip()
         if not text:
             return []
@@ -298,7 +362,8 @@ class UnifiedSearchEngine:
                 finally:
                     c_conn.close()
 
-        return results
+        # 4. Öncelik: kalıcı hibrit indeks (BM25 + embedding); mevcut sonuçlar korunur.
+        return merge_hybrid_cards(results, hybrid, seen_gtips, bounded_limit, self._enrich_gtip_card)
 
     def _enrich_gtip_card(
         self,
@@ -372,22 +437,33 @@ class UnifiedSearchEngine:
             "source": source,
         }
 
-    def search_all(self, query: str, category: str = "all", limit: int = 25) -> dict[str, Any]:
-        """Tüm resmi kaynaklarda (Tarife, Kontroller, Önlemler, ÖTV, Mevzuat) kategorize arama."""
+    def search_all(
+        self,
+        query: str,
+        category: str = "all",
+        limit: int = 25,
+        hybrid: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Tüm resmi kaynaklarda (Tarife, Kontroller, Önlemler, ÖTV, Mevzuat) kategorize arama.
+
+        ``hybrid`` verilirse hibrit indeks sonuçları ``hibrit`` kategorisine eklenir ve
+        yanıtın ``mode`` alanı ``lexical``/``hybrid`` olur; LIKE tabanlı kategoriler korunur.
+        """
         text = str(query or "").strip()
         if not text:
-            return {"query": query, "total_count": 0, "categories": {}}
+            return {"query": query, "total_count": 0, "categories": {}, "mode": "lexical"}
 
         results: dict[str, list[dict[str, Any]]] = {
             "tarife": [],
             "denetim": [],
             "otv": [],
             "onlemler": [],
+            "hibrit": [],
         }
 
         # 1. Tarife & Eşya Arama
         if category in {"all", "tarife"}:
-            results["tarife"] = self.autocomplete(text, limit=min(limit, 10))
+            results["tarife"] = self.autocomplete(text, limit=min(limit, 10), hybrid=hybrid)
 
         # 2. Denetim & TAREKS/TSE Arama
         if category in {"all", "denetim"}:
@@ -445,9 +521,14 @@ class UnifiedSearchEngine:
                             "note": m.get("note"),
                         })
 
+        # 4. Hibrit indeks (BM25 + embedding) sonuçları ayrı kategori olarak
+        if category in {"all", "hibrit"}:
+            results["hibrit"] = [dict(item) for item in (hybrid or {}).get("items", [])][:limit]
+
         total = sum(len(items) for items in results.values())
         return {
             "query": text,
+            "mode": str((hybrid or {}).get("mode") or "lexical"),
             "total_count": total,
             "categories": results,
             "chapters": [

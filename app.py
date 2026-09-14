@@ -50,6 +50,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    hybrid_index,
     review_service,
     tariff_engine,
     ticaret_client,
@@ -2541,8 +2542,17 @@ async def web_tariff_autocomplete(request: Request):
         return limited
     query = str(request.query_params.get("q", "")).strip()[:100]
     limit_val = max(1, min(int(request.query_params.get("limit", "12") or 12), 30))
-    items = unified_search.autocomplete(query, limit=limit_val)
-    return JSONResponse({"items": items, "results": items, "count": len(items), "total": len(items)})
+    hybrid = await _hybrid_hits(query, limit=limit_val)
+    items = unified_search.autocomplete(query, limit=limit_val, hybrid=hybrid)
+    return JSONResponse(
+        {
+            "items": items,
+            "results": items,
+            "count": len(items),
+            "total": len(items),
+            "mode": str((hybrid or {}).get("mode") or "lexical"),
+        }
+    )
 
 
 @mcp.custom_route("/api/controls/communiques", methods=["GET"])
@@ -2573,6 +2583,62 @@ async def web_controls_search(request: Request):
     return JSONResponse({"query": query, "items": items, "results": items, "count": len(items), "total": len(items)})
 
 
+async def _hybrid_hits(query: str, *, limit: int = 10, gtip: str | None = None) -> dict[str, Any] | None:
+    """Kalıcı hibrit indeksten (BM25 + embedding) sonuç alır; hata/boş sorguda None."""
+    text = str(query or "").strip()
+    if not text:
+        return None
+    try:
+        return await hybrid_index.search(text, limit=limit, gtip_prefix=gtip)
+    except SecurityViolation:
+        raise
+    except Exception:  # noqa: BLE001 - hibrit indeks mevcut aramayı hiçbir zaman engellemez
+        logger.exception("Hibrit indeks araması başarısız")
+        return None
+
+
+@mcp.custom_route("/api/search/hybrid", methods=["GET"])
+async def web_hybrid_search(request: Request):
+    """Kalıcı hibrit indeks (BM25 + embedding, RRF) üzerinde arama (PRD Faz 3.1)."""
+    limited = _rate_limit_response(request, "hybrid-search", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    query = str(request.query_params.get("q", "")).strip()[:200]
+    gtip = re.sub(r"\D", "", str(request.query_params.get("gtip", "")))[:12]
+    try:
+        limit_val = max(1, min(int(request.query_params.get("limit", "10") or 10), 30))
+    except ValueError:
+        limit_val = 10
+    if not query:
+        return JSONResponse({"query": "", "mode": "lexical", "items": [], "count": 0})
+    try:
+        result = await hybrid_index.search(query, limit=limit_val, gtip_prefix=gtip or None)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except Exception:
+        logger.exception("Hibrit arama başarısız")
+        return JSONResponse({"error": "Hibrit arama şu anda kullanılamıyor."}, status_code=503)
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/api/admin/index-status", methods=["GET"])
+async def web_admin_index_status(request: Request):
+    """Hibrit indeks durumu (belge/embedding sayıları, son yenileme); editör veya yönetici."""
+    limited = _rate_limit_response(request, "admin-index-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_role(request, "editor")
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    try:
+        status = hybrid_index.status()
+    except Exception:
+        logger.exception("Hibrit indeks durumu alınamadı")
+        return JSONResponse({"error": "İndeks durumu okunamadı."}, status_code=500)
+    return JSONResponse(status, headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/search/unified", methods=["GET", "POST"])
 async def web_unified_search(request: Request):
     """Tarife, TAREKS/TSE denetimleri, ÖTV ve resmi mevzuat üzerinde birleşik arama."""
@@ -2589,7 +2655,8 @@ async def web_unified_search(request: Request):
     else:
         query = str(request.query_params.get("q", "")).strip()
         category = str(request.query_params.get("category", "all")).strip()
-    result = unified_search.search_all(query, category=category, limit=30)
+    hybrid = await _hybrid_hits(query, limit=10)
+    result = unified_search.search_all(query, category=category, limit=30, hybrid=hybrid)
     return JSONResponse(result)
 
 

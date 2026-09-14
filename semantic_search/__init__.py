@@ -1,5 +1,10 @@
 from .embedder import OpenRouterEmbedder as OpenRouterEmbedder
+from .embedder import GeminiNativeEmbedder as GeminiNativeEmbedder
+from .embedder import EmbeddingProvider as EmbeddingProvider
+from .embedder import build_embedder as build_embedder
 from .embedder import is_openrouter_available as is_openrouter_available
+from .embedder import is_embedding_available as is_embedding_available
+from .embedder import prepare_document_text as prepare_document_text
 from .vector_store import VectorStore as VectorStore
 from .processor import MevzuatProcessor as MevzuatProcessor
 from .cache import EmbeddingCache as EmbeddingCache
