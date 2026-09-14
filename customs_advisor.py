@@ -29,6 +29,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from control_engine import ImportControlEngine, ImportControlLookupResult
+from customs_workflow import WorkflowStep, build_workflow
 from classification_evidence import ClassificationEvidenceEngine, ClassificationEvidenceHit
 from origin_documents import OriginDocumentRequirements, origin_document_requirements
 from security_firewall import (
@@ -359,6 +360,9 @@ class CustomsPrecheckResult(BaseModel):
     safety_notes: list[str] = Field(default_factory=list)
     inquiry: CustomsInquiry
     expert_review_packet: "ExpertReviewPacket"
+    # PRD Faz 2.4: deterministic step list derived from the fields above; optional so
+    # dossiers saved before this field existed still validate.
+    workflow: list[WorkflowStep] = Field(default_factory=list)
 
 
 class ExpertReviewPacket(BaseModel):
@@ -1933,6 +1937,12 @@ def _legal_notice(as_of: str) -> str:
     return _DISCLAIMER.format(as_of=as_of)
 
 
+def _with_workflow(result: CustomsPrecheckResult) -> CustomsPrecheckResult:
+    """Finalize a precheck result with the deterministic 22+ step workflow (PRD Faz 2.4)."""
+    result.workflow = build_workflow(result)
+    return result
+
+
 def _evidence_prompt(pack: CustomsEvidencePack) -> str:
     inquiry_json = pack.inquiry.model_dump_json(indent=2, exclude_none=True)
     sources = "\n\n".join(
@@ -2561,7 +2571,7 @@ class CustomsAdvisor:
                 if not api_key
                 else "Bu istekte yeterli resmî kaynak metni alınamadığı için yorum üretilmedi."
             )
-            return CustomsPrecheckResult(
+            return _with_workflow(CustomsPrecheckResult(
                 status="evidence_only",
                 as_of=pack.as_of,
                 summary=reason,
@@ -2576,7 +2586,7 @@ class CustomsAdvisor:
                 inquiry=inquiry,
                 expert_review_packet=expert_review_packet,
                 next_steps=["Eksik ürün bilgilerini tamamlayın.", "Kesin sınıflandırma için BTB veya yetkili gümrük müşaviri teyidi alın."],
-            )
+            ))
 
         content: list[dict[str, Any]] = [{"type": "text", "text": _evidence_prompt(pack)}]
         if clean_image and clean_media_type:
@@ -2602,7 +2612,7 @@ class CustomsAdvisor:
         parsed = _sanitize_model_result(parsed, {source.id for source in usable_sources})
         if pack.missing_information and parsed.answer_status == "preliminary":
             parsed.answer_status = "needs_information"
-        return CustomsPrecheckResult(
+        return _with_workflow(CustomsPrecheckResult(
             status=parsed.answer_status,
             as_of=pack.as_of,
             model=resolved_model,
@@ -2623,4 +2633,4 @@ class CustomsAdvisor:
             safety_notes=safety_notes,
             inquiry=inquiry,
             expert_review_packet=expert_review_packet,
-        )
+        ))
