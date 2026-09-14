@@ -43,6 +43,7 @@ function switchTab(tabId) {
   else if (tabId === "payments") loadPayments();
   else if (tabId === "logs") loadLogs();
   else if (tabId === "changes") loadChanges();
+  else if (tabId === "reviews") loadReviews();
 }
 
 window.switchTab = switchTab;
@@ -341,8 +342,8 @@ function describeChangeRow(value) {
   return `${escapeHtml(String(rate))}${escapeHtml(note)}${escapeHtml(country)}`;
 }
 
-async function showChangeBatch(batchId) {
-  const detail = $("#changeDetail");
+async function showChangeBatch(batchId, target = null) {
+  const detail = target || $("#changeDetail");
   detail.innerHTML = "<p>Fark yükleniyor…</p>";
   try {
     const data = await json(`/api/admin/changes?batch=${encodeURIComponent(batchId)}`);
@@ -374,6 +375,107 @@ $("#changeBatches")?.addEventListener("click", (event) => {
   const row = event.target.closest("[data-batch]");
   if (row && !event.target.closest("a")) showChangeBatch(row.dataset.batch);
 });
+
+
+// TAB: EDITORIAL REVIEW QUEUE
+const REVIEW_KIND_LABELS = { tariff: "Tarife cetveli", controls: "Kontrol tebliği", classification: "AB tüzükleri" };
+
+function formatIso(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? escapeHtml(String(value)) : escapeHtml(date.toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" }));
+}
+
+function updateReviewBadge(count) {
+  const badge = $("#reviewBadge");
+  if (!badge) return;
+  badge.textContent = String(count || 0);
+  badge.hidden = !(count > 0);
+}
+
+async function loadReviews() {
+  const body = $("#reviewRows");
+  const detail = $("#reviewDetail");
+  if (!body) return;
+  detail.innerHTML = "";
+  try {
+    const data = await json("/api/admin/reviews");
+    const policy = data.policy || {};
+    $("#reviewPolicyMode").textContent = `${policy.mode || "off"} · ≤${policy.max_auto_rows} satır · ≤%${((policy.max_auto_ratio || 0) * 100).toFixed(2)}`;
+    const items = data.pending || [];
+    updateReviewBadge(items.length);
+    $("#reviewSummary").textContent = items.length
+      ? `${items.length} sürüm karar bekliyor.`
+      : policy.mode === "off"
+        ? "İnceleme kapısı kapalı (DATA_REVIEW_MODE=off): yeni sürümler doğrudan yayına alınır."
+        : "Bekleyen sürüm yok.";
+    body.innerHTML = items.length
+      ? items
+          .map((item) => {
+            const diff = item.diff_summary || {};
+            const reasons = [...(diff.reasons || []), ...(item.parse_warnings || [])];
+            return `
+      <tr data-review-kind="${escapeHtml(item.kind)}" data-review-id="${escapeHtml(item.snapshot_id)}" data-review-batch="${escapeHtml(item.ledger_batch || "")}">
+        <td>${formatIso(item.retrieved_at)}</td>
+        <td><b>${escapeHtml(REVIEW_KIND_LABELS[item.kind] || item.kind)}</b><br><small>${escapeHtml(item.title || item.source_id)}</small>${item.source_url ? `<br><a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">kaynak</a>` : ""}<br><small>sha ${shortSha(item.sha256)}</small></td>
+        <td>${Number(item.total_rows || 0).toLocaleString("tr-TR")}${diff.previous_rows ? `<br><small>önceki ${Number(diff.previous_rows).toLocaleString("tr-TR")}</small>` : ""}</td>
+        <td>+${diff.added || 0} / −${diff.removed || 0} / ~${diff.modified || 0}${diff.ratio != null ? `<br><small>%${(Number(diff.ratio) * 100).toFixed(2)}</small>` : ""}</td>
+        <td>${reasons.length ? `<ul class="review-reasons">${reasons.slice(0, 6).map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : "—"}</td>
+        <td class="review-actions">
+          ${item.ledger_batch ? `<button type="button" class="secondary-btn" data-review-action="diff">Fark</button>` : ""}
+          <button type="button" class="primary-btn" data-review-action="approve">Onayla</button>
+          <button type="button" class="danger-btn" data-review-action="reject">Reddet</button>
+        </td>
+      </tr>`;
+          })
+          .join("")
+      : '<tr><td colspan="6">Bekleyen sürüm yok.</td></tr>';
+  } catch (error) {
+    body.innerHTML = `<tr><td colspan="6" class="error-cell">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+async function decideReview(kind, snapshotId, action) {
+  const label = action === "approve" ? "onaylamak" : "reddetmek";
+  const note = window.prompt(`Bu sürümü ${label} için isteğe bağlı bir not yazın (boş bırakılabilir):`, "");
+  if (note === null) return;
+  try {
+    const data = await json(`/api/admin/reviews/${encodeURIComponent(kind)}/${encodeURIComponent(snapshotId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, note }),
+    });
+    toast(action === "approve" ? "Sürüm onaylandı ve yayına alındı." : "Sürüm reddedildi.");
+    updateReviewBadge(data.pending_count || 0);
+    loadReviews();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+$("#reviewReload")?.addEventListener("click", () => loadReviews());
+$("#reviewRows")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-review-action]");
+  const row = event.target.closest("[data-review-id]");
+  if (!button || !row) return;
+  const action = button.dataset.reviewAction;
+  if (action === "diff") {
+    if (row.dataset.reviewBatch) showChangeBatch(row.dataset.reviewBatch, $("#reviewDetail"));
+    return;
+  }
+  decideReview(row.dataset.reviewKind, row.dataset.reviewId, action);
+});
+
+async function refreshReviewBadge() {
+  try {
+    const data = await json("/api/admin/reviews");
+    updateReviewBadge((data.pending || []).length);
+  } catch (_error) {
+    /* badge is best effort */
+  }
+}
+refreshReviewBadge();
+if (window.location.hash === "#reviews") switchTab("reviews");
 
 // TAB 2: LLM EXPENSES
 async function loadLLMExpenses(filter = currentLlmFilter) {

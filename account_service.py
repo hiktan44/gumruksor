@@ -494,6 +494,15 @@ class AccountService:
                  _json({"role": role}, max_bytes=1_000), now),
             )
 
+    def record_audit(self, actor: dict[str, Any], action: str, target_type: str, target_id: str, details: dict[str, Any] | None = None) -> None:
+        """Generic audit trail entry (used by the editorial review gate)."""
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO audit_log(actor_sub,actor_email,action,target_type,target_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (str(actor.get("sub", ""))[:200], str(actor.get("email", ""))[:200], str(action)[:64], str(target_type)[:64],
+                 str(target_id)[:200], _json(details or {}, max_bytes=5_000), _now()),
+            )
+
     def is_admin(self, user: dict[str, Any]) -> bool:
         email = str(user.get("email", "")).strip().casefold()
         if not email:

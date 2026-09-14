@@ -3197,7 +3197,11 @@ async function loadChanges() {
       return `<details class="advanced-fields"><summary><span>${escapeHtml(detail.label || TRADE_MEASURE_LABELS[change.kind] || change.kind)}</span><small>${escapeHtml(String(change.changed_at || "").slice(0, 10))} · +${escapeHtml(change.added)} / −${escapeHtml(change.removed)} / ~${escapeHtml(change.modified)}</small></summary><ul class="missing-list">${items}</ul></details>`;
     }).join("");
     const tradeLedger = `<div class="formula-ledger"><h3>Damping, korunma, gözetim ve İthalat Tebliğleri (günlük eşitleme)</h3>${tradeDatasets}<p class="rate-warning">${lastSync}. Her gün Ticaret Bakanlığı ve mevzuat.gov.tr'den yeniden okunur; farklar aşağıda ve izleme listesi bildirimlerinde görünür.</p>${tradeRows || '<p class="missing-list">Önlem listelerinde henüz kaydedilmiş fark yok.</p>'}</div>`;
-    output.innerHTML = `<div class="candidate-grid">${tariffSummaries || '<p class="missing-list">Tarife sürümü henüz yok.</p>'}</div>${tradeLedger}
+    const review = data.review || {};
+    const reviewStrip = Number(review.pending_count || 0) > 0
+      ? `<p class="rate-warning review-strip">${escapeHtml(review.pending_count)} yeni resmî veri sürümü editör incelemesinde; onaylanana kadar sorgular önceki onaylı sürümle yanıtlanır.</p>`
+      : "";
+    output.innerHTML = `${reviewStrip}<div class="candidate-grid">${tariffSummaries || '<p class="missing-list">Tarife sürümü henüz yok.</p>'}</div>${tradeLedger}
       <div class="formula-ledger"><h3>Kontrol tebliği değişiklikleri</h3>${controlRows.length ? controlRows.map((item) => `<div class="formula-line"><span><strong>${escapeHtml(item.code)}</strong> · ${escapeHtml(item.title)}<br><small>${escapeHtml(item.changed_at)}</small></span><code>${item.scope_count_delta > 0 ? "+" : ""}${escapeHtml(item.scope_count_delta)}</code></div>`).join("") : '<p class="missing-list">Karşılaştırılabilir ikinci tebliğ sürümü henüz oluşmadı.</p>'}</div>`;
   } catch (error) { output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`; }
 }

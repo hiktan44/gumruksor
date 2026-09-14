@@ -1263,3 +1263,12 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .change-added td:first-child { color: #34d399; }
 .change-removed td:first-child { color: #f87171; }
 .change-modified td:first-child { color: #fbbf24; }
+
+/* Editorial review queue */
+.tab-badge { display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 4px; border-radius: 999px; background: #f59e0b; color: #1e1e24; font-size: 0.7rem; font-weight: 700; text-align: center; }
+.review-reasons { margin: 0; padding-left: 16px; font-size: 0.8rem; color: #fbbf24; }
+.review-actions { white-space: nowrap; }
+.review-actions button { margin: 2px 2px 2px 0; }
+.danger-btn { background: rgba(248,113,113,0.18); color: #f87171; border: 1px solid rgba(248,113,113,0.4); border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.danger-btn:hover { background: rgba(248,113,113,0.3); }
+.review-strip { border-left: 4px solid #f59e0b; padding-left: 10px; }

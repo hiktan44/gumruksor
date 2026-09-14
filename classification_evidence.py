@@ -28,6 +28,7 @@ from pdfminer.high_level import extract_text
 from pydantic import BaseModel, Field
 
 from change_ledger import batch_id_for, diff_rows
+from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
 from security_firewall import sanitize_untrusted_context, validate_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,8 @@ class ClassificationEvidenceStatus(BaseModel):
     active_sha256: str | None = None
     last_checked_at: str | None = None
     errors: list[str] = Field(default_factory=list)
+    pending_review_count: int = 0
+    review_mode: str = "off"
 
 
 class ClassificationEvidenceEngine:
@@ -139,6 +142,8 @@ class ClassificationEvidenceEngine:
         self._errors: list[str] = []
         # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
         self.ledger: Any = None
+        # Editorial review gate; the server replaces it with policy_from_env().
+        self.review_policy: ReviewPolicy = ReviewPolicy()
         self._http = httpx.AsyncClient(
             follow_redirects=False,
             timeout=httpx.Timeout(90),
@@ -188,6 +193,7 @@ class ClassificationEvidenceEngine:
                 );
                 """
             )
+            ensure_review_columns(connection, "snapshots")
         self.database_path.chmod(0o600)
 
     def status(self) -> ClassificationEvidenceStatus:
@@ -196,7 +202,10 @@ class ClassificationEvidenceEngine:
                 "SELECT archive_sha256,retrieved_at,page_count FROM snapshots WHERE active=1 LIMIT 1"
             ).fetchone()
             checked = connection.execute("SELECT value FROM metadata WHERE key='last_checked_at'").fetchone()
+            pending = connection.execute("SELECT COUNT(*) FROM snapshots WHERE status='pending_review'").fetchone()[0]
         return ClassificationEvidenceStatus(
+            pending_review_count=int(pending),
+            review_mode=self.review_policy.mode,
             ready=bool(row),
             syncing=self._syncing,
             page_count=int(row["page_count"]) if row else 0,
@@ -272,11 +281,12 @@ class ClassificationEvidenceEngine:
                 retrieved_at = _now()
                 with self._connect() as connection:
                     existing = connection.execute(
-                        "SELECT id FROM snapshots WHERE archive_sha256=?",
+                        "SELECT * FROM snapshots WHERE archive_sha256=?",
                         (archive_sha256,),
                     ).fetchone()
                     if existing:
-                        connection.execute("UPDATE snapshots SET active=(id=?)", (existing["id"],))
+                        if row_review_fields(existing)["status"] == "approved":
+                            connection.execute("UPDATE snapshots SET active=(id=?)", (existing["id"],))
                         connection.execute(
                             "INSERT INTO metadata(key,value) VALUES('last_checked_at',?) "
                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -307,12 +317,11 @@ class ClassificationEvidenceEngine:
 
                 with self._connect() as connection:
                     previous = connection.execute(
-                        "SELECT id FROM snapshots ORDER BY retrieved_at DESC LIMIT 1"
+                        "SELECT id FROM snapshots WHERE status='approved' ORDER BY active DESC, retrieved_at DESC LIMIT 1"
                     ).fetchone()
-                    connection.execute("UPDATE snapshots SET active=0")
                     connection.execute(
-                        "INSERT INTO snapshots(id,source_url,archive_sha256,retrieved_at,page_count,active) "
-                        "VALUES(?,?,?,?,?,1)",
+                        "INSERT INTO snapshots(id,source_url,archive_sha256,retrieved_at,page_count,active,status) "
+                        "VALUES(?,?,?,?,?,0,'pending_review')",
                         (snapshot_id, self.source_url, archive_sha256, retrieved_at, len(rows)),
                     )
                     connection.executemany(
@@ -329,7 +338,31 @@ class ClassificationEvidenceEngine:
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (retrieved_at,),
                     )
-                self._record_ledger_batch(snapshot_id, previous["id"] if previous else None)
+                    current_rows = self._page_rows_by_key(connection, snapshot_id)
+                    previous_rows = self._page_rows_by_key(connection, previous["id"]) if previous else {}
+                changes = (
+                    diff_rows(current_rows, previous_rows, fields=("content_sha256",), gtip_of=lambda row: (row.get("codes") or [None])[0])
+                    if previous else []
+                )
+                summary = DiffSummary(
+                    total_rows=len(current_rows), previous_rows=len(previous_rows),
+                    added=sum(1 for c in changes if c["change_type"] == "added"),
+                    removed=sum(1 for c in changes if c["change_type"] == "removed"),
+                    modified=sum(1 for c in changes if c["change_type"] == "modified"),
+                )
+                decision = decide(self.review_policy, summary, first_snapshot=previous is None)
+                warnings_json, diff_json = review_metadata(summary, decision, [])
+                with self._connect() as connection:
+                    connection.execute(
+                        "UPDATE snapshots SET status=?, parse_warnings_json=?, diff_summary_json=? WHERE id=?",
+                        (decision.status, warnings_json, diff_json, snapshot_id),
+                    )
+                    if not decision.pending:
+                        connection.execute("UPDATE snapshots SET active=0")
+                        connection.execute("UPDATE snapshots SET active=1 WHERE id=?", (snapshot_id,))
+                self._record_ledger_batch(snapshot_id, previous["id"] if previous else None, changes=changes, review_status=decision.status)
+                if decision.pending:
+                    logger.info("Classification snapshot %s waits for editorial review: %s", snapshot_id, "; ".join(decision.reasons))
                 self._errors.clear()
             except Exception as exc:
                 self._errors.append(f"{type(exc).__name__}: {str(exc)[:300]}")
@@ -352,7 +385,15 @@ class ClassificationEvidenceEngine:
             for row in rows
         }
 
-    def _record_ledger_batch(self, snapshot_id: str, previous_id: str | None, *, backfilled: bool = False) -> str | None:
+    def _record_ledger_batch(
+        self,
+        snapshot_id: str,
+        previous_id: str | None,
+        *,
+        backfilled: bool = False,
+        changes: list[dict[str, Any]] | None = None,
+        review_status: str | None = None,
+    ) -> str | None:
         if self.ledger is None:
             return None
         try:
@@ -361,11 +402,12 @@ class ClassificationEvidenceEngine:
                 if snapshot is None:
                     return None
                 current_rows = self._page_rows_by_key(connection, snapshot_id)
-                previous_rows = self._page_rows_by_key(connection, previous_id) if previous_id else {}
-            changes = (
-                diff_rows(current_rows, previous_rows, fields=("content_sha256",), gtip_of=lambda row: (row.get("codes") or [None])[0])
-                if previous_id else []
-            )
+                if changes is None:
+                    previous_rows = self._page_rows_by_key(connection, previous_id) if previous_id else {}
+                    changes = (
+                        diff_rows(current_rows, previous_rows, fields=("content_sha256",), gtip_of=lambda row: (row.get("codes") or [None])[0])
+                        if previous_id else []
+                    )
             return self.ledger.record_batch(
                 kind="classification",
                 source_id="eu_classification_regulations",
@@ -377,11 +419,57 @@ class ClassificationEvidenceEngine:
                 changes=changes,
                 total_rows=len(current_rows),
                 detected_at=snapshot["retrieved_at"],
+                review_status=review_status or row_review_fields(snapshot)["status"],
                 backfilled=backfilled,
             )
         except Exception as exc:  # noqa: BLE001 – the ledger must never break a sync
             logger.warning("Classification change ledger write failed: %s", exc)
             return None
+
+    # ---------------------------------------------------------- editorial review
+    def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = {
+            "kind": "classification", "snapshot_id": row["id"], "source_id": "eu_classification_regulations",
+            "title": "AB sınıflandırma tüzükleri konsolide listesi", "source_url": row["source_url"],
+            "sha256": row["archive_sha256"], "retrieved_at": row["retrieved_at"], "valid_from": None,
+            "total_rows": int(row["page_count"] or 0), "active": bool(row["active"]),
+            "ledger_batch": batch_id_for("classification", "eu_classification_regulations", row["id"]) if self.ledger is not None else None,
+        }
+        item.update(row_review_fields(row))
+        return item
+
+    def pending_reviews(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM snapshots WHERE status='pending_review' ORDER BY retrieved_at DESC").fetchall()
+        return [self._review_item(row) for row in rows]
+
+    def review_snapshot(self, snapshot_id: str, action: str, *, reviewed_by: str, note: str = "") -> dict[str, Any]:
+        if action not in {"approve", "reject"}:
+            raise ValueError("Karar 'approve' veya 'reject' olmalıdır.")
+        now = _now()
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+            if row is None:
+                raise KeyError(snapshot_id)
+            if action == "approve":
+                connection.execute("UPDATE snapshots SET active=0")
+                connection.execute(
+                    "UPDATE snapshots SET active=1, status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE snapshots SET active=0, status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+                if row["active"]:
+                    fallback = connection.execute(
+                        "SELECT id FROM snapshots WHERE status='approved' AND id<>? ORDER BY retrieved_at DESC LIMIT 1", (snapshot_id,)
+                    ).fetchone()
+                    if fallback:
+                        connection.execute("UPDATE snapshots SET active=1 WHERE id=?", (fallback["id"],))
+            updated = connection.execute("SELECT * FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        return self._review_item(updated)
 
     def backfill_ledger(self) -> int:
         if self.ledger is None:

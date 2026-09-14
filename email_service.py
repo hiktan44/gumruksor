@@ -112,6 +112,27 @@ def render_watch_email(items: list[dict[str, Any]], base_url: str) -> str:
 </div>"""
 
 
+def render_review_email(items: list[dict[str, Any]], base_url: str) -> str:
+    """Notify editors that official data snapshots wait in the review queue."""
+    labels = {"tariff": "Tarife cetveli", "controls": "Kontrol tebliği", "classification": "AB tüzükleri"}
+    rows = "".join(
+        f"<tr><td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(labels.get(str(item.get('kind')), item.get('kind')))}</td>"
+        f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(item.get('title') or item.get('source_id'))}</td>"
+        f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc((item.get('diff_summary') or {}).get('changed', 0))} / {_esc(item.get('total_rows'))}</td>"
+        f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc('; '.join((item.get('diff_summary') or {}).get('reasons') or []))}</td></tr>"
+        for item in items[:30]
+    )
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;color:#0b1e3f;max-width:640px;">
+  <p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#006678;">Gümrükçe'ye Sor · İnceleme kuyruğu</p>
+  <h2 style="margin:0 0 8px;font-size:19px;">{len(items)} resmî veri sürümü editör onayı bekliyor</h2>
+  <p style="margin:0 0 10px;font-size:13px;">Yeni indirilen sürümler onaylanana kadar sorgularda önceki onaylı sürüm kullanılmaya devam eder.</p>
+  <table style="border-collapse:collapse;font-size:12px;"><tr>
+  <th style="padding:4px 10px;border:1px solid #d6dee8;">Tür</th><th style="padding:4px 10px;border:1px solid #d6dee8;">Kaynak</th>
+  <th style="padding:4px 10px;border:1px solid #d6dee8;">Değişen / toplam</th><th style="padding:4px 10px;border:1px solid #d6dee8;">Gerekçe</th></tr>{rows}</table>
+  <p style="margin:14px 0 0;font-size:12px;">Karar için: <a href="{_esc(base_url)}/admin#reviews" style="color:#006678;">{_esc(base_url)}/admin</a></p>
+</div>"""
+
+
 def render_consultation_email(kind: str, subject: str, snippet: str, base_url: str) -> str:
     titles = {
         "new_request": "Yeni danışmanlık talebi",

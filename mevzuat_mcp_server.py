@@ -48,6 +48,7 @@ from tariff_engine import (
 )
 from control_engine import ImportControlEngine, ImportControlLookupResult, ControlSyncStatus
 from change_ledger import ChangeLedger
+from review_policy import ReviewService, policy_from_env
 from classification_evidence import (
     ClassificationEvidenceEngine,
     ClassificationEvidenceSearchResult,
@@ -89,6 +90,16 @@ tariff_engine.ledger = change_ledger
 control_engine.ledger = change_ledger
 classification_engine.ledger = change_ledger
 trade_measure_engine.store.ledger = change_ledger
+# Editorial review gate (DATA_REVIEW_MODE=off|auto|strict); shared by the engines and the admin API.
+review_policy = policy_from_env()
+tariff_engine.review_policy = review_policy
+control_engine.review_policy = review_policy
+classification_engine.review_policy = review_policy
+review_service = ReviewService(
+    policy=review_policy,
+    engines={"tariff": tariff_engine, "controls": control_engine, "classification": classification_engine},
+    ledger=change_ledger,
+)
 customs_advisor_service = CustomsAdvisor(
     tariff_engine=tariff_engine,
     control_engine=control_engine,

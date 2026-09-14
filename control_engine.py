@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 from bedesten_client import BedestenClient
 from trusted_certificates import GEOTRUST_TLS_RSA_CA_G1_PEM
 from change_ledger import batch_id_for, diff_rows
+from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
 from security_firewall import validate_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,8 @@ class ControlSyncStatus(BaseModel):
     scope_count: int = 0
     errors: list[str] = Field(default_factory=list)
     sync_interval_seconds: int
+    pending_review_count: int = 0
+    review_mode: str = "off"
 
 
 def _scope_rows_from_segment(segment: str) -> list[ControlScopeRow]:
@@ -507,6 +510,8 @@ class ImportControlEngine:
         self._errors: list[str] = []
         # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
         self.ledger: Any = None
+        # Editorial review gate; the server replaces it with policy_from_env().
+        self.review_policy: ReviewPolicy = ReviewPolicy()
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -564,6 +569,7 @@ class ImportControlEngine:
             for column in ("required_documents_json", "exemptions_json"):
                 if column not in snapshot_columns:
                     db.execute(f"ALTER TABLE control_snapshots ADD COLUMN {column} TEXT")
+            ensure_review_columns(db, "control_snapshots")
             columns = {row[1] for row in db.execute("PRAGMA table_info(control_scope)").fetchall()}
             if "excluded" not in columns:
                 db.execute("ALTER TABLE control_scope ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0")
@@ -800,11 +806,16 @@ class ImportControlEngine:
                     retrieved_at = _now()
                     source_url = document.url or f"https://www.mevzuat.gov.tr/MevzuatMetin/9.5.{document.mevzuat_no}.pdf"
                     with self._connect() as db:
+                        existing = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+                        if existing is not None and row_review_fields(existing)["status"] != "approved":
+                            # Same official text as a rejected or still-pending version: nothing to do.
+                            successes += 1
+                            continue
                         previous = db.execute(
-                            "SELECT * FROM control_snapshots WHERE code=? AND id<>? ORDER BY retrieved_at DESC LIMIT 1",
+                            "SELECT * FROM control_snapshots WHERE code=? AND id<>? AND status='approved' "
+                            "ORDER BY active DESC, retrieved_at DESC LIMIT 1",
                             (config["code"], snapshot_id),
                         ).fetchone()
-                        db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (config["code"],))
                         db.execute(
                             """
                             INSERT OR REPLACE INTO control_snapshots (
@@ -813,8 +824,8 @@ class ImportControlEngine:
                                 document_sha256, retrieved_at, valid_from, scope_count,
                                 authority, system, risk_based,
                                 physical_inspection_possible, laboratory_test_possible,
-                                required_documents_excerpt, required_documents_json, exemptions_json, active
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                                required_documents_excerpt, required_documents_json, exemptions_json, active, status
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending_review')
                             """,
                             (
                                 snapshot_id, config["code"], document.mevzuat_adi, config["category"],
@@ -838,8 +849,34 @@ class ImportControlEngine:
                                 for row in scope
                             ],
                         )
+                        current_rows = self._scope_rows_by_key(db, snapshot_id)
+                        previous_rows = self._scope_rows_by_key(db, previous["id"]) if previous is not None else {}
+                    parse_warnings = self._errors[errors_before:]
+                    changes = diff_rows(current_rows, previous_rows, fields=("description", "excluded")) if previous is not None else []
+                    summary = DiffSummary(
+                        total_rows=len(current_rows), previous_rows=len(previous_rows),
+                        added=sum(1 for c in changes if c["change_type"] == "added"),
+                        removed=sum(1 for c in changes if c["change_type"] == "removed"),
+                        modified=sum(1 for c in changes if c["change_type"] == "modified"),
+                    )
+                    if existing is not None:
+                        # Re-parsed approved text (parser update): keep it live without a new review.
+                        decision = decide(ReviewPolicy(), summary)
+                    else:
+                        decision = decide(self.review_policy, summary, parse_warnings=parse_warnings, first_snapshot=previous is None)
+                    warnings_json, diff_json = review_metadata(summary, decision, parse_warnings)
+                    with self._connect() as db:
+                        db.execute(
+                            "UPDATE control_snapshots SET status=?, parse_warnings_json=?, diff_summary_json=? WHERE id=?",
+                            (decision.status, warnings_json, diff_json, snapshot_id),
+                        )
+                        if not decision.pending:
+                            db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (config["code"],))
+                            db.execute("UPDATE control_snapshots SET active=1 WHERE id=?", (snapshot_id,))
                     successes += 1
-                    self._record_ledger_batch(snapshot_id, previous, parse_warnings=self._errors[errors_before:])
+                    self._record_ledger_batch(snapshot_id, previous, parse_warnings=parse_warnings, changes=changes, review_status=decision.status)
+                    if decision.pending:
+                        logger.info("Control snapshot %s (%s) waits for editorial review: %s", snapshot_id, config["code"], "; ".join(decision.reasons))
                 with self._connect() as db:
                     db.execute(
                         "INSERT OR REPLACE INTO control_meta(key,value) VALUES('last_checked_at',?)",
@@ -865,7 +902,14 @@ class ImportControlEngine:
         }
 
     def _record_ledger_batch(
-        self, snapshot_id: str, previous: sqlite3.Row | None, *, parse_warnings: list[str] | None = None, backfilled: bool = False
+        self,
+        snapshot_id: str,
+        previous: sqlite3.Row | None,
+        *,
+        parse_warnings: list[str] | None = None,
+        backfilled: bool = False,
+        changes: list[dict[str, Any]] | None = None,
+        review_status: str | None = None,
     ) -> str | None:
         if self.ledger is None:
             return None
@@ -875,8 +919,9 @@ class ImportControlEngine:
                 if snapshot is None:
                     return None
                 current_rows = self._scope_rows_by_key(db, snapshot_id)
-                previous_rows = self._scope_rows_by_key(db, previous["id"]) if previous is not None else {}
-            changes = diff_rows(current_rows, previous_rows, fields=("description", "excluded")) if previous is not None else []
+                if changes is None:
+                    previous_rows = self._scope_rows_by_key(db, previous["id"]) if previous is not None else {}
+                    changes = diff_rows(current_rows, previous_rows, fields=("description", "excluded")) if previous is not None else []
             return self.ledger.record_batch(
                 kind="controls",
                 source_id=snapshot["code"],
@@ -889,6 +934,7 @@ class ImportControlEngine:
                 total_rows=len(current_rows),
                 parse_warnings=parse_warnings or [],
                 detected_at=snapshot["retrieved_at"],
+                review_status=review_status or row_review_fields(snapshot)["status"],
                 valid_from=snapshot["valid_from"],
                 gazette_date=snapshot["official_gazette_date"],
                 gazette_number=snapshot["official_gazette_number"],
@@ -937,6 +983,54 @@ class ImportControlEngine:
         except (ValueError, TypeError):
             return False
 
+    # ---------------------------------------------------------- editorial review
+    def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = {
+            "kind": "controls", "snapshot_id": row["id"], "source_id": row["code"], "title": row["title"],
+            "source_url": row["source_url"], "sha256": row["document_sha256"], "retrieved_at": row["retrieved_at"],
+            "valid_from": row["valid_from"], "total_rows": int(row["scope_count"] or 0), "active": bool(row["active"]),
+            "gazette_date": row["official_gazette_date"], "gazette_number": row["official_gazette_number"],
+            "ledger_batch": batch_id_for("controls", row["code"], row["id"]) if self.ledger is not None else None,
+        }
+        item.update(row_review_fields(row))
+        return item
+
+    def pending_reviews(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM control_snapshots WHERE status='pending_review' ORDER BY retrieved_at DESC"
+            ).fetchall()
+        return [self._review_item(row) for row in rows]
+
+    def review_snapshot(self, snapshot_id: str, action: str, *, reviewed_by: str, note: str = "") -> dict[str, Any]:
+        if action not in {"approve", "reject"}:
+            raise ValueError("Karar 'approve' veya 'reject' olmalıdır.")
+        now = _now()
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+            if row is None:
+                raise KeyError(snapshot_id)
+            if action == "approve":
+                db.execute("UPDATE control_snapshots SET active=0 WHERE code=?", (row["code"],))
+                db.execute(
+                    "UPDATE control_snapshots SET active=1, status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE control_snapshots SET active=0, status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+                if row["active"]:
+                    fallback = db.execute(
+                        "SELECT id FROM control_snapshots WHERE code=? AND status='approved' AND id<>? ORDER BY retrieved_at DESC LIMIT 1",
+                        (row["code"], snapshot_id),
+                    ).fetchone()
+                    if fallback:
+                        db.execute("UPDATE control_snapshots SET active=1 WHERE id=?", (fallback["id"],))
+            updated = db.execute("SELECT * FROM control_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        return self._review_item(updated)
+
     @staticmethod
     def _snapshot(row: sqlite3.Row) -> ControlSnapshot:
         return ControlSnapshot(
@@ -980,10 +1074,12 @@ class ImportControlEngine:
                    JOIN control_snapshots d ON d.id=s.snapshot_id
                    WHERE d.active=1 AND s.excluded=0"""
             ).fetchone()["n"]
+            pending = db.execute("SELECT COUNT(*) FROM control_snapshots WHERE status='pending_review'").fetchone()[0]
         snapshots = [self._snapshot(row) for row in rows]
         required_codes = {item["code"] for item in self.rules_config if not item.get("optional")}
         active_codes = {item.code for item in snapshots}
         return ControlSyncStatus(
+            pending_review_count=int(pending), review_mode=self.review_policy.mode,
             ready=bool(required_codes) and required_codes.issubset(active_codes), syncing=self._syncing,
             last_checked_at=meta["value"] if meta else None, active_snapshots=snapshots,
             scope_count=count, errors=list(self._errors), sync_interval_seconds=self.sync_interval_seconds,
