@@ -5,6 +5,7 @@ Supports searching and PDF content extraction for Kanun (laws).
 """
 import asyncio
 import logging
+import numpy as np
 from contextlib import asynccontextmanager
 from pydantic import Field
 from datetime import date
@@ -58,12 +59,14 @@ from classification_evidence import (
 )
 from security_firewall import guard_data, guard_text, redact_data
 
-# Semantic search (optional, requires OPENROUTER_API_KEY)
-from semantic_search.embedder import is_openrouter_available
-SEMANTIC_SEARCH_AVAILABLE = is_openrouter_available()
+# Semantic search (optional; GEMINI_API_KEY or OPENROUTER_API_KEY, see EMBEDDING_PROVIDER)
+from semantic_search import build_embedder, prepare_document_text, VectorStore, MevzuatProcessor, EmbeddingCache
+from hybrid_index import HybridIndex, REFRESH_SECONDS as HYBRID_INDEX_REFRESH_SECONDS
+import hybrid_corpora
+
+_embedder = build_embedder()
+SEMANTIC_SEARCH_AVAILABLE = _embedder is not None
 if SEMANTIC_SEARCH_AVAILABLE:
-    from semantic_search import OpenRouterEmbedder, VectorStore, MevzuatProcessor, EmbeddingCache
-    _embedder = OpenRouterEmbedder()
     _processor = MevzuatProcessor()
     _embedding_cache = EmbeddingCache(ttl=3600)
 
@@ -141,6 +144,33 @@ async def backfill_change_ledger() -> None:
 
 BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
 
+# Persistent hybrid search index (BM25 + embedding; PRD Faz 3.1).
+hybrid_index = HybridIndex(embedder=_embedder)
+
+
+async def hybrid_index_refresh_loop() -> None:
+    """Re-feed the hybrid index from every official corpus; only changed documents are re-embedded."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            corpora = await asyncio.to_thread(
+                hybrid_corpora.collect_all,
+                control_engine=control_engine,
+                classification_engine=classification_engine,
+                trade_measure_engine=trade_measure_engine,
+                excise_index=excise_tax_index,
+                vat_index=vat_rate_index,
+                tariff_engine=tariff_engine,
+            )
+            counts = await hybrid_index.refresh(corpora)
+            logger.info("Hybrid index refresh: %s", counts)
+        except Exception:  # noqa: BLE001
+            logger.exception("Hybrid index refresh failed")
+        await asyncio.sleep(HYBRID_INDEX_REFRESH_SECONDS)
+
+
+BACKGROUND_LOOPS.append(("hybrid-index-refresh", hybrid_index_refresh_loop))
+
 
 @asynccontextmanager
 async def _server_lifespan(server):
@@ -169,6 +199,7 @@ async def _server_lifespan(server):
             "tariff_engine": tariff_engine,
             "control_engine": control_engine,
             "classification_engine": classification_engine,
+            "hybrid_index": hybrid_index,
         }
     finally:
         for task in (refresh_task, tariff_task, control_task, classification_task, *extra_tasks):
@@ -195,7 +226,7 @@ app = FastMCP(
     "\n\n"
     "== mevzuat.gov.tr tools (21 tools) ==\n"
     "9 legislation types: Kanun, KHK, Tüzük, Kurum Yönetmeliği, Tebliğ, CB Kararnamesi, CB Kararı, CB Yönetmeliği, CB Genelgesi. "
-    "Each type has search and search_within tools. search_within supports keyword (AND/OR/NOT) and semantic search (OPENROUTER_API_KEY). "
+    "Each type has search and search_within tools. search_within supports keyword (AND/OR/NOT) and semantic search (GEMINI_API_KEY or OPENROUTER_API_KEY). "
     "IMPORTANT: These search tools are keyword-based (not by law number) - use 'katma değer vergisi' not '3065'. "
     "\n\n"
     "== bedesten.adalet.gov.tr tools (5 tools) ==\n"
@@ -294,13 +325,14 @@ async def _semantic_search_within(
         if not chunks:
             return f"Error: Could not split content into searchable segments for mevzuat {mevzuat_no}"
 
-        # 4. Encode documents
+        # 4. Encode documents (untrusted content is sanitised and redacted first)
         texts = [c.text for c in chunks]
         titles = [c.title for c in chunks]
-        embeddings = _embedder.encode_documents(texts, titles)
+        prepared = [prepare_document_text(text, title) for text, title in zip(texts, titles)]
+        embeddings = np.asarray(await _embedder.embed(prepared, task="document"), dtype=np.float32)
 
         # 5. Build vector store
-        vector_store = VectorStore(dimension=_embedder.dimension)
+        vector_store = VectorStore(dimension=_embedder.dim)
         vector_store.add_documents(
             ids=[c.chunk_id for c in chunks],
             texts=texts,
@@ -312,7 +344,7 @@ async def _semantic_search_within(
         _embedding_cache.put(mevzuat_tur, mevzuat_tertip, mevzuat_no, content, vector_store, chunks)
 
     # 7. Search
-    query_embedding = _embedder.encode_query(query)
+    query_embedding = np.asarray((await _embedder.embed([query], task="query"))[0], dtype=np.float32)
     results = vector_store.search(query_embedding, top_k=max_results, threshold=threshold)
 
     if not results:
@@ -545,7 +577,7 @@ async def search_within_kanun(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "yatırımcı AND tazmin", '"mali sıkıntı"', "vergi OR ücret"
     Semantic examples: "yatırımcının zararının tazmini", "sermaye piyasası düzenlemeleri"
@@ -555,7 +587,7 @@ async def search_within_kanun(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=1,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -843,7 +875,7 @@ async def search_within_cbk(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "organize AND suç", '"organize suç"', "devlet OR kamu"
     Semantic examples: "organize suç örgütleri ile mücadele", "bakanlık teşkilat yapısı"
@@ -853,7 +885,7 @@ async def search_within_cbk(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=19,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1001,7 +1033,7 @@ async def search_within_cbyonetmelik(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "taşınır AND mal", '"ihale kanunu"', "kamu OR devlet"
     Semantic examples: "taşınır mal yönetimi ve zimmet işlemleri", "kamu ihale süreçleri"
@@ -1011,7 +1043,7 @@ async def search_within_cbyonetmelik(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=21,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1444,7 +1476,7 @@ async def search_within_khk(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "kanun AND değişiklik", '"kanun hükmünde"', "bakanlık OR kurum"
     Semantic examples: "sağlık alanında yapılan düzenlemeler", "anayasa değişikliği"
@@ -1454,7 +1486,7 @@ async def search_within_khk(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=4,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1604,7 +1636,7 @@ async def search_within_tuzuk(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "tapu AND sicil", '"sicil kayıt"', "tescil OR ilan"
     Semantic examples: "tapu sicil kayıt işlemleri", "vakıf tescil süreci"
@@ -1614,7 +1646,7 @@ async def search_within_tuzuk(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=2,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1768,7 +1800,7 @@ async def search_within_kurum_yonetmelik(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "nükleer AND ihracat", '"ihracat kontrol"', "denetim OR teftiş"
     Semantic examples: "nükleer madde ihracat kontrol düzenlemeleri", "disiplin cezaları"
@@ -1778,7 +1810,7 @@ async def search_within_kurum_yonetmelik(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=7,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1847,7 +1879,7 @@ async def search_within_teblig(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "vergi AND muafiyet", '"katma değer"', "istisna OR muafiyet"
     Semantic examples: "vergi muafiyeti koşulları", "KDV iade işlemleri"
@@ -1857,7 +1889,7 @@ async def search_within_teblig(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=9,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -1932,7 +1964,7 @@ async def search_within_cbbaskankarar(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "atama AND görev", '"ihracat rejimi"', "vergi OR gümrük"
     Semantic examples: "kamu personeli atama kararları", "ihracat rejimi düzenlemeleri"
@@ -1942,7 +1974,7 @@ async def search_within_cbbaskankarar(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=20,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results
@@ -2009,7 +2041,7 @@ async def search_within_cbgenelge(
 
     Modes:
     - semantic=False (default): Keyword search with Boolean operators (AND/OR/NOT, uppercase required)
-    - semantic=True: Natural language semantic search using AI embeddings (requires OPENROUTER_API_KEY)
+    - semantic=True: Natural language semantic search using AI embeddings (requires GEMINI_API_KEY or OPENROUTER_API_KEY)
 
     Keyword examples: "koordinasyon AND toplantı", '"kamu yönetimi"'
     Semantic examples: "bakanlıklar arası koordinasyon düzeni", "tasarruf tedbirleri"
@@ -2019,7 +2051,7 @@ async def search_within_cbgenelge(
     try:
         if semantic:
             if not SEMANTIC_SEARCH_AVAILABLE:
-                return "Error: Semantic search requires OPENROUTER_API_KEY environment variable."
+                return "Error: Semantic search requires GEMINI_API_KEY or OPENROUTER_API_KEY (EMBEDDING_PROVIDER)."
             return await _semantic_search_within(
                 mevzuat_no=mevzuat_no, query=keyword, mevzuat_tur=22,
                 mevzuat_tertip=mevzuat_tertip, max_results=max_results,

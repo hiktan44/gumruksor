@@ -155,6 +155,25 @@ Tanıtım ve fiyatlandırma sayfası: `https://gumruksor.com/`
 
 Web araştırma uygulaması: `https://gumruksor.com/app`
 
+### Kalıcı hibrit arama indeksi (BM25 + embedding)
+
+Resmî korpuslar tek bir kalıcı indekste toplanır (`hybrid_index.py`, `MEVZUAT_DATA_DIR/hybrid_index.sqlite3`):
+ÜGD kontrol kapsam satırları (yalnız aktif/onaylı tebliğler), AB sınıflandırma tüzüğü sayfaları (1.200
+karakterlik parçalar), ticaret önlemi ürün tanımları (damping/korunma/gözetim/kota), `customs_sources.json`
+resmî sayfaları, ÖTV ve KDV liste satırları ve varsa tarife cetveli eşya tanımları. Sözlüksel katman SQLite
+FTS5'tir (`unicode61 remove_diacritics 2`, BM25); anlamsal katman belge gömmelerini `embeddings` tablosunda
+float32 olarak saklar ve RAM'de float16 matris üzerinde kosinüs benzerliğiyle arar (numpy yoksa saf Python'a
+düşer). İki sıralama **Reciprocal Rank Fusion** ile birleştirilir; sorguda GTİP ön eki verilmişse eşleşen
+belgeler ek puan alır. Sorgu gömmesi `embed_timeout` (varsayılan 0,45 sn) içinde dönmezse ya da sağlayıcı
+hata verirse sonuç yalnız sözlüksel döner ve yanıt `mode` alanında `lexical` yazar (aksi hâlde `hybrid`).
+
+Besleme idempotenttir: `source_sha256` değişmeyen belge yeniden yazılmaz ve yeniden gömülmez. Arka plan
+döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBRID_INDEX_REFRESH_SECONDS`
+(varsayılan 1800) aralığıyla yalnız değişen belgeleri tazeler. `GET /api/search/hybrid?q=&gtip=&limit=`
+(60/dk) hibrit sonuçları verir; `GET /api/admin/index-status` (editör/yönetici) belge, korpus ve embedding
+sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
+LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
+
 Arayüzde Ticaret Bakanlığının yedi bilgi katmanı canlı kayıt sayılarıyla ayrı gösterilir; kaynak, belge türü, yıl ve mülga durumu filtrelenebilir. Seçilen kaydın resmî kaynak zinciri, tam metni ve kopyalanabilir atfı aynı ekranda açılır. **Genel mevzuat** görünümü Bedesten resmî servisine bağlı ayrı arama alanıdır.
 
 > Coolify dağıtımı v1.8.0 sağlık, web arayüzü ve MCP araç taramasıyla doğrulanır. Snapshot verilerini kalıcı tutmak için uygulamada `/data` hedefine persistent volume bağlayın; imaj `MEVZUAT_DATA_DIR=/data` ile hazır gelir.
@@ -379,20 +398,29 @@ Bu bölüm, Mevzuat MCP aracını 5ire gibi Claude Desktop dışındaki MCP iste
 ---
 🔑 **API Anahtarları (Opsiyonel)**
 
-### Semantik Arama - OpenRouter API
+### Semantik Arama - Gemini veya OpenRouter
 
-Tüm `search_within_*` araçlarında `semantic=True` ile doğal dilde arama yapabilmek için:
+Tüm `search_within_*` araçlarında `semantic=True` ile doğal dilde arama yapabilmek için bir gömme
+(embedding) sağlayıcısı gerekir. Sağlayıcı `EMBEDDING_PROVIDER` ile seçilir (`gemini`, `openrouter`,
+`none`); boş bırakılırsa `GEMINI_API_KEY` varsa Gemini, yoksa `OPENROUTER_API_KEY` varsa OpenRouter
+kullanılır, hiçbiri yoksa gömme kapalıdır.
 
-1. [OpenRouter](https://openrouter.ai/) üzerinden API anahtarı alın
-2. Environment variable olarak ayarlayın:
+1. **Gemini (önerilen, doğrudan Google AI Studio):**
+   ```bash
+   GEMINI_API_KEY=your_api_key_here
+   EMBEDDING_MODEL=gemini-embedding-001   # varsayılan
+   EMBEDDING_DIM=768                      # outputDimensionality, varsayılan 768
+   ```
+   İstekler `generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents` ucuna
+   `x-goog-api-key` başlığıyla gider; sorgularda `RETRIEVAL_QUERY`, belgelerde `RETRIEVAL_DOCUMENT`
+   görev tipi kullanılır, 429/5xx yanıtlarında 1,5/3/6 sn aralıklarla yeniden denenir.
+2. **OpenRouter:**
    ```bash
    OPENROUTER_API_KEY=your_api_key_here
+   EMBEDDING_MODEL=google/gemini-embedding-001        # 3072 boyut (varsayılan)
+   # EMBEDDING_MODEL=intfloat/multilingual-e5-large   # 1024 boyut
    ```
-3. Varsayılan model: `google/gemini-embedding-001` (3072 boyut). Alternatif olarak:
-   ```bash
-   EMBEDDING_MODEL=intfloat/multilingual-e5-large  # 1024 boyut
-   ```
-4. API anahtarı olmadan da tüm araçlar çalışır, sadece `semantic=True` kullanılamaz
+3. Anahtar olmadan da tüm araçlar çalışır, sadece `semantic=True` kullanılamaz.
 
 ### Mistral OCR
 
