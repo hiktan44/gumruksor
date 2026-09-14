@@ -18,14 +18,19 @@ import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urljoin
+
+import logging
 
 import httpx
 from pdfminer.high_level import extract_text
 from pydantic import BaseModel, Field
 
+from change_ledger import batch_id_for, diff_rows
 from security_firewall import sanitize_untrusted_context, validate_outbound_url
+
+logger = logging.getLogger(__name__)
 
 _OFFICIAL_HOSTS = {"taxation-customs.ec.europa.eu", "eur-lex.europa.eu"}
 _SOURCE_URL = (
@@ -132,6 +137,8 @@ class ClassificationEvidenceEngine:
         self._sync_lock = asyncio.Lock()
         self._syncing = False
         self._errors: list[str] = []
+        # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
+        self.ledger: Any = None
         self._http = httpx.AsyncClient(
             follow_redirects=False,
             timeout=httpx.Timeout(90),
@@ -299,6 +306,9 @@ class ClassificationEvidenceEngine:
                     fts_rows.append((page_id, snapshot_id, " ".join(codes), clean_page[:100_000]))
 
                 with self._connect() as connection:
+                    previous = connection.execute(
+                        "SELECT id FROM snapshots ORDER BY retrieved_at DESC LIMIT 1"
+                    ).fetchone()
                     connection.execute("UPDATE snapshots SET active=0")
                     connection.execute(
                         "INSERT INTO snapshots(id,source_url,archive_sha256,retrieved_at,page_count,active) "
@@ -319,12 +329,73 @@ class ClassificationEvidenceEngine:
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (retrieved_at,),
                     )
+                self._record_ledger_batch(snapshot_id, previous["id"] if previous else None)
                 self._errors.clear()
             except Exception as exc:
                 self._errors.append(f"{type(exc).__name__}: {str(exc)[:300]}")
             finally:
                 self._syncing = False
         return self.status()
+
+    # ---------------------------------------------------------- change ledger
+    def _page_rows_by_key(self, connection: sqlite3.Connection, snapshot_id: str) -> dict[str, dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT page_number, codes_json, regulations_json, content FROM pages WHERE snapshot_id=?", (snapshot_id,)
+        ).fetchall()
+        return {
+            f"p{row['page_number']}": {
+                "page_number": row["page_number"],
+                "content_sha256": hashlib.sha256(row["content"].encode("utf-8")).hexdigest(),
+                "codes": json.loads(row["codes_json"])[:20],
+                "regulations": json.loads(row["regulations_json"])[:10],
+            }
+            for row in rows
+        }
+
+    def _record_ledger_batch(self, snapshot_id: str, previous_id: str | None, *, backfilled: bool = False) -> str | None:
+        if self.ledger is None:
+            return None
+        try:
+            with self._connect() as connection:
+                snapshot = connection.execute("SELECT * FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+                if snapshot is None:
+                    return None
+                current_rows = self._page_rows_by_key(connection, snapshot_id)
+                previous_rows = self._page_rows_by_key(connection, previous_id) if previous_id else {}
+            changes = (
+                diff_rows(current_rows, previous_rows, fields=("content_sha256",), gtip_of=lambda row: (row.get("codes") or [None])[0])
+                if previous_id else []
+            )
+            return self.ledger.record_batch(
+                kind="classification",
+                source_id="eu_classification_regulations",
+                title="AB sınıflandırma tüzükleri konsolide listesi",
+                new_snapshot_id=snapshot["id"],
+                old_snapshot_id=previous_id,
+                source_url=snapshot["source_url"],
+                sha256=snapshot["archive_sha256"],
+                changes=changes,
+                total_rows=len(current_rows),
+                detected_at=snapshot["retrieved_at"],
+                backfilled=backfilled,
+            )
+        except Exception as exc:  # noqa: BLE001 – the ledger must never break a sync
+            logger.warning("Classification change ledger write failed: %s", exc)
+            return None
+
+    def backfill_ledger(self) -> int:
+        if self.ledger is None:
+            return 0
+        written = 0
+        with self._connect() as connection:
+            snapshots = connection.execute("SELECT id FROM snapshots ORDER BY retrieved_at ASC").fetchall()
+        previous_id = None
+        for row in snapshots:
+            if not self.ledger.has_batch(batch_id_for("classification", "eu_classification_regulations", row["id"])):
+                if self._record_ledger_batch(row["id"], previous_id, backfilled=True):
+                    written += 1
+            previous_id = row["id"]
+        return written
 
     async def periodic_sync_loop(self) -> None:
         while True:

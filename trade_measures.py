@@ -22,6 +22,7 @@ Depo: `data/official/*.json` tohum dosyaları ilk açılışta yüklenir; günl�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -39,6 +40,8 @@ from urllib.parse import quote, urljoin
 
 import httpx
 from bs4 import BeautifulSoup
+
+from change_ledger import batch_id_for
 
 from countries import find_country
 from trusted_certificates import GEOTRUST_TLS_RSA_CA_G1_PEM
@@ -780,6 +783,8 @@ class MeasureHit:
     status: str  # in_force | expired | unknown
     notes: str = ""
     source: str = ""
+    # Row-level lineage from the store (source URL, checksum, first/last seen, RG date).
+    provenance: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -787,6 +792,7 @@ class MeasureHit:
             "origin_match": self.origin_match, "rate_text": self.rate_text, "unit_value_usd": self.unit_value_usd,
             "unit": self.unit, "product": self.product, "legal_act": self.legal_act, "gazette": self.gazette,
             "expires": self.expires, "status": self.status, "notes": self.notes, "source": self.source,
+            "provenance": self.provenance,
         }
 
 
@@ -837,6 +843,8 @@ class TradeMeasureStore:
                     self.seed_dir = candidate
                     break
         self._cache: dict[str, Any] = {}
+        # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
+        self.ledger: Any = None
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -852,6 +860,14 @@ class TradeMeasureStore:
                     kind TEXT PRIMARY KEY, fetched_at TEXT NOT NULL, source_url TEXT NOT NULL,
                     source_label TEXT NOT NULL, item_count INTEGER NOT NULL, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS measure_rows (
+                    kind TEXT NOT NULL, row_key TEXT NOT NULL, gtip TEXT, gtip_codes_json TEXT NOT NULL DEFAULT '[]',
+                    country TEXT, product TEXT, valid_from TEXT, valid_to TEXT, payload_json TEXT NOT NULL,
+                    source_url TEXT NOT NULL DEFAULT '', source_sha256 TEXT NOT NULL DEFAULT '',
+                    first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, removed_at TEXT,
+                    PRIMARY KEY (kind, row_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_measure_rows_gtip ON measure_rows(kind, gtip);
                 CREATE TABLE IF NOT EXISTS surveillance_docs (
                     mevzuat_no TEXT PRIMARY KEY, title TEXT NOT NULL, rg_date TEXT, rg_no TEXT, url TEXT,
                     fetched_at TEXT NOT NULL, payload TEXT NOT NULL
@@ -863,6 +879,9 @@ class TradeMeasureStore:
                 CREATE INDEX IF NOT EXISTS idx_changes_kind ON changes(kind, changed_at);
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(datasets)").fetchall()}
+            if "sha256" not in columns:
+                connection.execute("ALTER TABLE datasets ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''")
 
     # ---- seeds
     def _seed(self, kind: str) -> Any:
@@ -891,7 +910,7 @@ class TradeMeasureStore:
     def metadata(self, kind: str) -> dict[str, Any]:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT fetched_at, source_url, source_label, item_count FROM datasets WHERE kind=?", (kind,)
+                "SELECT fetched_at, source_url, source_label, item_count, sha256 FROM datasets WHERE kind=?", (kind,)
             ).fetchone()
         if row:
             return {"origin": "synced", **dict(row)}
@@ -906,24 +925,148 @@ class TradeMeasureStore:
             "item_count": _count_items(kind, seed),
         }
 
-    def save(self, kind: str, payload: Any, *, source_url: str, source_label: str) -> dict[str, Any]:
+    def save(self, kind: str, payload: Any, *, source_url: str, source_label: str, sha256: str = "") -> dict[str, Any]:
         previous = self.load(kind)
         diff = diff_payloads(kind, previous, payload)
         now = datetime.now(UTC).isoformat(timespec="seconds")
+        digest = sha256 or payload_sha256(payload)
+        previous_meta = self.metadata(kind)
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO datasets(kind,fetched_at,source_url,source_label,item_count,payload) VALUES(?,?,?,?,?,?) "
+                "INSERT INTO datasets(kind,fetched_at,source_url,source_label,item_count,payload,sha256) VALUES(?,?,?,?,?,?,?) "
                 "ON CONFLICT(kind) DO UPDATE SET fetched_at=excluded.fetched_at, source_url=excluded.source_url, "
-                "source_label=excluded.source_label, item_count=excluded.item_count, payload=excluded.payload",
-                (kind, now, source_url, source_label, _count_items(kind, payload), json.dumps(payload, ensure_ascii=False)),
+                "source_label=excluded.source_label, item_count=excluded.item_count, payload=excluded.payload, sha256=excluded.sha256",
+                (kind, now, source_url, source_label, _count_items(kind, payload), json.dumps(payload, ensure_ascii=False), digest),
             )
             if previous is not None and diff["total"]:
                 connection.execute(
                     "INSERT INTO changes(kind,changed_at,added,removed,modified,detail) VALUES(?,?,?,?,?,?)",
                     (kind, now, diff["added_count"], diff["removed_count"], diff["modified_count"], json.dumps(diff, ensure_ascii=False)),
                 )
+            self._upsert_measure_rows(connection, kind, payload, source_url=source_url, sha256=digest, seen_at=now)
         self._cache[kind] = payload
+        self._record_ledger_batch(
+            kind, previous, payload, diff, source_url=source_url, sha256=digest, detected_at=now,
+            old_snapshot_id=previous_meta.get("sha256") or (previous_meta.get("origin") if previous is not None else None),
+        )
         return diff
+
+    # ---- row-level lineage
+    def _upsert_measure_rows(
+        self, connection: sqlite3.Connection, kind: str, payload: Any, *, source_url: str, sha256: str, seen_at: str
+    ) -> None:
+        rows = _item_rows(kind, payload)
+        for key, entry in rows.items():
+            connection.execute(
+                "INSERT INTO measure_rows(kind,row_key,gtip,gtip_codes_json,country,product,valid_from,valid_to,payload_json,"
+                "source_url,source_sha256,first_seen_at,last_seen_at,removed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,NULL) "
+                "ON CONFLICT(kind,row_key) DO UPDATE SET gtip=excluded.gtip, gtip_codes_json=excluded.gtip_codes_json, "
+                "country=excluded.country, product=excluded.product, valid_from=excluded.valid_from, valid_to=excluded.valid_to, "
+                "payload_json=excluded.payload_json, source_url=excluded.source_url, source_sha256=excluded.source_sha256, "
+                "last_seen_at=excluded.last_seen_at, removed_at=NULL",
+                (
+                    kind, key, (entry["codes"] or [None])[0], json.dumps(entry["codes"]), entry.get("country"), entry.get("product"),
+                    entry.get("valid_from"), entry.get("valid_to"), json.dumps(entry["row"], ensure_ascii=False, default=str),
+                    source_url, sha256, seen_at, seen_at,
+                ),
+            )
+        if rows:
+            placeholders = ",".join("?" for _ in rows)
+            connection.execute(
+                f"UPDATE measure_rows SET removed_at=? WHERE kind=? AND removed_at IS NULL AND row_key NOT IN ({placeholders})",
+                (seen_at, kind, *rows.keys()),
+            )
+        else:
+            connection.execute("UPDATE measure_rows SET removed_at=? WHERE kind=? AND removed_at IS NULL", (seen_at, kind))
+
+    def ensure_measure_rows(self) -> int:
+        """Populate row lineage from the currently loaded datasets when the table is still empty."""
+        written = 0
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        with self._connect() as connection:
+            for kind in KINDS:
+                if connection.execute("SELECT 1 FROM measure_rows WHERE kind=? LIMIT 1", (kind,)).fetchone():
+                    continue
+                payload = self.load(kind)
+                if payload is None:
+                    continue
+                meta = self.metadata(kind)
+                self._upsert_measure_rows(
+                    connection, kind, payload,
+                    source_url=meta.get("source_url") or "",
+                    sha256=meta.get("sha256") or payload_sha256(payload),
+                    seen_at=meta.get("fetched_at") or now,
+                )
+                written += len(_item_rows(kind, payload))
+        return written
+
+    def provenance(self, kind: str, row_key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_url, source_sha256, first_seen_at, last_seen_at, removed_at, valid_from, valid_to "
+                "FROM measure_rows WHERE kind=? AND row_key=?",
+                (kind, row_key),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"row_key": row_key, **dict(row)}
+
+    def _record_ledger_batch(
+        self, kind: str, previous: Any, payload: Any, diff: dict[str, Any], *, source_url: str, sha256: str,
+        detected_at: str, old_snapshot_id: str | None, backfilled: bool = False,
+    ) -> str | None:
+        if self.ledger is None:
+            return None
+        try:
+            before, after = _item_rows(kind, previous), _item_rows(kind, payload)
+            changes: list[dict[str, Any]] = []
+            for key in sorted(set(after) - set(before)):
+                changes.append({"entity_key": key, "gtip": (after[key]["codes"] or [None])[0], "change_type": "added", "before": None, "after": _ledger_row(after[key])})
+            for key in sorted(set(before) - set(after)):
+                changes.append({"entity_key": key, "gtip": (before[key]["codes"] or [None])[0], "change_type": "removed", "before": _ledger_row(before[key]), "after": None})
+            for key in sorted(set(before) & set(after)):
+                if before[key]["summary"] != after[key]["summary"]:
+                    changes.append({"entity_key": key, "gtip": (after[key]["codes"] or [None])[0], "change_type": "modified", "before": _ledger_row(before[key]), "after": _ledger_row(after[key])})
+            if previous is None:
+                changes = []
+            return self.ledger.record_batch(
+                kind="trade_measures", source_id=kind, title=KIND_LABELS.get(kind, kind), new_snapshot_id=sha256[:24],
+                old_snapshot_id=old_snapshot_id, source_url=source_url, sha256=sha256, changes=changes,
+                total_rows=len(after), detected_at=detected_at, backfilled=backfilled,
+            )
+        except Exception as exc:  # noqa: BLE001 – the ledger must never break a sync
+            logger.warning("Trade measure change ledger write failed: %s", exc)
+            return None
+
+    def backfill_ledger(self) -> int:
+        """Import the legacy `changes` rows into the unified ledger (summaries only)."""
+        if self.ledger is None:
+            return 0
+        written = 0
+        for change in reversed(self.changes(limit=1000)):
+            detail = change.get("detail") or {}
+            kind = change.get("kind")
+            snapshot_id = f"legacy-{change['id']}"
+            if self.ledger.has_batch(batch_id_for("trade_measures", kind, snapshot_id)):
+                continue
+            rows: list[dict[str, Any]] = []
+            for section in ("added", "removed", "modified"):
+                for entry in detail.get(section, []):
+                    codes = entry.get("codes") or []
+                    before = {"summary": entry.get("before") or entry.get("summary")} if section != "added" else None
+                    after = {"summary": entry.get("after") or entry.get("summary")} if section != "removed" else None
+                    rows.append({"entity_key": entry.get("key", ""), "gtip": codes[0] if codes else None, "change_type": section, "before": before, "after": after})
+            try:
+                self.ledger.record_batch(
+                    kind="trade_measures", source_id=kind, title=detail.get("label") or KIND_LABELS.get(kind, kind),
+                    new_snapshot_id=snapshot_id, old_snapshot_id=None, source_url=self.metadata(kind).get("source_url") or "",
+                    sha256="", changes=rows, total_rows=int(self.metadata(kind).get("item_count") or 0),
+                    detected_at=change.get("changed_at"), backfilled=True,
+                )
+                written += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Trade measure ledger backfill failed: %s", exc)
+        return written
 
     # ---- surveillance document cache
     def surveillance_doc(self, mevzuat_no: str) -> dict[str, Any] | None:
@@ -968,49 +1111,108 @@ def _count_items(kind: str, payload: Any) -> int:
     return len(payload)
 
 
-def _item_keys(kind: str, payload: Any) -> dict[str, tuple[str, list[str]]]:
-    """Değişiklik defteri için satır anahtarı -> (içerik özeti, GTİP kodları)."""
-    keys: dict[str, tuple[str, list[str]]] = {}
-    if not payload:
-        return keys
+def payload_sha256(payload: Any) -> str:
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _iso_date(value: Any) -> str | None:
+    """dd/mm/yyyy or dd.mm.yyyy → ISO; ISO passes through; anything else → None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    match = re.fullmatch(r"(\d{1,2})[./](\d{1,2})[./](\d{4})", text)
+    if match:
+        day, month, year = match.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    return None
+
+
+def _ledger_row(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": entry.get("summary"), "codes": entry.get("codes"), "country": entry.get("country"),
+        "product": entry.get("product"), "valid_from": entry.get("valid_from"), "valid_to": entry.get("valid_to"),
+    }
+
+
+def row_key_for(kind: str, *, row: dict[str, Any] | None = None, doc: dict[str, Any] | None = None,
+                item: dict[str, Any] | None = None, section: str = "definitive") -> str:
+    """Stable per-row key shared by the change ledger and the lineage table."""
+    row, doc, item = row or {}, doc or {}, item or {}
     if kind == "anti_dumping":
-        for row in payload.get("definitive", []):
-            codes = extract_codes(row.get("gtip", ""))
-            keys[f"{row.get('file_no')}|{row.get('country')}|{' '.join(codes)[:80]}"] = (
-                f"{row.get('product')} – {row.get('rate')} ({row.get('communique')}, bitiş {row.get('expires')})",
-                codes,
-            )
-        for row in payload.get("provisional", []):
-            keys[f"geçici|{row.get('file_no')}|{row.get('country')}"] = (
-                f"{row.get('product')} – {row.get('rate')} ({row.get('communique')})",
-                extract_codes(row.get("gtip", "")),
-            )
+        if section == "provisional":
+            return f"geçici|{row.get('file_no')}|{row.get('country')}"
+        codes = extract_codes(row.get("gtip", ""))
+        return f"{row.get('file_no')}|{row.get('country')}|{' '.join(codes)[:80]}"
+    if kind == "safeguard":
+        return f"{row.get('file_no')}|{row.get('country')}"
+    if kind == "surveillance":
+        return f"{doc.get('mevzuat_no')}|{normalise_code(item.get('gtip', ''))}"
+    if kind == "tariff_quota":
+        return f"{doc.get('url')}|{normalise_code(item.get('gtip', ''))}|{item.get('quantity', '')}"
+    return str(row.get("url", row.get("title", "")))
+
+
+def _item_rows(kind: str, payload: Any) -> dict[str, dict[str, Any]]:
+    """Satır anahtarı -> {summary, codes, row, country, product, valid_from, valid_to}."""
+    rows: dict[str, dict[str, Any]] = {}
+    if not payload:
+        return rows
+    if kind == "anti_dumping":
+        for section in ("definitive", "provisional"):
+            for row in payload.get(section, []):
+                codes = extract_codes(row.get("gtip", ""))
+                summary = (
+                    f"{row.get('product')} – {row.get('rate')} ({row.get('communique')}, bitiş {row.get('expires')})"
+                    if section == "definitive" else f"{row.get('product')} – {row.get('rate')} ({row.get('communique')})"
+                )
+                rows[row_key_for(kind, row=row, section=section)] = {
+                    "summary": summary, "codes": codes, "row": row, "country": row.get("country"), "product": row.get("product"),
+                    "valid_from": _iso_date(row.get("rg_date")), "valid_to": _iso_date(row.get("expires")),
+                }
     elif kind == "safeguard":
         for row in payload:
-            keys[f"{row.get('file_no')}|{row.get('country')}"] = (
-                f"{row.get('product')} – {'; '.join(row.get('amounts', []))} (bitiş {row.get('expires')})",
-                extract_codes(row.get("gtip", "")),
-            )
+            acts = row.get("acts") or []
+            first_act = next((act for act in acts if act.get("rg_date")), {})
+            rows[row_key_for(kind, row=row)] = {
+                "summary": f"{row.get('product')} – {'; '.join(row.get('amounts', []))} (bitiş {row.get('expires')})",
+                "codes": extract_codes(row.get("gtip", "")), "row": row, "country": row.get("country"), "product": row.get("product"),
+                "valid_from": _iso_date(row.get("original_start")) or _iso_date(first_act.get("rg_date")),
+                "valid_to": _iso_date(row.get("expires")),
+            }
     elif kind == "surveillance":
         for doc in payload:
             for item in doc.get("items", []):
                 code = normalise_code(item.get("gtip", ""))
-                keys[f"{doc.get('mevzuat_no')}|{code}"] = (
-                    f"{doc.get('title')}: {item.get('gtip')} {item.get('value')} {item.get('unit') or ''}".strip(),
-                    [code] if code else [],
-                )
+                rows[row_key_for(kind, doc=doc, item=item)] = {
+                    "summary": f"{doc.get('title')}: {item.get('gtip')} {item.get('value')} {item.get('unit') or ''}".strip(),
+                    "codes": [code] if code else [], "row": {**item, "mevzuat_no": doc.get("mevzuat_no"), "title": doc.get("title")},
+                    "country": item.get("country") or "Tüm ülkeler", "product": item.get("description"),
+                    "valid_from": _iso_date(doc.get("rg_date")), "valid_to": None,
+                }
     elif kind == "tariff_quota":
         for doc in payload:
             for item in doc.get("items", []):
                 code = normalise_code(item.get("gtip", ""))
-                keys[f"{doc.get('url')}|{code}|{item.get('quantity', '')}"] = (
-                    f"{doc.get('origin') or doc.get('title')}: {item.get('gtip')} {item.get('quantity', '')} {item.get('duty_rate', '')}".strip(),
-                    [code] if code else [],
-                )
+                rows[row_key_for(kind, doc=doc, item=item)] = {
+                    "summary": f"{doc.get('origin') or doc.get('title')}: {item.get('gtip')} {item.get('quantity', '')} {item.get('duty_rate', '')}".strip(),
+                    "codes": [code] if code else [], "row": {**item, "url": doc.get("url"), "title": doc.get("title")},
+                    "country": doc.get("origin") or doc.get("title"), "product": item.get("description"),
+                    "valid_from": None, "valid_to": None,
+                }
     elif kind == "communiques":
         for row in payload:
-            keys[row.get("url", row.get("title", ""))] = (row.get("title", ""), [])
-    return keys
+            rows[row_key_for(kind, row=row)] = {
+                "summary": row.get("title", ""), "codes": [], "row": row, "country": None, "product": row.get("title"),
+                "valid_from": None, "valid_to": None,
+            }
+    return rows
+
+
+def _item_keys(kind: str, payload: Any) -> dict[str, tuple[str, list[str]]]:
+    """Değişiklik defteri için satır anahtarı -> (içerik özeti, GTİP kodları)."""
+    return {key: (entry["summary"], entry["codes"]) for key, entry in _item_rows(kind, payload).items()}
 
 
 def diff_payloads(kind: str, previous: Any, current: Any) -> dict[str, Any]:
@@ -1088,6 +1290,12 @@ class TradeMeasureEngine:
                 report.warnings.append(f"{KIND_LABELS[kind]} verisi yüklü değil.")
         return report
 
+    def _provenance(self, kind: str, row_key: str) -> dict[str, Any] | None:
+        try:
+            return self.store.provenance(kind, row_key)
+        except Exception:  # noqa: BLE001 – lineage is informative, never blocking
+            return None
+
     def _antidumping_hits(self, gtip: str, origin: str | None, today: date) -> list[MeasureHit]:
         data = self.store.load("anti_dumping") or {}
         hits: list[MeasureHit] = []
@@ -1100,6 +1308,7 @@ class TradeMeasureEngine:
                 measure_type = "countervailing" if kind.startswith("SK") or "SÜBVANSİYON" in kind else "anti_dumping"
                 hits.append(
                     MeasureHit(
+                        provenance=self._provenance("anti_dumping", row_key_for("anti_dumping", row=row, section=section)),
                         measure_type=measure_type,
                         matched_code=max(matched, key=len),
                         country=row.get("country", ""),
@@ -1132,6 +1341,7 @@ class TradeMeasureEngine:
             )
             hits.append(
                 MeasureHit(
+                    provenance=self._provenance("safeguard", row_key_for("safeguard", row=row)),
                     measure_type="safeguard",
                     matched_code=max(matched, key=len),
                     country=row.get("country", ""),
@@ -1164,6 +1374,7 @@ class TradeMeasureEngine:
                     continue
                 hits.append(
                     MeasureHit(
+                        provenance=self._provenance("surveillance", row_key_for("surveillance", doc=doc, item=item)),
                         measure_type="surveillance",
                         matched_code=code,
                         country=item.get("country") or "Tüm ülkeler",
@@ -1193,6 +1404,7 @@ class TradeMeasureEngine:
                 details = " · ".join(part for part in (item.get("quantity", ""), item.get("period", ""), f"vergi {item['duty_rate']}" if item.get("duty_rate") else "") if part)
                 hits.append(
                     MeasureHit(
+                        provenance=self._provenance("tariff_quota", row_key_for("tariff_quota", doc=doc, item=item)),
                         measure_type="tariff_quota",
                         matched_code=code,
                         country=doc.get("origin") or doc.get("title", ""),
@@ -1259,8 +1471,9 @@ class TradeMeasureEngine:
         link = discover_workbook_link(page.text, ANTIDUMPING_PAGE, must_contain=("rürlükteki",))
         if not link:
             raise ValueError("Damping sayfasında 'Yürürlükteki Önlemler' çalışma kitabı bağlantısı bulunamadı.")
-        payload = parse_antidumping_workbook((await self._get(link)).content)
-        diff = self.store.save("anti_dumping", payload, source_url=link, source_label="Ticaret Bakanlığı – Yürürlükteki Önlemler (damping/sübvansiyon)")
+        content = (await self._get(link)).content
+        payload = parse_antidumping_workbook(content)
+        diff = self.store.save("anti_dumping", payload, source_url=link, source_label="Ticaret Bakanlığı – Yürürlükteki Önlemler (damping/sübvansiyon)", sha256=hashlib.sha256(content).hexdigest())
         return SyncOutcome("anti_dumping", True, "güncellendi", _count_items("anti_dumping", payload), diff, link)
 
     async def _sync_safeguard(self) -> SyncOutcome:
@@ -1268,8 +1481,9 @@ class TradeMeasureEngine:
         link = discover_workbook_link(page.text, SAFEGUARD_PAGE, must_contain=("rürlükteki",))
         if not link:
             raise ValueError("Korunma önlemleri sayfasında yürürlükteki önlemler çalışma kitabı bulunamadı.")
-        payload = parse_safeguard_workbook((await self._get(link)).content)
-        diff = self.store.save("safeguard", payload, source_url=link, source_label="Ticaret Bakanlığı – Yürürlükte Bulunan Korunma Önlemleri")
+        content = (await self._get(link)).content
+        payload = parse_safeguard_workbook(content)
+        diff = self.store.save("safeguard", payload, source_url=link, source_label="Ticaret Bakanlığı – Yürürlükte Bulunan Korunma Önlemleri", sha256=hashlib.sha256(content).hexdigest())
         return SyncOutcome("safeguard", True, "güncellendi", len(payload), diff, link)
 
     async def _sync_quotas(self) -> SyncOutcome:
