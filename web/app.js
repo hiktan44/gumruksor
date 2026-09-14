@@ -3008,12 +3008,25 @@ const shippingReviewFields = [
   ["incoterm", "Teslim şekli (Incoterm)"],
   ["freight_terms", "Navlun ödeme (prepaid/collect)"],
   ["invoice_total", "Fatura tutarı"],
-  ["currency", "Para birimi"],
+  ["currency", "Fatura para birimi"],
   ["freight_amount", "Navlun tutarı"],
+  ["freight_currency", "Navlun para birimi (belgede ayrıysa)"],
   ["insurance_amount", "Sigorta tutarı"],
+  ["insurance_currency", "Sigorta para birimi (belgede ayrıysa)"],
+  ["payment_terms", "Ödeme şekli (belgedeki ifade)"],
+  ["payment_method", "Ödeme şekli (KKDF için normalize)"],
   ["quantity", "Miktar"],
   ["quantity_unit", "Miktar birimi"],
 ];
+
+// Sunucudaki PAYMENT_METHOD_LABELS ile aynı: normalize anahtar → formdaki Türkçe ödeme şekli.
+const SHIPPING_PAYMENT_METHOD_LABELS = {
+  cash_in_advance: "Peşin",
+  cash_against_goods: "Mal mukabili",
+  cash_against_documents: "Vesaik mukabili",
+  letter_of_credit: "Akreditif",
+  acceptance_credit: "Kabul kredili",
+};
 
 function shippingFieldValue(key) {
   return ($(`[data-shipping-field="${key}"]`)?.value || "").trim();
@@ -3034,8 +3047,38 @@ function fillNumberIfEmpty(selector, value) {
   return fillIfEmpty(selector, localizedNumberFormat.format(number));
 }
 
+// "Belgeden alındı, doğrulayın" rozeti: alan belgeden dolduruldu; kullanıcı dokununca rozet kalkar.
+function markFromDocument(selector) {
+  const input = $(selector);
+  if (!input || input.dataset.fromDocument) return;
+  input.dataset.fromDocument = "1";
+  const label = input.closest("label.field");
+  if (label && !label.querySelector(".doc-badge")) {
+    const badge = document.createElement("small");
+    badge.className = "doc-badge";
+    badge.textContent = "belgeden alındı, doğrulayın";
+    badge.title = "Bu değer yüklenen sevkiyat belgesinden okundu; belgeyle karşılaştırıp onaylayın.";
+    label.appendChild(badge);
+  }
+  const clear = () => {
+    delete input.dataset.fromDocument;
+    label?.querySelector(".doc-badge")?.remove();
+    input.removeEventListener("input", clear);
+    input.removeEventListener("change", clear);
+  };
+  input.addEventListener("input", clear);
+  input.addEventListener("change", clear);
+}
+
+function fillFromDocument(selector, value, numeric = false) {
+  const done = numeric ? fillNumberIfEmpty(selector, value) : fillIfEmpty(selector, value);
+  if (done) markFromDocument(selector);
+  return done;
+}
+
 function applyShippingDocument() {
   const filled = [];
+  const skipped = [];
   const goods = shippingFieldValue("goods_description");
   const description = $("#productDescription");
   if (goods && description) {
@@ -3045,26 +3088,53 @@ function applyShippingDocument() {
     description.dispatchEvent(new Event("input", { bubbles: true }));
     filled.push("ürün tanımı");
   }
-  if (fillIfEmpty("#originCountry", shippingFieldValue("country_of_origin"))) filled.push("menşe ülke");
-  if (fillIfEmpty("#dispatchCountry", shippingFieldValue("country_of_dispatch"))) filled.push("sevk ülkesi");
-  if (fillIfEmpty("#incoterm", shippingFieldValue("incoterm").toUpperCase())) filled.push("teslim şekli");
-  if (fillNumberIfEmpty("#invoiceValue", shippingFieldValue("invoice_total"))) filled.push("fatura bedeli");
-  if (fillNumberIfEmpty("#freight", shippingFieldValue("freight_amount"))) filled.push("navlun");
-  if (fillNumberIfEmpty("#insurance", shippingFieldValue("insurance_amount"))) filled.push("sigorta");
-  if (fillNumberIfEmpty("#quantity", shippingFieldValue("quantity"))) filled.push("miktar");
+  if (fillFromDocument("#originCountry", shippingFieldValue("country_of_origin"))) filled.push("menşe ülke");
+  if (fillFromDocument("#dispatchCountry", shippingFieldValue("country_of_dispatch"))) filled.push("sevk ülkesi");
+  if (fillFromDocument("#incoterm", shippingFieldValue("incoterm").toUpperCase())) filled.push("teslim şekli");
+  // Para birimi: seçim kutusunun her zaman bir değeri vardır; yalnız fatura bedeli de boşken (henüz
+  // maliyet girilmemişken) belgedeki fatura para birimine çekilir, kullanıcının seçimi ezilmez.
+  const invoiceWasEmpty = fillFromDocument("#invoiceValue", shippingFieldValue("invoice_total"), true);
+  if (invoiceWasEmpty) filled.push("fatura bedeli");
   const currency = shippingFieldValue("currency").toUpperCase();
   const currencySelect = $("#currency");
-  if (currency && currencySelect && Array.from(currencySelect.options).some((option) => option.value === currency)) {
+  const currencyKnown = Boolean(currency && currencySelect && Array.from(currencySelect.options).some((option) => option.value === currency));
+  if (currencyKnown && invoiceWasEmpty && currencySelect.value !== currency) {
     currencySelect.value = currency;
     currencySelect.dispatchEvent(new Event("change", { bubbles: true }));
+    markFromDocument("#currency");
     filled.push("para birimi");
+  } else if (currency && !currencyKnown) {
+    skipped.push(`para birimi ${currency} formda seçilemiyor`);
   }
+  // Navlun / sigorta: belgede ayrı para birimi yazıyorsa ve fatura para biriminden farklıysa
+  // toplanamaz; alan boş bırakılır ve kullanıcıya bildirilir.
+  const formCurrency = currencySelect?.value || currency;
+  for (const [amountKey, currencyKey, selector, label] of [
+    ["freight_amount", "freight_currency", "#freight", "navlun"],
+    ["insurance_amount", "insurance_currency", "#insurance", "sigorta"],
+  ]) {
+    const itemCurrency = shippingFieldValue(currencyKey).toUpperCase();
+    const amount = shippingFieldValue(amountKey);
+    if (amount && itemCurrency && formCurrency && itemCurrency !== formCurrency) {
+      skipped.push(`${label} ${itemCurrency} cinsinden, form para birimi ${formCurrency}`);
+      continue;
+    }
+    if (fillFromDocument(selector, amount, true)) filled.push(label);
+  }
+  if (fillFromDocument("#quantity", shippingFieldValue("quantity"), true)) filled.push("miktar");
+  // Ödeme şekli: yalnız normalize anahtar tanındıysa Türkçe etiketi yazılır (KKDF önerisi maliyet
+  // motorunda bu etiketten türetilir; KKDF oranı forma yazılmaz, kullanıcı doğrular).
   // Navlun ödeme şekli (prepaid/collect) ödeme yöntemi değildir; #paymentMethod'a yazılmaz.
+  const paymentLabel = SHIPPING_PAYMENT_METHOD_LABELS[shippingFieldValue("payment_method")] || "";
+  if (fillFromDocument("#paymentMethod", paymentLabel)) filled.push("ödeme şekli");
   if (!$("#customsQuestion").value.trim()) {
     $("#customsQuestion").value = "Bu sevkiyattaki eşyanın aday GTİP'i, ithalat vergileri, TAREKS/TSE kontrolleri, gerekli belgeleri ve toplam maliyeti nelerdir?";
   }
   updateReadiness();
-  showToast(filled.length ? `Forma aktarıldı: ${filled.join(", ")}. Boş olmayan alanlar korundu; gözden geçirip onaylayın.` : "Aktarılacak yeni alan bulunamadı; form alanları zaten dolu.");
+  const skippedNote = skipped.length ? ` Aktarılmadı: ${skipped.join("; ")}.` : "";
+  showToast(filled.length
+    ? `Forma aktarıldı: ${filled.join(", ")}. Boş olmayan alanlar korundu; "belgeden alındı" rozetli alanları doğrulayın.${skippedNote}`
+    : `Aktarılacak yeni alan bulunamadı; form alanları zaten dolu.${skippedNote}`);
 }
 
 function renderShippingReview(data) {
@@ -3072,6 +3142,12 @@ function renderShippingReview(data) {
   const rows = shippingReviewFields.map(([key, label]) => {
     const value = data[key];
     const shown = value == null ? "" : String(value);
+    if (key === "payment_method") {
+      const options = [["", "Belgede yazmıyor / tanınmadı"], ...Object.entries(SHIPPING_PAYMENT_METHOD_LABELS)]
+        .map(([code, text]) => `<option value="${escapeHtml(code)}"${code === shown ? " selected" : ""}>${escapeHtml(text)}</option>`)
+        .join("");
+      return `<label class="field"><span>${escapeHtml(label)}</span><select data-shipping-field="${key}">${options}</select></label>`;
+    }
     return `<label class="field"><span>${escapeHtml(label)}</span><input data-shipping-field="${key}" maxlength="300" value="${escapeHtml(shown)}"></label>`;
   }).join("");
   const hsCodes = Array.isArray(data.hs_codes) ? data.hs_codes : [];

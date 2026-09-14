@@ -442,6 +442,10 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .uncertain-field textarea { border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); }
 .required-field textarea { border-color: color-mix(in srgb, #b47b13 45%, var(--line)); background: #fffaf0; }
 .field input.vision-filled, .field textarea.vision-filled, .field select.vision-filled { border-left: 3px solid var(--teal); background: color-mix(in srgb, var(--teal-soft) 35%, var(--surface)); }
+/* Sevkiyat belgesinden aktarılan alan: "belgeden alındı, doğrulayın" rozeti (data-from-document) */
+.field input[data-from-document], .field select[data-from-document] { border-color: #b47b13; background: #fffaf0; }
+.field .doc-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 1px 7px; border: 1px solid #b47b13; border-radius: 999px; background: #fff3e0; color: #7a4f00; font-family: var(--mono); font-size: .56rem; letter-spacing: .02em; text-transform: uppercase; white-space: nowrap; }
+.field .doc-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #b47b13; }
 .classification-answer-panel { grid-column: 1 / -1; border: 1px solid var(--teal); background: var(--surface); }
 .classification-answer-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 16px; border-bottom: 1px solid var(--line); background: var(--teal-soft); }
 .classification-answer-panel h4 { margin: 4px 0 0; font-family: var(--display); font-size: 1rem; }
