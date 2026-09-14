@@ -1263,3 +1263,9 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .change-added td:first-child { color: #34d399; }
 .change-removed td:first-child { color: #f87171; }
 .change-modified td:first-child { color: #fbbf24; }
+
+/* Tasarruf önerisi */
+.savings-best td { background: rgba(16, 185, 129, 0.08); }
+.savings-best td:first-child { font-weight: 700; color: var(--teal-dark, var(--teal)); }
+.savings-negative { color: var(--danger); }
+.savings-list { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: .63rem; line-height: 1.7; }

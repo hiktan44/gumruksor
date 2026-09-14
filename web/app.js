@@ -2367,6 +2367,20 @@ const exportTables = {
       rows,
     };
   },
+  savings(data) {
+    const rows = (data.ranked || []).map((item) => [
+      item.rank, item.origin_country, item.dispatch_country || "", savingsVariantLabel(item), item.resolved_country_group || "",
+      csvNumber(item.rates_used?.customs_duty), csvNumber(item.rates_used?.additional_duty), csvNumber(item.rates_used?.additional_financial_liability),
+      csvNumber(item.total_taxes), csvNumber(item.landed_total), csvNumber(item.landed_total_pessimistic),
+      item.is_baseline ? "temel senaryo" : csvNumber(item.savings_vs_baseline), item.is_baseline ? "" : csvNumber(item.savings_pct),
+      (item.conditions || []).join(" | "), (item.warnings || []).join(" | "),
+    ]);
+    return {
+      name: `tasarruf-onerisi-${data.gtip}-${fileStamp()}.csv`,
+      headers: ["Sıra", "Menşe", "Sevk ülkesi", "Varyant", "Sütun", "Gümrük vergisi %", "İGV %", "EMY %", `Vergiler toplamı ${data.currency || ""}`, `Toplam maliyet ${data.currency || ""}`, "Tevsik yoksa toplam", "Temel senaryoya göre tasarruf", "Tasarruf %", "Koşullar", "Uyarılar"],
+      rows,
+    };
+  },
 };
 
 function exportBar(kind, tables) {
@@ -2583,17 +2597,7 @@ $("#tariffForm").addEventListener("submit", async (event) => {
     const invoice = nullableNumber("#tariffInvoice");
     const data = invoice == null
       ? await fetchJson("/api/tariff/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(common) })
-      : await fetchJson("/api/tariff/cost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-          ...common, invoice_value: invoice, freight: nullableNumber("#tariffFreight") || 0,
-          insurance: nullableNumber("#tariffInsurance") || 0, other_costs: nullableNumber("#tariffOtherCosts") || 0,
-          quantity: nullableNumber("#tariffQuantity"), currency: $("#tariffCurrency").value,
-          vat_rate: nullableNumber("#tariffVat"), payment_method: $("#tariffPayment").value || null,
-          additional_financial_liability_rate: nullableNumber("#tariffEmy"), kkdf_rate: nullableNumber("#tariffKkdf"),
-          anti_dumping_amount: nullableNumber("#tariffAntiDumping"), sct_amount: nullableNumber("#tariffSct"),
-          surveillance_unit_value: nullableNumber("#tariffSurveillance"),
-          has_surveillance_certificate: $("#tariffSurveillanceCertificate").value === "" ? null : $("#tariffSurveillanceCertificate").value === "true",
-          ...liraFields("tariff"),
-        }) });
+      : await fetchJson("/api/tariff/cost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...common, ...collectTariffCostInputs(invoice) }) });
     output.innerHTML = renderTariffTool(data);
     const scenarioBox = $("#scenarioBox");
     if (scenarioBox) {
@@ -2610,6 +2614,63 @@ $("#tariffForm").addEventListener("submit", async (event) => {
     output.innerHTML = `<div class="answer-error"><h2>Tarife sorgusu tamamlanamadı</h2><p>${escapeHtml(error.message)}</p></div>`;
   } finally { button.disabled = false; }
 });
+
+function collectTariffCostInputs(invoice) {
+  // Tarife & Maliyet formundaki maliyet kalemleri; tek satır hesabı ve tasarruf önerisi aynı gövdeyi kullanır.
+  return {
+    invoice_value: invoice, freight: nullableNumber("#tariffFreight") || 0,
+    insurance: nullableNumber("#tariffInsurance") || 0, other_costs: nullableNumber("#tariffOtherCosts") || 0,
+    quantity: nullableNumber("#tariffQuantity"), currency: $("#tariffCurrency").value,
+    vat_rate: nullableNumber("#tariffVat"), payment_method: $("#tariffPayment").value || null,
+    additional_financial_liability_rate: nullableNumber("#tariffEmy"), kkdf_rate: nullableNumber("#tariffKkdf"),
+    anti_dumping_amount: nullableNumber("#tariffAntiDumping"), sct_amount: nullableNumber("#tariffSct"),
+    surveillance_unit_value: nullableNumber("#tariffSurveillance"),
+    has_surveillance_certificate: $("#tariffSurveillanceCertificate").value === "" ? null : $("#tariffSurveillanceCertificate").value === "true",
+    ...liraFields("tariff"),
+  };
+}
+
+function savingsVariantLabel(item) {
+  if (item.variant === "atr") return "A.TR ile";
+  return item.atr_available || item.atr_certificate === true ? "A.TR'siz" : "—";
+}
+
+function renderSavingsResult(data) {
+  exportStore.savings = data;
+  const currency = data.currency || "";
+  const money = (value) => value == null ? "—" : `${numberFormat.format(value)} ${escapeHtml(currency)}`;
+  const ranked = data.ranked || [];
+  const rows = ranked.map((item) => {
+    const saving = item.is_baseline
+      ? "<em>temel senaryo</em>"
+      : item.savings_vs_baseline == null ? "—"
+        : `<span class="${item.savings_vs_baseline < 0 ? "savings-negative" : ""}">${item.savings_vs_baseline >= 0 ? "" : "−"}${numberFormat.format(Math.abs(item.savings_vs_baseline))} ${escapeHtml(currency)}${item.savings_pct != null ? ` <small>(%${numberFormat.format(Math.abs(item.savings_pct))})</small>` : ""}</span>`;
+    const pessimistic = item.landed_total_pessimistic != null
+      ? `<small>tevsik yoksa ${numberFormat.format(item.landed_total_pessimistic)} ${escapeHtml(currency)}</small>` : "";
+    const conditions = (item.conditions || []).length ? `<ul class="savings-list">${item.conditions.map((text) => `<li>${escapeHtml(text)}</li>`).join("")}</ul>` : "—";
+    const warnings = (item.warnings || []).slice(0, 3).map((text) => escapeHtml(text)).join(" · ") || "—";
+    return `<tr class="${item.rank === 1 ? "savings-best" : ""}${item.is_baseline ? " savings-baseline" : ""}">
+      <td>${item.rank}</td>
+      <td><b>${escapeHtml(item.origin_country)}</b>${item.dispatch_country ? `<small>sevk: ${escapeHtml(item.dispatch_country)}</small>` : ""}${item.resolved_country_group ? `<small>sütun ${escapeHtml(item.resolved_country_group)}</small>` : ""}</td>
+      <td>${escapeHtml(savingsVariantLabel(item))}</td>
+      <td>${money(item.total_taxes)}</td>
+      <td>${money(item.landed_total)}${pessimistic}</td>
+      <td>${saving}</td>
+      <td>${conditions}</td>
+      <td>${warnings}</td>
+    </tr>`;
+  }).join("");
+  const notComparable = (data.not_comparable || []).map((item) => `<li><b>${escapeHtml(item.origin_country)}</b>${item.variant === "atr" ? " (A.TR ile)" : ""}: ${escapeHtml((item.reasons || []).join(" ") || "karşılaştırılamadı")}</li>`).join("");
+  const best = data.best;
+  const head = best
+    ? `<div class="answer-head"><span class="answer-status">${ranked.length} senaryo</span><div><h2>En düşük toplam maliyet: ${escapeHtml(best.origin_country)} (${escapeHtml(savingsVariantLabel(best))})</h2><p>${best.is_baseline ? "Temel senaryo zaten en düşük maliyetli görünüyor." : `Temel senaryoya göre ${numberFormat.format(best.savings_vs_baseline ?? 0)} ${escapeHtml(currency)} fark; koşullar sağlanmadan tasarruf gerçekleşmez.`}${data.baseline_note ? ` ${escapeHtml(data.baseline_note)}` : ""}</p></div></div>`
+    : `<p class="missing-list">Karşılaştırılabilir senaryo yok; aşağıdaki sebepleri giderip yeniden deneyin.</p>`;
+  return `${head}
+  ${ranked.length ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Sıra</th><th>Menşe</th><th>Varyant</th><th>Vergiler toplamı</th><th>Toplam maliyet</th><th>Temel senaryoya göre tasarruf</th><th>Koşullar (belge)</th><th>Uyarılar</th></tr></thead><tbody>${rows}</tbody></table></div>
+  ${exportBar("savings", [{ table: "savings", label: "Tasarruf tablosu" }])}` : ""}
+  ${notComparable ? `<h4>Karşılaştırılamayan senaryolar</h4><ul class="savings-list">${notComparable}</ul>` : ""}
+  ${data.legal_notice ? `<div class="legal-banner"><strong>Önemli:</strong> ${escapeHtml(data.legal_notice)}</div>` : ""}`;
+}
 
 function renderScenarioRows(data) {
   exportStore.scenarios = data;
@@ -2700,6 +2761,38 @@ $("#scenarioCompare").addEventListener("click", async () => {
       body: JSON.stringify({ gtip, origins, dispatch_country: $("#tariffDispatch")?.value.trim() || null, atr_certificate: $("#tariffAtr")?.value || null }),
     });
     output.innerHTML = renderScenarioRows(data);
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+});
+
+$("#scenarioSavings")?.addEventListener("click", async () => {
+  const output = $("#savingsOutput");
+  if (!hasCapability("scenario_compare")) { output.innerHTML = featureUpsellHtml("scenario_compare"); return; }
+  const gtip = $("#tariffGtip").value.trim();
+  const origins = $("#scenarioOrigins").value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 6);
+  const invoice = nullableNumber("#tariffInvoice");
+  if (!gtip || origins.length < 2) {
+    output.innerHTML = '<p class="missing-list">Tasarruf önerisi için tarife kodu ve en az iki menşe ülke gerekir.</p>';
+    return;
+  }
+  if (invoice == null) {
+    output.innerHTML = '<p class="missing-list">Tasarruf önerisi için Tarife & Maliyet formuna fatura bedelini ve doğrulanmış maliyet kalemlerini girin.</p>';
+    return;
+  }
+  const baseOrigin = $("#tariffOrigin").value.trim();
+  const baseline = origins.find((item) => item.toLocaleLowerCase("tr") === baseOrigin.toLocaleLowerCase("tr")) || origins[0];
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>Senaryolar maliyete göre sıralanıyor</b><span>Her menşe (ve A.TR varyantı) için maliyet defteri üretiliyor…</span></div></div>';
+  try {
+    const data = await fetchJson("/api/tariff/savings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gtip, origins, dispatch_country: $("#tariffDispatch")?.value.trim() || null, atr_certificate: $("#tariffAtr")?.value || null,
+        baseline_origin: baseline, cost: collectTariffCostInputs(invoice),
+      }),
+    });
+    output.innerHTML = renderSavingsResult(data);
   } catch (error) {
     output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
   }
