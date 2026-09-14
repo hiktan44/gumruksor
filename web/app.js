@@ -1282,7 +1282,7 @@ function renderCustomsResult(data) {
     : '<p class="missing-list">Kanıtla desteklenen aday kod üretilemedi. Fotoğraf tek başına kesin GTİP değildir.</p>';
   const sources = (data.sources || []).map((source) => `
     <a href="${safeUrl(source.url)}" target="_blank" rel="noreferrer">
-      <code>[${escapeHtml(source.id)}]</code><span><b>${escapeHtml(source.title)}</b><small>${escapeHtml(source.authority)}${source.fetch_warning ? ` · ${escapeHtml(source.fetch_warning)}` : ""}</small></span>
+      <code>[${escapeHtml(source.id)}]</code><span><b>${escapeHtml(source.title)}${String(source.id || "").startsWith("hyb_") ? '<em class="source-badge">anlamsal eşleşme</em>' : ""}</b><small>${escapeHtml(source.authority)}${source.fetch_warning ? ` · ${escapeHtml(source.fetch_warning)}` : ""}</small></span>
     </a>`).join("");
   $("#customsOutput").innerHTML = `
     <article class="answer-sheet">

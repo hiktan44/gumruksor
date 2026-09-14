@@ -159,6 +159,8 @@ BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
 
 # Persistent hybrid search index (BM25 + embedding; PRD Faz 3.1).
 hybrid_index = HybridIndex(embedder=_embedder)
+# PRD Faz 3.2: sınıflandırma ve ön değerlendirme dipnotlu hibrit kanıt kullanır.
+customs_advisor_service.hybrid_index = hybrid_index
 
 
 async def hybrid_index_refresh_loop() -> None:
