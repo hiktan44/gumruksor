@@ -191,6 +191,7 @@ class TariffLookupResult(BaseModel):
     validity_basis: Literal["current", "legal", "observed", "unavailable"] = "current"
     snapshot_validity: list[dict[str, Any]] = Field(default_factory=list)
     excise_tax: dict[str, Any] | None = None
+    vat_rate: dict[str, Any] | None = None  # vat_lists.VatRateIndex önerisi; otomatik uygulanmaz
     as_of: str
 
 
@@ -345,6 +346,7 @@ _EXPLICIT_LABELS = {alias: label for alias, label in explicit_labels().items() i
 class TariffEngine:
     trade_measures: Any = None  # trade_measures.TradeMeasureEngine; sunucu başlangıcında bağlanır
     excise_tax: Any = None  # tax_lists.ExciseTaxIndex; sunucu başlangıcında bağlanır
+    vat_rates: Any = None  # vat_lists.VatRateIndex; sunucu başlangıcında bağlanır
     """Synchronise, query and diff official tariff snapshots."""
 
     def __init__(self, config_path: str | Path | None = None, data_dir: str | Path | None = None) -> None:
@@ -1163,8 +1165,36 @@ class TariffEngine:
         result.excise_tax = report
         result.warnings.extend(report.get("warnings", []))
 
+    def _attach_vat_rate(self, result: "TariffLookupResult") -> None:
+        """2007/13033 ekli listelerden KDV oranı önerisi ekler; oran hesaba otomatik girmez."""
+        index = getattr(self, "vat_rates", None)
+        if index is None:
+            return
+        try:
+            report = index.lookup(result.gtip)
+        except Exception:  # noqa: BLE001 – KDV önerisi tarife sonucunu düşürmemeli
+            logger.exception("VAT rate lookup failed for %s", result.gtip)
+            return
+        result.vat_rate = report
+        if report.get("ambiguous"):
+            options = " / ".join(
+                f"%{candidate['rate']:g}" + (f" ({', '.join(candidate['conditions'])})" if candidate.get("conditions") else "")
+                for candidate in report.get("candidates", [])
+                if candidate.get("rate") is not None
+            )
+            result.warnings.append(
+                f"KDV önerisi belirsiz: {options} [{report.get('legal_basis')}]. Satırdaki şartı doğrulayıp oranı kendiniz girin."
+            )
+        elif report.get("basis") == "official_list" and report.get("rate") is not None:
+            result.warnings.append(
+                f"KDV önerisi %{report['rate']:g} – {report.get('legal_basis')}"
+                + (f" (eşleşen ifade {report['matched_expression']})" if report.get("matched_expression") else "")
+                + "; oran otomatik uygulanmaz, beyanname öncesi doğrulayın."
+            )
+
     def _attach_trade_measures(self, result: "TariffLookupResult") -> None:
         self._attach_excise_tax(result)
+        self._attach_vat_rate(result)
         engine = self.trade_measures
         if engine is None:
             return
@@ -1197,6 +1227,8 @@ class TariffEngine:
 
     def _measure_coverage(self, snapshots: list[sqlite3.Row]) -> dict[str, MeasureCoverage]:
         active = {str(snapshot["source_id"]) for snapshot in snapshots}
+        vat_index = getattr(self, "vat_rates", None)
+        vat_ready = bool(vat_index is not None and getattr(vat_index, "ready", False))
         return {
             "customs_duty": MeasureCoverage(
                 status="verified_snapshot" if "import_regime" in active else "not_integrated",
@@ -1218,8 +1250,14 @@ class TariffEngine:
             "safeguard": self._trade_coverage("safeguard", "Korunma önlemi ve varsa ülke/istisna kapsamı ayrıca doğrulanmalıdır."),
             "tariff_quota": self._trade_coverage("tariff_quota", "Tarife kontenjanı tahsis ve bakiye durumu işlem tarihinde ayrıca doğrulanmalıdır."),
             "vat": MeasureCoverage(
-                status="user_confirmation_required",
-                note="Ürüne özgü güncel KDV oranı resmî kaynaktan doğrulanıp girilmelidir.",
+                status="partial_snapshot" if vat_ready else "user_confirmation_required",
+                source_ids=["vat_lists"] if vat_ready else [],
+                note=(
+                    "2007/13033 sayılı Karar eki (I)/(II) sayılı listelerden resmî listeden öneri üretilir; "
+                    "kullanıcı onayı gerekir. Oran hesaba otomatik girmez, şart ve istisnalar doğrulanmalıdır."
+                    if vat_ready
+                    else "Ürüne özgü güncel KDV oranı resmî kaynaktan doğrulanıp girilmelidir; kullanıcı onayı gerekir."
+                ),
             ),
             "kkdf": MeasureCoverage(
                 status="user_confirmation_required",

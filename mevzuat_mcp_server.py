@@ -40,6 +40,7 @@ from exchange_rates import ExchangeRateError, ExchangeRateService, parse_registr
 from eylemio_client import EylemioClient, EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, TradeMeasureEngine, summary_lines as trade_measure_summary
 from tax_lists import ExciseTaxIndex, summary_lines as excise_tax_summary
+from vat_lists import VatRateIndex
 from tariff_engine import (
     LandedCostInput,
     TariffDecisionTreeResult,
@@ -80,8 +81,10 @@ tariff_engine = TariffEngine()
 exchange_rate_service = ExchangeRateService()
 trade_measure_engine = TradeMeasureEngine()
 excise_tax_index = ExciseTaxIndex()
+vat_rate_index = VatRateIndex()
 tariff_engine.trade_measures = trade_measure_engine
 tariff_engine.excise_tax = excise_tax_index
+tariff_engine.vat_rates = vat_rate_index
 eylemio_client = EylemioClient()
 control_engine = ImportControlEngine()
 classification_engine = ClassificationEvidenceEngine()
@@ -111,6 +114,7 @@ customs_advisor_service = CustomsAdvisor(
 # Extra background coroutines registered by the web layer (e.g. watch-list notifier).
 BACKGROUND_LOOPS: list[tuple[str, "Callable[[], Coroutine[Any, Any, None]]"]] = []
 BACKGROUND_LOOPS.append(("trade-measures-sync", trade_measure_engine.periodic_sync_loop))
+BACKGROUND_LOOPS.append(("vat-lists-sync", vat_rate_index.periodic_sync_loop))
 
 
 async def backfill_change_ledger() -> None:

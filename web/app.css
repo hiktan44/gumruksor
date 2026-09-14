@@ -921,6 +921,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .apply-rates small { display: block; margin-top: 3px; color: var(--ink-2); font-size: .56rem; }
 .apply-rates button { flex: 0 0 auto; min-height: 40px; padding: 0 14px; border: 1px solid var(--teal); border-radius: var(--radius-sm); background: var(--teal); color: #fff; font-size: .6rem; font-weight: 700; }
 .apply-rates button:hover { background: var(--teal-dark); }
+.vat-suggestion-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; }
 .field-hint { display: block; margin-top: 5px; color: var(--ink-3); font-family: var(--mono); font-size: .52rem; }
 .field-hint.short { color: var(--danger); }
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }

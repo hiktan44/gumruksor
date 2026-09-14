@@ -53,6 +53,7 @@ from mevzuat_mcp_server import (
     tariff_engine,
     ticaret_client,
     trade_measure_engine,
+    vat_rate_index,
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
 from countries import COUNTRIES, PENDING_AGREEMENTS
@@ -70,6 +71,7 @@ from exchange_rates import ExchangeRateError, parse_registration_date
 from eylemio_client import EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, summary_lines as trade_measure_summary
 from tax_lists import summary_lines as excise_tax_summary
+from vat_lists import summary_lines as vat_rate_summary
 from tariff_engine import LandedCostInput
 from unified_search import UnifiedSearchEngine
 
@@ -87,7 +89,7 @@ account_service = AccountService(google_auth.data_dir)
 stripe_billing = StripeBilling()
 email_sender = ResendEmailSender()
 agent_identity = AgentTokenVerifier()
-unified_search = UnifiedSearchEngine()
+unified_search = UnifiedSearchEngine(vat_index=vat_rate_index)
 
 
 def _track_llm_telemetry(
@@ -2282,6 +2284,21 @@ async def web_excise_tax(request: Request):
     report = excise_tax_index.lookup(str(body.get("gtip", "")))
     report["summary"] = excise_tax_summary(report)
     return JSONResponse(report)
+
+
+@mcp.custom_route("/api/tariff/vat", methods=["GET"])
+async def web_vat_rate(request: Request):
+    """2007/13033 sayılı Karar eki (I)/(II) sayılı listelerden KDV oranı önerisi (onay gerekir)."""
+    limited = _rate_limit_response(request, "vat-rate", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    gtip = re.sub(r"\D", "", str(request.query_params.get("gtip") or ""))
+    if not 2 <= len(gtip) <= 12:
+        return JSONResponse({"error": "GTİP 2-12 haneli olmalıdır (?gtip=...)."}, status_code=422)
+    report = vat_rate_index.lookup(gtip)
+    report["summary"] = vat_rate_summary(report)
+    report["status"] = vat_rate_index.status()
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/tariff/communiques", methods=["GET"])
