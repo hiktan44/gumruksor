@@ -38,6 +38,7 @@
       <button type="button" class="admin-tab-btn" data-tab="payments">💳 Ödemeler</button>
       <button type="button" class="admin-tab-btn" data-tab="logs">📜 Kullanıcı Logları</button>
       <button type="button" class="admin-tab-btn" data-tab="consultants">👨‍💼 Danışmanlar</button>
+      <button type="button" class="admin-tab-btn" data-tab="changes">🗂️ Veri Değişiklikleri</button>
     </nav>
 
     <!-- TAB 1: OVERVIEW -->
@@ -176,6 +177,7 @@
                 <th>Kullanıcı</th>
                 <th>Mevcut Paket</th>
                 <th>Abonelik Durumu</th>
+                <th>Rol</th>
                 <th>Son Giriş</th>
                 <th>İşlemler</th>
               </tr>
@@ -265,6 +267,43 @@
     </section>
 
     <!-- TAB 6: CONSULTANTS -->
+    <!-- TAB: DATA CHANGE LEDGER -->
+    <section class="admin-tab-content" id="tab-changes">
+      <section class="results admin-section">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Resmî Veri Değişiklik Defteri</h2>
+            <p>Her eşitlemede hangi snapshot'ın hangisini değiştirdiği, kaynak URL, SHA-256, satır sayıları ve ayrıştırma uyarıları kalıcı olarak kaydedilir. Bir satıra tıklayınca satır düzeyinde önce/sonra farkı açılır.</p>
+          </div>
+          <div class="filter-pills" id="changeKindPills">
+            <button type="button" class="filter-pill active" data-change-kind="">Tümü</button>
+            <button type="button" class="filter-pill" data-change-kind="tariff">Tarife</button>
+            <button type="button" class="filter-pill" data-change-kind="controls">Kontrol</button>
+            <button type="button" class="filter-pill" data-change-kind="classification">AB tüzükleri</button>
+            <button type="button" class="filter-pill" data-change-kind="trade_measures">Önlemler</button>
+          </div>
+        </header>
+        <div id="changeSummary" class="empty-note"></div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Tespit</th>
+                <th>Kaynak</th>
+                <th>Snapshot</th>
+                <th>Satır</th>
+                <th>+ / − / ~</th>
+                <th>Uyarı</th>
+                <th>Durum</th>
+              </tr>
+            </thead>
+            <tbody id="changeBatches"><tr><td colspan="7">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="changeDetail"></div>
+      </section>
+    </section>
+
     <section class="admin-tab-content" id="tab-consultants">
       <section class="results admin-section">
         <header class="results-header">

@@ -170,6 +170,62 @@ class AccountServiceTests(unittest.TestCase):
         self.assertEqual(account["plan"]["code"], "team")
         self.assertEqual(account["subscription"]["billing_cycle"], "yearly")
 
+    def test_plan_capabilities_roles_and_aliases(self):
+        from account_service import FEATURES, PLANS, resolve_plan_code
+
+        self.assertEqual(resolve_plan_code("Premium+"), "institutional")
+        self.assertEqual(resolve_plan_code("pro"), "expert")
+        self.assertEqual(resolve_plan_code("expert"), "expert")
+        self.assertIsNone(resolve_plan_code("gold"))
+        self.assertTrue(set(PLANS["team"].capabilities) <= set(FEATURES))
+        self.assertLess(PLANS["starter"].capabilities, PLANS["expert"].capabilities)
+        self.assertLess(PLANS["expert"].capabilities, PLANS["team"].capabilities)
+        self.assertLess(PLANS["team"].capabilities, PLANS["institutional"].capabilities)
+
+        self.assertEqual(self.accounts.role_of(user()), "user")
+        self.assertEqual(self.accounts.capabilities_for(user()), frozenset())
+        self.assertEqual(self.accounts.role_of(user("admin", "admin@example.com")), "admin")
+        self.assertEqual(self.accounts.capabilities_for(user("admin", "admin@example.com")), frozenset(FEATURES))
+
+        admin = user("admin", "admin@example.com")
+        self.accounts.admin_set_plan(admin, "user-1", "premium", "active")  # alias resolves to team
+        self.assertEqual(self.accounts.account(user())["plan"]["code"], "team")
+        self.assertIn("bulk_costing", self.accounts.capabilities_for(user()))
+        self.accounts.admin_set_role(admin, "user-1", "editor")
+        self.assertEqual(self.accounts.role_of(user()), "editor")
+        account = self.accounts.account(user())
+        self.assertEqual(account["role"], "editor")
+        self.assertIn("data_review", account["capabilities"])
+        self.assertIn("bulk_costing", account["capabilities"])
+        with self.assertRaises(AccountError):
+            self.accounts.admin_set_role(admin, "user-1", "superuser")
+        with self.assertRaises(AccountError):
+            self.accounts.admin_set_role(admin, "missing", "editor")
+        with sqlite3.connect(self.accounts.db_path) as connection:
+            actions = [row[0] for row in connection.execute("SELECT action FROM audit_log ORDER BY id")]
+        self.assertIn("role.set", actions)
+        # Admin allow-list wins even when the stored role is downgraded.
+        self.accounts.admin_set_role(admin, "admin", "user")
+        self.assertEqual(self.accounts.role_of(admin), "admin")
+
+    def test_role_column_is_added_to_an_older_database(self):
+        older = Path(self.temp.name) / "older"
+        older.mkdir()
+        db_path = older / "users.sqlite3"
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "CREATE TABLE users (google_sub TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', "
+                "picture TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_login_at INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT INTO users VALUES('legacy','legacy@example.com','Legacy','',1,1)")
+        service = AccountService(older, admin_emails="")
+        with sqlite3.connect(service.db_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+            role = connection.execute("SELECT role FROM users WHERE google_sub='legacy'").fetchone()[0]
+        self.assertIn("role", columns)
+        self.assertEqual(role, "user")
+        self.assertEqual(service.role_of({"sub": "legacy", "email": "legacy@example.com"}), "user")
+
     def test_default_admin_access(self):
         self.assertTrue(self.accounts.is_admin(user("h1", "hikmet044@gmail.com")))
         self.assertTrue(self.accounts.is_admin(user("h2", "hikmet044@gmail")))

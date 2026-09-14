@@ -39,6 +39,7 @@ from email_service import MailError, ResendEmailSender, render_consultation_emai
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
     bedesten_client,
+    change_ledger,
     classification_engine,
     control_engine,
     customs_advisor_service,
@@ -229,6 +230,57 @@ def _require_admin(request: Request) -> dict[str, Any]:
     if not account_service.is_admin(user):
         raise AuthError("Bu alan yalnızca yöneticilere açıktır.")
     return user
+
+
+class FeatureNotAvailable(AccountError):
+    """The signed user's plan or role does not include a gated feature."""
+
+    def __init__(self, feature: str, message: str) -> None:
+        super().__init__(message)
+        self.feature = feature
+
+
+def _require_role(request: Request, *roles: str) -> dict[str, Any]:
+    """Require one of the given roles; the admin allow-list always passes."""
+    user = _required_user(request)
+    role = account_service.role_of(user)
+    if role != "admin" and role not in roles:
+        raise AuthError("Bu alan için yetkiniz yok.")
+    return user
+
+
+def require_feature(request: Request, feature: str) -> dict[str, Any] | None:
+    """Gate a paid/role feature like _enforce_quota gates usage.
+
+    Without Google OAuth (self-hosted) everything stays open. With OAuth the
+    caller must be signed in and the plan or role must include the feature.
+    """
+    if feature not in account_service.feature_catalog():
+        raise FeatureNotAvailable(feature, "Bilinmeyen özellik kilidi.")
+    user = _session_user(request)
+    if not user:
+        if google_auth.configured:
+            raise AuthError("Bu özellik için Google hesabınızla giriş yapın.")
+        return None
+    if feature not in account_service.capabilities_for(user):
+        label = account_service.feature_catalog()[feature]
+        plans = ", ".join(item["name"] for item in account_service.plans_with_feature(feature)) or "Kurumsal"
+        raise FeatureNotAvailable(
+            feature, f"{label} paketinizde yok. Hesabım alanından {plans} paketine geçebilirsiniz."
+        )
+    return user
+
+
+def _feature_error(exc: FeatureNotAvailable) -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": str(exc),
+            "code": "feature_required",
+            "feature": exc.feature,
+            "plans": account_service.plans_with_feature(exc.feature),
+        },
+        status_code=403,
+    )
 
 
 def _enforce_quota(request: Request, operation: str) -> dict[str, Any] | None:
@@ -596,6 +648,7 @@ async def web_plans(request: Request):
     return JSONResponse(
         {
             "plans": account_service.public_plans(),
+            "features": account_service.feature_catalog(),
             "billing_enabled": stripe_billing.configured,
             "billing_provider": "stripe",
             "billing_mode": stripe_billing.mode,
@@ -1088,6 +1141,25 @@ async def web_admin_logs(request: Request):
         return JSONResponse({"logs": account_service.admin_user_logs(200)}, headers={"Cache-Control": "no-store"})
     except AuthError as exc:
         return _auth_error(exc, status_code=403)
+
+
+@mcp.custom_route("/api/admin/users/{google_sub}/role", methods=["PUT"])
+async def web_admin_user_role(request: Request):
+    """Assign user/consultant/editor/admin role (admin only; audited)."""
+    try:
+        _trusted_request_origin(request)
+        actor = _require_admin(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise AccountError("Rol güncellemesi geçersiz.")
+        account_service.admin_set_role(actor, request.path_params.get("google_sub", ""), str(body.get("role", "")))
+        return JSONResponse({"updated": True})
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
 
 
 @mcp.custom_route("/api/admin/users/{google_sub}/credits", methods=["POST"])
@@ -2217,8 +2289,13 @@ async def web_tariff_bulk(request: Request):
         return limited
     try:
         _trusted_request_origin(request)
+        require_feature(request, "bulk_costing")
     except SecurityViolation as exc:
         return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     try:
         content_length = int(request.headers.get("content-length", "0") or 0)
         if content_length > BULK_MAX_FILE_BYTES * 2:
@@ -2251,6 +2328,12 @@ async def web_tariff_scenarios(request: Request):
     limited = _rate_limit_response(request, "tariff-scenarios", limit=20, window_seconds=60)
     if limited:
         return limited
+    try:
+        require_feature(request, "scenario_compare")
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     try:
         body = await request.json()
         if not isinstance(body, dict):
@@ -2547,6 +2630,16 @@ async def web_changes(request: Request):
     limited = _rate_limit_response(request, "change-ledger", limit=60, window_seconds=60)
     if limited:
         return limited
+    params = request.query_params
+    kind = params.get("kind", "").strip().lower() or None
+    if kind and kind not in change_ledger_kinds():
+        return JSONResponse({"error": "Bilinmeyen değişiklik türü."}, status_code=422)
+    gtip = re.sub(r"\D", "", params.get("gtip", ""))[:12] or None
+    since = _normalise_date(params.get("since")) if params.get("since") else None
+    try:
+        limit = max(1, min(int(params.get("limit", "200") or 200), 1000))
+    except ValueError:
+        limit = 200
     return JSONResponse(
         {
             "tariff": {
@@ -2556,8 +2649,51 @@ async def web_changes(request: Request):
             "controls": control_engine.changes(limit=100),
             "trade_measures": trade_measure_engine.store.changes(limit=50),
             "trade_measure_status": trade_measure_engine.status(),
+            # Unified persistent ledger (all kinds, full history, row-level before/after).
+            "ledger": change_ledger.changes(kind=kind, gtip_prefix=gtip, since=since, limit=limit),
+            "batches": change_ledger.batches(kind=kind, limit=30),
+            "ledger_summary": change_ledger.summary(),
             "generated_at": time.time(),
         }
+    )
+
+
+def change_ledger_kinds() -> tuple[str, ...]:
+    from change_ledger import KINDS
+
+    return KINDS
+
+
+@mcp.custom_route("/api/admin/changes", methods=["GET"])
+async def web_admin_changes(request: Request):
+    """Change batches with parse warnings and lineage (admin or editor)."""
+    limited = _rate_limit_response(request, "admin-changes", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_role(request, "editor")
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    params = request.query_params
+    kind = params.get("kind", "").strip().lower() or None
+    if kind and kind not in change_ledger_kinds():
+        return JSONResponse({"error": "Bilinmeyen değişiklik türü."}, status_code=422)
+    batch_id = params.get("batch", "").strip()[:200] or None
+    if batch_id:
+        batch = change_ledger.batch(batch_id)
+        if batch is None:
+            return JSONResponse({"error": "Değişiklik kaydı bulunamadı."}, status_code=404)
+        return JSONResponse(
+            {"batch": batch, "changes": change_ledger.changes(batch_id=batch_id, limit=500)},
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        limit = max(1, min(int(params.get("limit", "50") or 50), 200))
+    except ValueError:
+        limit = 50
+    return JSONResponse(
+        {"batches": change_ledger.batches(kind=kind, limit=limit), "summary": change_ledger.summary()},
+        headers={"Cache-Control": "no-store"},
     )
 
 # Add health check endpoint to the MCP server
