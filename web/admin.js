@@ -118,7 +118,7 @@ async function loadOverview() {
       if (row) row.querySelector("[data-consultant-status]").value = item.status;
     });
   } catch (error) {
-    $("#adminUsers").innerHTML = `<tr><td colspan="5" class="error-cell">${escapeHtml(error.message)}</td></tr>`;
+    $("#adminUsers").innerHTML = `<tr><td colspan="6" class="error-cell">${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
@@ -164,6 +164,14 @@ function renderUsers(users) {
             <option value="cancelled">İptal</option>
           </select>
         </td>
+        <td>
+          <select data-role class="admin-select" title="Rol: editör veri inceleme kuyruğunu görür; yönetici her şeyi yönetir">
+            <option value="user">Kullanıcı</option>
+            <option value="consultant">Danışman</option>
+            <option value="editor">Editör</option>
+            <option value="admin">Yönetici</option>
+          </select>
+        </td>
         <td>${escapeHtml(formatDate(user.last_login_at))}</td>
         <td class="action-cell">
           <button type="button" class="btn-save" data-save>Kaydet</button>
@@ -172,13 +180,16 @@ function renderUsers(users) {
       </tr>`
         )
         .join("")
-    : '<tr><td colspan="5">Kullanıcı bulunamadı.</td></tr>';
+    : '<tr><td colspan="6">Kullanıcı bulunamadı.</td></tr>';
 
   users.forEach((user) => {
     const row = $(`[data-user="${CSS.escape(user.google_sub)}"]`);
     if (row) {
       row.querySelector("[data-plan]").value = user.plan_code;
       row.querySelector("[data-status]").value = user.subscription_status;
+      const roleSelect = row.querySelector("[data-role]");
+      roleSelect.value = user.role || "user";
+      roleSelect.dataset.initial = user.role || "user";
     }
   });
 }
@@ -542,7 +553,16 @@ $("#adminUsers").addEventListener("click", async (event) => {
           status: row.querySelector("[data-status]").value,
         }),
       });
-      toast("Abonelik güncellendi ve denetim kaydı oluşturuldu.");
+      const roleSelect = row.querySelector("[data-role]");
+      if (roleSelect && roleSelect.value !== roleSelect.dataset.initial) {
+        await json(`/api/admin/users/${encodeURIComponent(row.dataset.user)}/role`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: roleSelect.value }),
+        });
+        roleSelect.dataset.initial = roleSelect.value;
+      }
+      toast("Abonelik ve rol güncellendi; denetim kaydı oluşturuldu.");
     } catch (error) {
       toast(error.message);
     } finally {

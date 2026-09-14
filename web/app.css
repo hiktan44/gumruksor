@@ -1251,3 +1251,8 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .shipping-review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 12px; margin: 10px 0; }
 .shipping-review-grid .field input { height: 40px; font-size: .66rem; }
 @media (max-width: 640px) { .shipping-review-grid { grid-template-columns: 1fr; } }
+
+/* Paket bazlı özellik kilitleri */
+.feature-locked { padding: 18px; border: 1px dashed var(--line); background: var(--surface); color: var(--ink-2); font-size: .7rem; line-height: 1.7; }
+.feature-locked .link-button { padding: 0; border: 0; background: none; color: var(--accent, inherit); font: inherit; text-decoration: underline; cursor: pointer; }
+.price-current { display: block; margin: -4px 0 8px; font-size: .62rem; font-style: normal; color: var(--ink-2); }
