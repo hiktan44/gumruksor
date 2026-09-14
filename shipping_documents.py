@@ -491,24 +491,51 @@ def _docx_text(payload: bytes) -> str:
         raise ValueError("Word belgesi açılamadı; dosyanın bozuk olmadığını ve .docx biçiminde olduğunu kontrol edin.") from exc
 
 
-def _rasterize_pdf(payload: bytes) -> bytes:
-    """Render the first page of a scanned PDF to PNG for the vision model."""
+def pdf_page_count(payload: bytes) -> int:
+    """Number of pages in a PDF; ``1`` when the file cannot be opened (caller decides)."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:  # pragma: no cover - depends on the environment
+        return 1
+    try:
+        with fitz.open(stream=payload, filetype="pdf") as document:
+            return max(1, int(document.page_count))
+    except Exception:
+        return 1
+
+
+def rasterize_pdf_pages(payload: bytes, *, max_pages: int = 1) -> list[bytes]:
+    """Render the first ``max_pages`` pages of a scanned/drawing PDF to PNG images.
+
+    Used for shipping documents (first page only) and for product catalogues /
+    technical drawings without a text layer (up to three pages, PRD Faz 3.4).
+    The page cap is enforced here, so callers can never send a whole catalogue
+    to the vision model.
+    """
     try:
         import fitz  # pymupdf
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ValueError(
             "Taranmış PDF'ten metin çıkarılamadı ve sayfa görüntüye çevrilemedi; belgenin fotoğrafını (JPEG/PNG) yükleyin."
         ) from exc
+    limit = max(1, min(int(max_pages), 3))
     try:
         with fitz.open(stream=payload, filetype="pdf") as document:
             if document.page_count == 0:
                 raise ValueError("PDF sayfa içermiyor.")
-            pixmap = document[0].get_pixmap(dpi=_RASTER_DPI)
-            return pixmap.tobytes("png")
+            return [
+                document[index].get_pixmap(dpi=_RASTER_DPI).tobytes("png")
+                for index in range(min(limit, document.page_count))
+            ]
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError("PDF görüntüye çevrilemedi; belgenin fotoğrafını yükleyin.") from exc
+
+
+def _rasterize_pdf(payload: bytes) -> bytes:
+    """Render the first page of a scanned PDF to PNG for the vision model."""
+    return rasterize_pdf_pages(payload, max_pages=1)[0]
 
 
 def _prepare_text(text: str) -> str:

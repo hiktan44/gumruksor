@@ -1788,13 +1788,31 @@ Her candidates öğesi: code, explanation, confidence, decisive_missing_informat
 """.strip()
 
 
+MAX_VISION_IMAGES = 3
+
+
 async def _request_openrouter_vision_analysis(
     models: list[str],
     api_key: str,
     encoded_image: str,
     media_type: str,
+    *,
+    extra_images: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Extract product attributes using OpenRouter's ordered multimodal fallbacks."""
+    """Extract product attributes using OpenRouter's ordered multimodal fallbacks.
+
+    ``extra_images`` carries further ``(encoded, media_type)`` pairs (e.g. the
+    next pages of a scanned catalogue). All images go in ONE user message as
+    consecutive image parts (Gemini: multiple ``inlineData``); the prompt and
+    schema are the same as for a single product photo.
+    """
+    images = [(encoded_image, media_type), *(extra_images or [])][:MAX_VISION_IMAGES]
+    instruction = (
+        "Bu görselin bütün ürün evsaflarını çıkar."
+        if len(images) == 1
+        else f"Bu {len(images)} sayfa görseli aynı ürün belgesine (katalog, teknik föy veya teknik çizim) aittir; "
+        "sayfaları birlikte değerlendirip ürünün bütün evsaflarını çıkar."
+    )
     text, resolved_model = await _openrouter_chat(
         api_key=api_key,
         models=models,
@@ -1803,11 +1821,11 @@ async def _request_openrouter_vision_analysis(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Bu görselin bütün ürün evsaflarını çıkar."},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{media_type};base64,{encoded_image}"},
-                    },
+                    {"type": "text", "text": instruction},
+                    *(
+                        {"type": "image_url", "image_url": {"url": f"data:{kind};base64,{data}"}}
+                        for data, kind in images
+                    ),
                 ],
             },
         ],
@@ -2250,14 +2268,34 @@ class CustomsAdvisor:
         image_media_type: str,
     ) -> ProductAttributeAnalysis:
         """Extract editable visual attributes without starting tariff or control research."""
-        clean_image, clean_media_type = validate_image(image_bytes, image_media_type)
-        encoded = base64.b64encode(clean_image).decode("ascii")
+        return await self.describe_images([(image_bytes, image_media_type)])
+
+    async def describe_images(
+        self,
+        images: list[tuple[bytes, str]],
+    ) -> ProductAttributeAnalysis:
+        """Same vision path as :meth:`describe_image`, for up to three related page images.
+
+        Every page is validated and re-encoded like a product photo and all pages
+        travel in one request. The result feeds the ordinary review → confirm →
+        dual-model classification flow; no tariff code is produced here.
+        """
+        if not images:
+            raise ValueError("Analiz edilecek görsel bulunamadı.")
+        if len(images) > MAX_VISION_IMAGES:
+            raise ValueError(f"Tek istekte en fazla {MAX_VISION_IMAGES} sayfa görseli analiz edilebilir.")
+        encoded_pages: list[tuple[str, str]] = []
+        for image_bytes, image_media_type in images:
+            clean_image, clean_media_type = validate_image(image_bytes, image_media_type)
+            encoded_pages.append((base64.b64encode(clean_image).decode("ascii"), clean_media_type))
         models = _openrouter_models("OPENROUTER_VISION_MODELS")
+        first_encoded, first_media_type = encoded_pages[0]
         raw, resolved_model = await _request_openrouter_vision_analysis(
             models,
             _openrouter_api_key(),
-            encoded,
-            clean_media_type,
+            first_encoded,
+            first_media_type,
+            extra_images=encoded_pages[1:],
         )
         # Provider/model and the confirmation gate are server-controlled, never
         # model-controlled. Extra model keys such as a candidate GTIP are dropped.

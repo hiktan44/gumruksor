@@ -235,7 +235,15 @@
                   <label class="field"><span>Ürün sayfası adresi (URL)</span><input id="ingestUrl" maxlength="2000" inputmode="url" placeholder="https://www.trendyol.com/..."></label>
                   <label class="field"><span>veya PDF / Word dosyası</span><input id="ingestPdf" type="file" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
                   <button class="analyse-button" type="button" id="ingestSource"><span>Belge metnini çıkar</span></button>
+                  <p class="missing-list">Metin katmanı olmayan (taranmış veya teknik çizim) PDF'lerde ilk 3 sayfa görsel olarak analiz edilir; bu işlem görsel analiz kotasını kullanır.</p>
                   <div id="ingestOutput" aria-live="polite"></div>
+                  <div class="brand-model-row" id="brandModelCheck">
+                    <label class="field"><span>Marka</span><input id="brandInput" maxlength="150" autocomplete="off" placeholder="Örn. Arçelik"></label>
+                    <label class="field"><span>Model</span><input id="modelInput" maxlength="150" autocomplete="off" placeholder="Örn. 9146 WM"></label>
+                    <button class="secondary-action" type="button" id="verifyBrandModel"><span>Sayfadan doğrula</span></button>
+                  </div>
+                  <p class="missing-list">Doğrulama için yukarıdaki ürün sayfası adresi kullanılır; otomatik web araması yapılmaz. Sonuç yalnızca marka/model metninin sayfada geçip geçmediğini gösterir.</p>
+                  <div id="brandModelOutput" aria-live="polite"></div>
                 </details>
                 <details class="advanced-fields" id="shippingIngest">
                   <summary><span>Sevkiyat belgesi ekle (konşimento, fatura, çeki listesi)</span><small>PDF veya fotoğraf · alanlar forma aktarılır</small></summary>
