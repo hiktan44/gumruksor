@@ -75,6 +75,7 @@ _HYBRID_CORPUS_LABEL = {
     "excise_tax": "ÖTV liste satırı",
     "vat_lists": "KDV liste satırı",
     "foreign_tariff": "Yurt dışı tarife tanımı",
+    "ebti": "AB Bağlayıcı Tarife Bilgisi kararı",
 }
 _SELECTED_TARIFF_RE = re.compile(r"^\d{6}(?:\d{2}){0,3}$")
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -2296,6 +2297,35 @@ def _foreign_tariff_sources(gtip: str | None, origin: str | None, as_of: str) ->
         return []
 
 
+
+def _ebti_sources(engine: Any, gtip: str | None, as_of: str, limit: int = 3) -> list["EvidenceSource"]:
+    """Aday GTİP ile eşleşen AB Bağlayıcı Tarife Bilgisi kararlarını kanıt satırına çevirir."""
+    code = re.sub(r"\D", "", str(gtip or ""))[:10]
+    if engine is None or len(code) < 6:
+        return []
+    try:
+        from ebti_decisions import BINDING_NOTE
+
+        result = engine.search(code_prefix=code[:6], limit=limit)
+        sources: list[EvidenceSource] = []
+        for hit in result.hits[:limit]:
+            excerpt = " ".join(part for part in (hit.description, hit.justification) if part)[:600]
+            sources.append(
+                EvidenceSource(
+                    id=hit.id,
+                    title=f"AB BTB {hit.reference} ({hit.issuing_country}) — {hit.code}"[:300],
+                    authority="European Commission – EBTI",
+                    url=hit.url,
+                    excerpt=f"{excerpt} ({BINDING_NOTE})"[:1000],
+                    retrieved_at=as_of,
+                )
+            )
+        return sources
+    except Exception:  # noqa: BLE001 – kanıt katmanı ön değerlendirmeyi bozmaz
+        logger.warning("EBTI kanıtı üretilemedi", exc_info=True)
+        return []
+
+
 class CustomsAdvisor:
     def __init__(
         self,
@@ -2304,6 +2334,7 @@ class CustomsAdvisor:
         control_engine: ImportControlEngine | None = None,
         classification_engine: ClassificationEvidenceEngine | None = None,
         hybrid_index: Any = None,
+        ebti_engine: Any = None,
     ) -> None:
         self.registry = registry or OfficialSourceRegistry()
         self.tariff_engine = tariff_engine
@@ -2312,6 +2343,7 @@ class CustomsAdvisor:
         # PRD Faz 3.2: opsiyonel hibrit indeks (sunucuda bağlanır). None ise sınıflandırma
         # ve ön değerlendirme akışı bugünküyle birebir aynı çalışır.
         self.hybrid_index = hybrid_index
+        self.ebti_engine = ebti_engine
 
     async def close(self) -> None:
         await self.registry.close()
@@ -2500,6 +2532,8 @@ class CustomsAdvisor:
         # oranları ayrı ``/api/foreign/tariff`` çağrısıyla istenir (ön değerlendirmeyi
         # yavaşlatmamak için burada ağ çağrısı yapılmaz).
         foreign_sources = _foreign_tariff_sources(inquiry.candidate_gtip, inquiry.origin_country, as_of)
+        # AB'nin resmî günlük yayınından gelen Bağlayıcı Tarife Bilgisi kararları (yerel indeks).
+        foreign_sources += _ebti_sources(getattr(self, "ebti_engine", None), inquiry.candidate_gtip, as_of)
         sources = [
             *await self.registry.gather(inquiry),
             *tariff_sources,

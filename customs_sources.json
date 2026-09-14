@@ -170,6 +170,12 @@
       "title": "BAZG – İsviçre Federal Gümrük ve Sınır Güvenliği Dairesi",
       "authority": "Bundesamt für Zoll und Grenzsicherheit (BAZG)",
       "url": "https://www.bazg.admin.ch/en"
+    },
+    {
+      "id": "eu_ebti_daily",
+      "title": "EBTI Daily Updates – AB Bağlayıcı Tarife Bilgisi günlük yayınları",
+      "authority": "European Commission – DG TAXUD",
+      "url": "https://ec.europa.eu/taxation_customs/dds2/ebti/daily_publications.jsp?Lang=en"
     }
   ]
 }

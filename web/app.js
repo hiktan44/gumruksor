@@ -3111,6 +3111,42 @@ function renderForeignTariff(data) {
     <p class="rate-warning">${escapeHtml(data.calculation_note || "")}</p>`;
 }
 
+function renderEbtiResults(data) {
+  const hits = data.hits || [];
+  if (!hits.length) {
+    return `<p class="missing-list">Bu kod için AB Bağlayıcı Tarife Bilgisi kararı bulunamadı.${(data.warnings || []).length ? ` ${escapeHtml(data.warnings.join(" "))}` : ""}</p>`;
+  }
+  const rows = hits.map((hit) => {
+    const validity = [hit.valid_from, hit.valid_to].filter(Boolean).join(" – ") || "—";
+    const invalid = String(hit.status || "").toUpperCase() !== "VALID";
+    return `<tr${invalid ? ' class="savings-negative"' : ""}>
+      <td><a href="${escapeHtml(hit.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(hit.reference)}</a><br><small>${escapeHtml(hit.issuing_country)} · ${escapeHtml(hit.language || "")}${invalid ? " · geçersiz" : ""}</small></td>
+      <td><b>${escapeHtml(hit.code)}</b><br><small>${escapeHtml(validity)}</small></td>
+      <td>${escapeHtml(String(hit.description || "").slice(0, 300))}</td>
+      <td><small>${escapeHtml(String(hit.justification || "").slice(0, 300))}</small></td>
+    </tr>`;
+  }).join("");
+  return `<div class="answer-head"><span class="answer-status">${hits.length} karar</span><div><h2>AB Bağlayıcı Tarife Bilgisi kararları</h2><p>${escapeHtml(data.binding_note || "")}</p></div></div>
+    <div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Karar</th><th>Kod / geçerlilik</th><th>Eşya tanımı</th><th>Sınıflandırma gerekçesi</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+$("#ebtiSearch")?.addEventListener("click", async () => {
+  const output = $("#ebtiOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const gtip = $("#tariffGtip").value.trim();
+  if (!gtip || gtip.replace(/\D/g, "").length < 4) {
+    output.innerHTML = '<p class="missing-list">AB karar araması için en az 4 haneli bir kod girin.</p>';
+    return;
+  }
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>AB kararları aranıyor</b><span>Komisyonun günlük BTB yayınından süzülüyor…</span></div></div>';
+  try {
+    const data = await fetchJson(`/api/foreign/ebti?gtip=${encodeURIComponent(gtip)}`);
+    output.innerHTML = renderEbtiResults(data);
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+});
+
 $("#foreignCompare")?.addEventListener("click", async () => {
   const output = $("#foreignOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }

@@ -200,6 +200,24 @@ yayımlamadığı için ürün bu farkı gizlemez:
   `data/official/foreign_tariff_links.json` kataloğundan sorguyu resmî ekranda hazır açan
   doğrulanmış derin bağlantılar üretilir ve arayüzde "otomatik oran alınamıyor" notu görünür.
 
+**AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
+ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir
+ZIP/CSV dosyası olarak **herkese açık** yayımlar (giriş gerekmez). `ebti-sync` döngüsü listeyi okur,
+henüz alınmamış günlük dosyaları en eskiden başlayarak indirir (koşu başına `EBTI_MAX_FILES_PER_RUN`
+dosya), ZIP'i güvenli biçimde açar (yalnız `.csv` üye, zip-slip ve açılmış boyut denetimi) ve
+kararları `ebti_decisions.sqlite3` içindeki FTS5 indeksine yazar. Her dosya bir anlık görüntüdür;
+inceleme kapısından geçer (`review_service.engines["ebti"]`) ve yalnız onaylı yayınların kararları
+aramada görünür. Her satır: karar referansı, veren ülke, geçerlilik aralığı, nomenklatür kodu,
+**sınıflandırma gerekçesi** (GİR kuralları, fasıl notları, AS İzahnamesi, sınıflandırma tüzükleri),
+eşya tanımı ve anahtar kelimeler.
+
+İki kural koda gömülüdür: **`NAME_AND_ADDRESS` sütunu hiç saklanmaz** (sınıflandırma için gereksiz,
+kişisel veriye komşu), ve her yanıt "bu kararlar Türkiye'de bağlayıcı değildir" notunu taşır.
+Kararlar veren ülkenin dilinde yazılır; diller arası güvenilir anahtar nomenklatür kodudur.
+Rotalar: `GET /api/foreign/ebti?gtip=&q=&limit=` ve `GET /api/foreign/ebti/status`; MCP tarafında
+`search_eu_bti_decisions`. Kararlar hibrit indekse `ebti` korpusu olarak beslenir ve ön
+değerlendirmede aday GTİP ile eşleşenler kanıt defterine `ebti_…` kimlikli kaynak olarak girer.
+
 Eşleşme HS-6 düzeyindedir (Türk 12 haneli GTİP'inin ilk 6 hanesi ortaktır; sonraki haneler ulusaldır
 ve eşleştirilmez). **Hiçbir yurt dışı oran `calculate_landed_cost` girdisine aktarılmaz**; Türkiye
 maliyeti yalnız Türk resmî anlık görüntüleriyle hesaplanır. Her dış çağrı
