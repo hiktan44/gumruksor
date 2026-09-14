@@ -11,9 +11,10 @@ Bu modül, aradaki boşluğu kullanıcının seçtiği yoldan kapatır: Apify'da
 çıkarımını** işleyip yapılandırılmış ölçü satırları döndürüyor. Aktör sorgu başına
 ücretli olduğu için:
 
-* her sorgu **kalıcı arşive** yazılır ve aynı kod × ülke × ay için bir daha ücret
-  ödenmez (kaynak zaten aylık anlık görüntü olduğundan bu doğru davranıştır),
-* arka planda **kendiliğinden dolum yapılmaz** — yalnız kullanıcı istediğinde çağrılır,
+* her sorgu **kalıcı arşive** yazılır; alınan bir kod × ülke çifti ``EU_TARIC_REFRESH_DAYS``
+  boyunca taze sayılır ve o süre dolmadan — hangi takvim ayında olursa olsun — yeniden
+  ücretlendirilmez,
+* toplu dolum ancak açıkça etkinleştirilip aylık harcama tavanı verilirse çalışır,
 * jeton yalnız ortam değişkeninden okunur, günlüğe ve hata metnine asla yazılmaz.
 
 Ölçü satırlarından türetilen özet (üçüncü ülke vergisi, menşeye özgü tercihli oran,
@@ -33,7 +34,7 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -75,7 +76,13 @@ def _env_int(name: str, default: int) -> int:
 
 # --- Toplu dolum (tüm fasıllar) ------------------------------------------------
 # Kaynak sorgu başına ücretli olduğundan dolum üç kapıdan geçer: açık olmalı, aylık
-# harcama tavanı aşılmamış olmalı ve aynı kod × ülke × ay arşivde bulunmamalı.
+# harcama tavanı aşılmamış olmalı ve çift arşivde **taze** olmamalı.
+#
+# Tazelik takvim ayına değil kaydın **yaşına** bakar. Bir kez indirilen kod × ülke
+# çifti kalıcıdır; yalnız EU_TARIC_REFRESH_DAYS geçtikten sonra yeniden sorgulanır.
+# (Takvim ayına bakan bir kural, ayın 1'inde tüm katalogu yeniden satın almak
+# demekti: kaynak o ay yeni çıkarım yayımlamamışsa aynı satır aynı anahtara
+# yeniden yazılır, para gider ve tek bir yeni bilgi gelmezdi.)
 EU_TARIC_FILL_ENABLED = _env_flag("EU_TARIC_FILL_ENABLED")
 EU_TARIC_FILL_LEVEL = (os.environ.get("EU_TARIC_FILL_LEVEL") or "hs10").strip().lower()
 EU_TARIC_FILL_ORIGINS = os.environ.get("EU_TARIC_FILL_ORIGINS") or "TR"
@@ -84,6 +91,11 @@ EU_TARIC_FILL_INTERVAL_SECONDS = max(60.0, _env_float("EU_TARIC_FILL_INTERVAL_SE
 # Varsayılan 0: tavan açıkça verilmeden hiçbir dolum sorgusu yapılmaz.
 EU_TARIC_MONTHLY_BUDGET_USD = max(0.0, _env_float("EU_TARIC_MONTHLY_BUDGET_USD", 0.0))
 EU_TARIC_UNIT_COST_USD = max(0.0, _env_float("EU_TARIC_UNIT_COST_USD", 0.015))
+# Alınmış bir çift bu kadar gün taze sayılır; AB oranları ağırlıkla 1 Ocak'taki yıllık
+# güncellemede değişir, damping/kota önlemleri yıl içinde de değişebilir.
+EU_TARIC_REFRESH_DAYS = max(1, _env_int("EU_TARIC_REFRESH_DAYS", 90))
+# AB'de beyana elverişli olmayan kod her turda değil, bu aralıkla yeniden yoklanır.
+EU_TARIC_NOT_DECLARABLE_RETRY_DAYS = max(1, _env_int("EU_TARIC_NOT_DECLARABLE_RETRY_DAYS", 180))
 
 _FILL_LEVELS: dict[str, int] = {"hs6": 6, "hs8": 8, "cn8": 8, "hs10": 10, "taric10": 10}
 
@@ -149,6 +161,15 @@ def _valid_token(value: Any) -> str:
     if any(ord(ch) < 33 or ord(ch) > 126 for ch in token):
         return ""
     return token
+
+
+def parse_iso_datetime(value: Any) -> datetime | None:
+    """Arşivdeki ISO damgasını okur; bozuk değer yaşı hesaplanamaz sayılır."""
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _now() -> str:
@@ -303,6 +324,8 @@ class EuTaricResult:
     summary: dict[str, Any] = field(default_factory=dict)
     fetched_at: str | None = None
     from_archive: bool = False
+    age_days: int | None = None
+    stale: bool = False
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -313,6 +336,8 @@ class EuTaricResult:
             "summary": self.summary,
             "fetched_at": self.fetched_at,
             "from_archive": self.from_archive,
+            "age_days": self.age_days,
+            "stale": self.stale,
             "warnings": self.warnings,
             "source_note": SOURCE_NOTE,
             "conditional_note": CONDITIONAL_NOTE,
@@ -350,6 +375,8 @@ class EuTaricEngine:
         fill_batch: int = EU_TARIC_FILL_BATCH,
         monthly_budget_usd: float | None = None,
         unit_cost_usd: float = EU_TARIC_UNIT_COST_USD,
+        refresh_days: int = EU_TARIC_REFRESH_DAYS,
+        not_declarable_retry_days: int = EU_TARIC_NOT_DECLARABLE_RETRY_DAYS,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
         root.mkdir(parents=True, exist_ok=True)
@@ -376,6 +403,8 @@ class EuTaricEngine:
             0.0, EU_TARIC_MONTHLY_BUDGET_USD if monthly_budget_usd is None else float(monthly_budget_usd)
         )
         self.unit_cost_usd = max(0.0, float(unit_cost_usd or 0.0))
+        self.refresh_days = max(1, int(refresh_days or 1))
+        self.not_declarable_retry_days = max(1, int(not_declarable_retry_days or 1))
         self._fill_lock = asyncio.Lock()
         self._fill_errors: list[str] = []
         self._initialise()
@@ -493,6 +522,23 @@ class EuTaricEngine:
         return [item for item in items if isinstance(item, dict)]
 
     # ---- sorgu
+    def _apply_archive(self, result: "EuTaricResult", archived: dict[str, Any]) -> None:
+        """Arşiv kaydını sonuca yazar ve yaşını bildirir (bayat kayıt gizlenmez, işaretlenir)."""
+        result.status = "ok"
+        result.summary = archived["summary"]
+        result.fetched_at = archived["fetched_at"]
+        result.from_archive = True
+        fetched = parse_iso_datetime(archived["fetched_at"])
+        if fetched is not None:
+            age = (datetime.now(UTC) - fetched).days
+            result.age_days = max(0, age)
+            if age > self.refresh_days:
+                result.stale = True
+                result.warnings.append(
+                    f"Bu özet {archived['fetched_at'][:10]} tarihinde alındı ({result.age_days} gün önce); "
+                    "AB verisi o tarihten sonra değişmiş olabilir."
+                )
+
     async def lookup(self, gtip: str, *, origin: str = "TR", refresh: bool = False) -> EuTaricResult:
         code = normalise_goods_code(gtip)
         partner = (str(origin or "TR").strip().upper() or "TR")[:4]
@@ -502,10 +548,7 @@ class EuTaricEngine:
         if not refresh:
             archived = self.archived(code, partner)
             if archived is not None:
-                result.status = "ok"
-                result.summary = archived["summary"]
-                result.fetched_at = archived["fetched_at"]
-                result.from_archive = True
+                self._apply_archive(result, archived)
                 return result
         if not self.enabled or not self._token:
             result.status = "disabled"
@@ -523,10 +566,7 @@ class EuTaricEngine:
                 result.warnings.append(f"AB TARIC verisi alınamadı: {message}")
                 archived = self.archived(code, partner)
                 if archived is not None:
-                    result.status = "ok"
-                    result.summary = archived["summary"]
-                    result.fetched_at = archived["fetched_at"]
-                    result.from_archive = True
+                    self._apply_archive(result, archived)
                     result.warnings.append("Arşivdeki son bilinen AB verisi gösteriliyor.")
                 return result
         match = next((item for item in items if _digits(item.get("goodsCode")) == code), None) or (items[0] if items else None)
@@ -600,42 +640,96 @@ class EuTaricEngine:
             return []
         return candidate_codes(codes, level=self.fill_level)
 
-    def _done_pairs(self, period: str) -> set[tuple[str, str]]:
+    def _cutoff(self, days: int) -> str:
+        return (datetime.now(UTC) - timedelta(days=int(days))).isoformat(timespec="seconds")
+
+    def _recent_attempts(self) -> set[tuple[str, str]]:
+        """Son denemesi hâlâ geçerli sayılan çiftler; takvim ayı değil, denemenin yaşı belirler.
+
+        ``ok`` satırı ``refresh_days``, ``not_declarable`` satırı ``not_declarable_retry_days``
+        boyunca çifti kuyruk dışında tutar. Başarısız tur zaten hiç kaydedilmez.
+        """
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT goods_code, partner_country FROM fill_attempts WHERE period=?", (period,)
+                "SELECT goods_code, partner_country, status, MAX(attempted_at) AS attempted_at "
+                "FROM fill_attempts GROUP BY goods_code, partner_country",
+            ).fetchall()
+        fresh_cutoff = self._cutoff(self.refresh_days)
+        retry_cutoff = self._cutoff(self.not_declarable_retry_days)
+        pairs: set[tuple[str, str]] = set()
+        for row in rows:
+            attempted = str(row["attempted_at"] or "")
+            cutoff = retry_cutoff if row["status"] == "not_declarable" else fresh_cutoff
+            if attempted >= cutoff:
+                pairs.add((row["goods_code"], row["partner_country"]))
+        return pairs
+
+    def _fresh_pairs(self) -> set[tuple[str, str]]:
+        """Arşivde tazeliği sürenler: hangi ay alınmış olursa olsun yeniden ücret ödenmez."""
+        cutoff = self._cutoff(self.refresh_days)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT goods_code, partner_country FROM lookups "
+                "GROUP BY goods_code, partner_country HAVING MAX(fetched_at) >= ?",
+                (cutoff,),
             ).fetchall()
         return {(row["goods_code"], row["partner_country"]) for row in rows}
 
-    def _archived_pairs(self, period: str) -> set[tuple[str, str]]:
-        """Bu ay zaten (talep üzerine) alınmış kod × ülke çiftleri: bir daha ücret ödenmez."""
+    def _stored_pairs(self) -> set[tuple[str, str]]:
+        """Yaşı ne olursa olsun bir kez alınmış çiftler (hiç alınmamışları ayırmak için)."""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT goods_code, partner_country FROM lookups WHERE substr(fetched_at,1,7)=?", (period,)
+                "SELECT DISTINCT goods_code, partner_country FROM lookups"
             ).fetchall()
         return {(row["goods_code"], row["partner_country"]) for row in rows}
+
+    def _queue(self, codes: list[str], limit: int | None = None) -> tuple[list[tuple[str, str]], int, int, int]:
+        """Sıradaki çiftler: önce hiç alınmamışlar, sonra tazeliği geçenler (``foreign_tariff`` deseni).
+
+        Döner: (kuyruk, hiç alınmamış sayısı, tazelemesi gelen sayısı, atlanan taze sayısı).
+        """
+        held = self._recent_attempts() | self._fresh_pairs()
+        stored = self._stored_pairs()
+        never: list[tuple[str, str]] = []
+        due: list[tuple[str, str]] = []
+        skipped = 0
+        for code in codes:
+            for origin in self.fill_origins:
+                pair = (code, origin)
+                if pair in held:
+                    skipped += 1
+                    continue
+                (due if pair in stored else never).append(pair)
+        queue = never + due
+        if limit is not None:
+            queue = queue[: max(0, int(limit))]
+        return queue, len(never), len(due), skipped
 
     def fill_plan(self) -> dict[str, Any]:
-        """Dolumun mevcut durumu: aday sayısı, kalan iş ve tahmini aylık maliyet (ücretsiz)."""
+        """Dolumun mevcut durumu: aday sayısı, kalan iş ve tahmini maliyet (ücret doğurmaz)."""
         period = month_key()
         codes = self.candidates()
         origins = self.fill_origins
         total = len(codes) * len(origins)
-        done = self._done_pairs(period) | self._archived_pairs(period)
-        pending = sum(1 for code in codes for origin in origins if (code, origin) not in done)
-        spend = self.spend_status(period)
+        _, never, due, _ = self._queue(codes)
+        # Katalog dolduktan sonraki yinelenen maliyet: her çift refresh_days'te bir tazelenir.
+        monthly = (total * self.unit_cost_usd * 30.0 / self.refresh_days) if self.refresh_days else 0.0
         return {
             "enabled": bool(self.fill_enabled and self.enabled and self._token and self.monthly_budget_usd > 0),
             "level": self.fill_level,
             "origins": list(origins),
             "candidate_codes": len(codes),
             "total_pairs": total,
-            "completed_pairs": total - pending,
-            "pending_pairs": pending,
+            "completed_pairs": total - never - due,
+            "pending_pairs": never,
+            "refresh_due_pairs": due,
+            "refresh_days": self.refresh_days,
+            "not_declarable_retry_days": self.not_declarable_retry_days,
             "batch": self.fill_batch,
             "estimated_total_usd": round(total * self.unit_cost_usd, 2),
-            "estimated_pending_usd": round(pending * self.unit_cost_usd, 2),
-            "spend": spend,
+            "estimated_pending_usd": round((never + due) * self.unit_cost_usd, 2),
+            "estimated_monthly_usd": round(monthly, 2),
+            "spend": self.spend_status(period),
             "errors": self._fill_errors[-5:],
         }
 
@@ -651,28 +745,10 @@ class EuTaricEngine:
             codes = await asyncio.to_thread(self.candidates)
             if not codes:
                 return {"status": "no_candidates", "period": period, "requested": 0, "fetched": 0, "charged": 0}
-            done = await asyncio.to_thread(self._done_pairs, period)
-            archived = await asyncio.to_thread(self._archived_pairs, period)
             budget = min(int(limit or self.fill_batch), spend["remaining_lookups"])
-            pending: list[tuple[str, str]] = []
-            skipped: list[tuple[str, str, str, str]] = []
-            for code in codes:
-                for origin in self.fill_origins:
-                    pair = (code, origin)
-                    if pair in done:
-                        continue
-                    if pair in archived:
-                        skipped.append((code, origin, "archived", "talep üzerine zaten alınmış"))
-                        continue
-                    pending.append(pair)
-                    if len(pending) >= budget:
-                        break
-                if len(pending) >= budget:
-                    break
-            if skipped:
-                await asyncio.to_thread(self._record_attempts, period, skipped)
+            pending, _, _, skipped = await asyncio.to_thread(self._queue, codes, budget)
             if not pending:
-                return {"status": "complete", "period": period, "requested": 0, "fetched": 0, "charged": 0, "skipped": len(skipped)}
+                return {"status": "complete", "period": period, "requested": 0, "fetched": 0, "charged": 0, "skipped": skipped}
 
             fetched = 0
             charged = 0
@@ -726,7 +802,7 @@ class EuTaricEngine:
                 "charged": charged,
                 "not_declarable": missing,
                 "failed": failed,
-                "skipped": len(skipped),
+                "skipped": skipped,
                 "spend": self.spend_status(period),
             }
 
@@ -773,9 +849,12 @@ __all__ = [
     "EU_TARIC_FILL_INTERVAL_SECONDS",
     "EU_TARIC_FILL_LEVEL",
     "EU_TARIC_MONTHLY_BUDGET_USD",
+    "EU_TARIC_NOT_DECLARABLE_RETRY_DAYS",
+    "EU_TARIC_REFRESH_DAYS",
     "EU_TARIC_UNIT_COST_USD",
     "candidate_codes",
     "month_key",
+    "parse_iso_datetime",
     "EuTaricEngine",
     "EuTaricResult",
     "KIND_LABELS",

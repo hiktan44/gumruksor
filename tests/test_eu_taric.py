@@ -403,6 +403,96 @@ class FillTests(unittest.TestCase):
         report = asyncio.run(engine.fill_once())
         self.assertEqual(report["status"], "no_candidates")
 
+    def _age_rows(self, engine, days: int) -> None:
+        """Arşiv ve deneme kayıtlarını geriye taşır (saat dondurmak yerine veriyi yaşlandırır)."""
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        moment = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+        with sqlite3.connect(engine.db_path) as connection:
+            connection.execute("UPDATE lookups SET fetched_at=?", (moment,))
+            connection.execute("UPDATE fill_attempts SET attempted_at=?", (moment,))
+
+    def test_new_calendar_month_does_not_re_buy_stored_data(self):
+        # Asıl gerileme: dedupe takvim ayına bakarsa ayın 1'inde tüm katalog yeniden satın alınır.
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.fill_once())
+        calls_after_first = len(self.calls)
+        self._age_rows(engine, 40)  # bir sonraki takvim ayı, ama tazelik süresi dolmadı
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(len(self.calls), calls_after_first, "ay değişince aynı veri yeniden alınmamalı")
+        self.assertEqual(engine.spend_status()["lookups"], 1)
+
+    def test_pair_is_refreshed_once_after_the_refresh_window(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.fill_once())
+        self._age_rows(engine, 91)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["fetched"], 1)
+        self.assertEqual(report["charged"], 1)
+        # Tazelendikten hemen sonra yeniden alınmaz.
+        self.assertEqual(asyncio.run(engine.fill_once())["status"], "complete")
+
+    def test_not_declarable_is_retried_only_after_the_longer_window(self):
+        engine = self._engine(codes=("851713000000",), origins="TR", items=[])
+        asyncio.run(engine.fill_once())
+        calls_after_first = len(self.calls)
+        self._age_rows(engine, 91)
+        self.assertEqual(asyncio.run(engine.fill_once())["status"], "complete")
+        self.assertEqual(len(self.calls), calls_after_first)
+        self._age_rows(engine, 181)
+        again = asyncio.run(engine.fill_once())
+        self.assertEqual(again["not_declarable"], 1)
+        self.assertGreater(len(self.calls), calls_after_first)
+
+    def test_never_fetched_codes_come_before_refresh_due_ones(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.fill_once())
+        self._age_rows(engine, 91)
+        engine.code_source = lambda: ["610910001000", "851713000000"]
+        queue, never, due, _ = engine._queue(engine.candidates())
+        self.assertEqual(never, 1)
+        self.assertEqual(due, 1)
+        self.assertEqual(queue[0], ("8517130000", "TR"), "hiç alınmamış kod önce gelmeli")
+
+    def test_plan_separates_pending_from_refresh_due_and_estimates_monthly_cost(self):
+        engine = self._engine(
+            codes=("610910001000", "851713000000"), origins="TR",
+            items=[_item("6109100010"), _item("8517130000")],
+        )
+        plan = engine.fill_plan()
+        self.assertEqual(plan["pending_pairs"], 2)
+        self.assertEqual(plan["refresh_due_pairs"], 0)
+        self.assertEqual(plan["refresh_days"], 90)
+        # 2 çift x $0,015, 90 günde bir tazeleme -> aylık pay 30/90.
+        self.assertAlmostEqual(plan["estimated_monthly_usd"], 0.01)
+        asyncio.run(engine.fill_once())
+        self._age_rows(engine, 91)
+        plan = engine.fill_plan()
+        self.assertEqual(plan["pending_pairs"], 0)
+        self.assertEqual(plan["refresh_due_pairs"], 2)
+
+    def test_lookup_flags_a_stale_archive_without_calling_the_actor(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.lookup("610910001000", origin="TR"))
+        calls_after_lookup = len(self.calls)
+        self._age_rows(engine, 120)
+        payload = asyncio.run(engine.lookup("610910001000", origin="TR")).as_dict()
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["from_archive"])
+        self.assertTrue(payload["stale"])
+        self.assertGreaterEqual(payload["age_days"], 119)
+        self.assertTrue(any("gün önce" in item for item in payload["warnings"]))
+        self.assertEqual(len(self.calls), calls_after_lookup, "bayat arşiv için ücretli çağrı yapılmamalı")
+
+    def test_fresh_archive_is_not_flagged_stale(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.lookup("610910001000", origin="TR"))
+        payload = asyncio.run(engine.lookup("610910001000", origin="TR")).as_dict()
+        self.assertFalse(payload["stale"])
+        self.assertEqual(payload["age_days"], 0)
+
     def test_fill_tables_are_added_to_an_existing_database(self):
         # Eski şemalı veritabanı: ALTER TABLE korumalı göç sütunları eklemeli.
         import sqlite3
