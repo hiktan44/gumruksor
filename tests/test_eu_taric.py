@@ -251,5 +251,184 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(status["latest_snapshot_month"], "2026-09")
 
 
+class CandidateTests(unittest.TestCase):
+    def test_hs10_keeps_taric_subdivision_and_drops_national_digits(self):
+        codes = et.candidate_codes(["610910001000", "6109.10.00.11.00", "851713000000"], level="hs10")
+        self.assertEqual(codes, ["6109100010", "6109100011", "8517130000"])
+
+    def test_hs6_collapses_to_chapter_subheading(self):
+        codes = et.candidate_codes(["610910001000", "610910009000", "851713000000"], level="hs6")
+        self.assertEqual(codes, ["6109100000", "8517130000"])
+
+    def test_cn8_level_zeroes_taric_digits(self):
+        self.assertEqual(et.candidate_codes(["610910001000"], level="cn8"), ["6109100000"])
+
+    def test_short_and_empty_codes_are_skipped(self):
+        self.assertEqual(et.candidate_codes(["6109", "", None, "61091000"], level="hs10"), ["6109100000"])
+
+    def test_parse_origins_normalises(self):
+        self.assertEqual(et._parse_origins("tr, cn ;tr"), ("TR", "CN"))
+        self.assertEqual(et._parse_origins(["TR", "us"]), ("TR", "US"))
+        self.assertEqual(et._parse_origins(None), ())
+
+
+class FillTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.calls: list[dict] = []
+
+    def _engine(self, *, codes=("610910001000", "851713000000"), origins="TR,CN", budget=10.0,
+                batch=10, items=None, status=200, fill_enabled=True) -> et.EuTaricEngine:
+        client = httpx.AsyncClient(transport=_transport(self.calls, status=status, items=items))
+        engine = et.EuTaricEngine(
+            self._tmp.name,
+            http=client,
+            token="test-token",
+            enabled=True,
+            code_source=lambda: list(codes),
+            fill_enabled=fill_enabled,
+            fill_level="hs10",
+            fill_origins=origins,
+            fill_batch=batch,
+            monthly_budget_usd=budget,
+            unit_cost_usd=0.015,
+        )
+        self.addCleanup(lambda: asyncio.run(engine.close()))
+        return engine
+
+    def test_plan_counts_pairs_and_estimates_cost(self):
+        engine = self._engine()
+        plan = engine.fill_plan()
+        self.assertTrue(plan["enabled"])
+        self.assertEqual(plan["candidate_codes"], 2)
+        self.assertEqual(plan["origins"], ["TR", "CN"])
+        self.assertEqual(plan["total_pairs"], 4)
+        self.assertEqual(plan["pending_pairs"], 4)
+        self.assertEqual(plan["estimated_total_usd"], 0.06)
+
+    def test_fill_stores_results_and_records_spend(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["fetched"], 1)
+        self.assertEqual(report["charged"], 1)
+        self.assertEqual(report["spend"]["lookups"], 1)
+        self.assertAlmostEqual(report["spend"]["spent_usd"], 0.015)
+        archived = engine.archived("6109100010", "TR")
+        self.assertIsNotNone(archived)
+        self.assertEqual(archived["summary"]["mfn_rate"], "12.00 %")
+
+    def test_second_run_does_not_pay_for_the_same_pair_again(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.fill_once())
+        calls_after_first = len(self.calls)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(len(self.calls), calls_after_first)
+        self.assertEqual(engine.spend_status()["lookups"], 1)
+
+    def test_budget_cap_stops_the_fill(self):
+        # Tavan tek sorguya yeter: ikinci çift bu ay hiç denenmez.
+        engine = self._engine(codes=("610910001000", "851713000000"), origins="TR", budget=0.015, batch=10)
+        first = asyncio.run(engine.fill_once())
+        self.assertEqual(first["requested"], 1)
+        second = asyncio.run(engine.fill_once())
+        self.assertEqual(second["status"], "budget_exhausted")
+        self.assertEqual(second["requested"], 0)
+
+    def test_zero_budget_never_spends(self):
+        engine = self._engine(budget=0.0)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "budget_exhausted")
+        self.assertEqual(self.calls, [])
+        self.assertFalse(engine.fill_plan()["enabled"])
+
+    def test_disabled_fill_does_nothing(self):
+        engine = self._engine(fill_enabled=False)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "disabled")
+        self.assertEqual(self.calls, [])
+
+    def test_code_without_result_is_marked_not_declarable_and_not_charged(self):
+        engine = self._engine(codes=("851713000000",), origins="TR", items=[])
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["not_declarable"], 1)
+        self.assertEqual(report["charged"], 0)
+        self.assertEqual(engine.spend_status()["lookups"], 0)
+        # Aynı ay içinde tekrar denenmez (boşuna çağrı yapılmaz).
+        again = asyncio.run(engine.fill_once())
+        self.assertEqual(again["status"], "complete")
+
+    def test_failed_chunk_is_retried_next_run(self):
+        engine = self._engine(codes=("610910001000",), origins="TR", status=500)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(engine.spend_status()["lookups"], 0)
+        self.assertEqual(engine.fill_plan()["pending_pairs"], 1)
+
+    def test_pairs_already_fetched_on_demand_are_skipped_without_paying(self):
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        asyncio.run(engine.lookup("610910001000", origin="TR"))
+        calls_after_lookup = len(self.calls)
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["skipped"], 1)
+        self.assertEqual(len(self.calls), calls_after_lookup)
+        self.assertEqual(engine.spend_status()["lookups"], 0)
+
+    def test_batch_limits_codes_per_actor_call(self):
+        codes = [f"61091000{index:02d}00" for index in range(12)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=12)
+        items = [_item(f"61091000{index:02d}") for index in range(12)]
+        engine._http = httpx.AsyncClient(transport=_transport(self.calls, items=items))
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["requested"], 12)
+        # Aktöre tek seferde en fazla EU_TARIC_MAX_CODES kod gönderilir.
+        self.assertGreater(len(self.calls), 1)
+        for call in self.calls:
+            self.assertLessEqual(len(call["body"]["goodsCodes"]), et.EU_TARIC_MAX_CODES)
+
+    def test_status_includes_fill_block(self):
+        engine = self._engine()
+        status = engine.status()
+        self.assertIn("fill", status)
+        self.assertEqual(status["fill"]["level"], "hs10")
+
+    def test_missing_code_source_yields_no_candidates(self):
+        client = httpx.AsyncClient(transport=_transport(self.calls))
+        engine = et.EuTaricEngine(self._tmp.name, http=client, token="t", enabled=True,
+                                  fill_enabled=True, monthly_budget_usd=5.0)
+        self.addCleanup(lambda: asyncio.run(engine.close()))
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["status"], "no_candidates")
+
+    def test_fill_tables_are_added_to_an_existing_database(self):
+        # Eski şemalı veritabanı: ALTER TABLE korumalı göç sütunları eklemeli.
+        import sqlite3
+
+        path = Path(self._tmp.name) / "eu_taric.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE lookups (
+                    goods_code TEXT NOT NULL, partner_country TEXT NOT NULL,
+                    snapshot_month TEXT NOT NULL DEFAULT '', summary_json TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (goods_code, partner_country, snapshot_month)
+                );
+                CREATE TABLE fill_spend (period TEXT PRIMARY KEY, lookups INTEGER NOT NULL DEFAULT 0,
+                    usd REAL NOT NULL DEFAULT 0);
+                INSERT INTO fill_spend(period,lookups,usd) VALUES('2026-08', 3, 0.045);
+                """
+            )
+        engine = self._engine(codes=("610910001000",), origins="TR")
+        with sqlite3.connect(engine.db_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(fill_spend)")}
+            rows = connection.execute("SELECT lookups FROM fill_spend WHERE period='2026-08'").fetchall()
+        self.assertIn("updated_at", columns)
+        self.assertEqual(rows[0][0], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

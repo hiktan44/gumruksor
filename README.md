@@ -226,6 +226,20 @@ yalnız ortam değişkeninden okunur, `Authorization` başlığıyla gönderilir
 hiçbir hata metnine veya günlüğe sızmaz; başlıkta taşınamayacak bir jeton sessizce çökmek yerine
 temiz bir "kapalı" durumu üretir.
 
+**Tüm fasılları kapsayan toplu dolum** (`EU_TARIC_FILL_ENABLED=1`) aday kodları Türk tarife
+cetvelinden türetir: GTİP'in ilk 8 hanesi AB Kombine Nomanklatürü, 9-10. haneleri AB'nin TARIC
+alt açılımı, 11-12. haneleri ulusaldır — bu yüzden `hs10` düzeyinde ilk 10 hane doğrudan AB'de
+sorgulanacak koddur (`hs6` düzeyi daha kaba ve daha ucuzdur). Dolum üç kapıdan geçer: döngü
+açık olmalı, **aylık harcama tavanı** (`EU_TARIC_MONTHLY_BUDGET_USD`, varsayılan `0` = hiç
+sorgu yok) aşılmamış olmalı ve aynı kod × ülke çifti bu ay arşivde bulunmamalıdır. Her tur
+`EU_TARIC_FILL_BATCH` kadar çift işler, aktöre tek çağrıda en fazla `EU_TARIC_MAX_CODES` kod
+gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. AB'de beyana elverişli
+olmayan kod `not_declarable` olarak işaretlenir (aktör bunları ücretlendirmez) ve o ay tekrar
+denenmez; başarısız tur hiç kaydedilmez, bir sonraki turda yeniden denenir. Yönetici
+`GET /api/admin/eu-taric/fill` ile aday sayısını, kalan işi ve tahmini maliyeti **ücret
+doğurmadan** görebilir, `POST` ile tek turluk dolum çalıştırabilir; `/health` içinde
+`eu_taric_fill_pending` ve `eu_taric_fill_total` alanları ilerlemeyi gösterir.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir

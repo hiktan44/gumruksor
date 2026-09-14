@@ -57,7 +57,7 @@ from foreign_tariff import (
     ForeignTariffEngine,
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
-from eu_taric import EuTaricEngine
+from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
 from classification_evidence import (
@@ -103,8 +103,11 @@ classification_engine = ClassificationEvidenceEngine()
 foreign_tariff_engine = ForeignTariffEngine()
 # AB Bağlayıcı Tarife Bilgisi kararları (resmî günlük yayın akışı).
 ebti_engine = EbtiDecisionEngine()
-# AB TARIC oranları: sorgu başına ücretli dış kaynak; yalnız talep üzerine çağrılır.
-eu_taric_engine = EuTaricEngine()
+# AB TARIC oranları: sorgu başına ücretli dış kaynak; talep üzerine ve tavanlı toplu dolumla.
+eu_taric_engine = EuTaricEngine(
+    # Aday AB kodları Türk tarife cetvelinden türetilir: GTİP'in ilk 10 hanesi AB TARIC kodudur.
+    code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
+)
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -161,6 +164,9 @@ if EBTI_SYNC_ENABLED:
 if FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED:
     # BK oranları yalnız emtia başına yayımlanıyor; arşiv kaynağı yormadan kademeli dolar.
     BACKGROUND_LOOPS.append(("uk-measures-archive", foreign_tariff_engine.measures_archive_loop))
+if EU_TARIC_FILL_ENABLED:
+    # AB oranları kod × ülke başına ücretlidir; döngü aylık harcama tavanına kadar ilerler.
+    BACKGROUND_LOOPS.append(("eu-taric-fill", eu_taric_engine.fill_loop))
 
 
 async def backfill_change_ledger() -> None:
