@@ -182,6 +182,17 @@ döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBR
 sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
 LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
 
+Sınıflandırma ve ön değerlendirme bu indeksten **dipnotlu kanıt** alır. `classify_product` model
+çağrısından önce ürün tanımı ve evsaf metniyle nomenklatür/tarife tanımları, AB tüzük sayfaları ve
+önlem ürün tanımları korpuslarından en iyi 8 belgeyi çeker; belgeler isteme `official_evidence`
+bloğu olarak `hyb_…` kimlikleriyle girer ve model yanıtındaki `evidence_ids` yalnız verilen kimlik
+kümesine karşı temizlenir (uydurma kimlik düşer, aday başına en fazla 5). Buna ek olarak aday GTİP
+ön ekiyle örtüşen indeks belgeleri deterministik `nomenclature_matches` olarak hesaplanır ve eşleşen
+adayın güven puanı +10 artar. `evidence_pack` ise soru ve ürün tanımı için kanıt defterine en fazla
+6 `hyb_…` kaynağı ekler; alıntılar modele `sanitize_untrusted_context` sonrası gider ve arayüzde bu
+kaynaklar "anlamsal eşleşme" rozetiyle görünür. Hibrit indeks bağlı değilse ya da gömme sağlayıcısı
+yoksa hiçbir kanıt eklenmez; istem ve çıktı bugünküyle birebir aynı kalır.
+
 Arayüzde Ticaret Bakanlığının yedi bilgi katmanı canlı kayıt sayılarıyla ayrı gösterilir; kaynak, belge türü, yıl ve mülga durumu filtrelenebilir. Seçilen kaydın resmî kaynak zinciri, tam metni ve kopyalanabilir atfı aynı ekranda açılır. **Genel mevzuat** görünümü Bedesten resmî servisine bağlı ayrı arama alanıdır.
 
 > Coolify dağıtımı v1.8.0 sağlık, web arayüzü ve MCP araç taramasıyla doğrulanır. Snapshot verilerini kalıcı tutmak için uygulamada `/data` hedefine persistent volume bağlayın; imaj `MEVZUAT_DATA_DIR=/data` ile hazır gelir.

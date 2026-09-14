@@ -531,6 +531,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .source-ledger code { color: var(--teal); font-family: var(--mono); font-size: .52rem; }
 .source-ledger b { display: block; font-size: .61rem; }
 .source-ledger small { display: block; margin-top: 2px; color: var(--ink-3); font-size: .51rem; }
+.source-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--teal); border-radius: 999px; color: var(--teal); font-size: .46rem; font-style: normal; letter-spacing: .03em; text-transform: uppercase; vertical-align: middle; }
 .legal-banner { padding: 18px 24px; border-left: 5px solid var(--danger); background: var(--danger-soft); color: var(--danger); font-size: .61rem; line-height: 1.65; }
 .answer-error { padding: 22px; border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger); }
 .answer-error h2 { margin: 0; font-family: var(--display); }
