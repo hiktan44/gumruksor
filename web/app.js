@@ -2476,6 +2476,22 @@ function renderExciseTax(excise) {
     <p class="rate-warning">Kaynak: ${escapeHtml(excise.legal_basis || "")}.</p></details>`;
 }
 
+// KDV önerisi (2007/13033 ekli listeler). Yalnız gösterir; alan ancak "Öneriyi kullan" ile dolar.
+function renderVatSuggestion(vat) {
+  if (!vat) return "";
+  const basisLabel = vat.basis === "official_list" ? "resmî liste" : "sezgisel fasıl kuralı";
+  const verifiedNote = vat.verified === false ? " · satır tohum verisinde doğrulanmadı" : "";
+  const conditions = (vat.conditions || []).length ? ` · şart: ${vat.conditions.map((item) => escapeHtml(item)).join(", ")}` : "";
+  if (vat.ambiguous) {
+    const options = (vat.candidates || []).filter((item) => item.rate != null);
+    const buttons = options.map((item) => `<button type="button" data-use-vat="${escapeHtml(String(item.rate))}">%${numberFormat.format(item.rate)} kullan</button>`).join("");
+    const lines = options.map((item) => `%${numberFormat.format(item.rate)}${(item.conditions || []).length ? ` (${item.conditions.map((cond) => escapeHtml(cond)).join(", ")})` : ""} – ${escapeHtml(item.legal_basis || "")}`).join(" · ");
+    return `<div class="apply-rates vat-suggestion"><div><b>KDV önerisi belirsiz · şartı doğrulayıp seçin</b><small>${lines}${vat.row_text ? ` · "${escapeHtml(vat.row_text)}"` : ""}</small></div><div class="vat-suggestion-actions">${buttons}</div></div>`;
+  }
+  if (vat.rate == null) return "";
+  return `<div class="apply-rates vat-suggestion"><div><b>KDV önerisi: %${numberFormat.format(vat.rate)} · ${basisLabel} · onayınız gerekir</b><small>${escapeHtml(vat.legal_basis || "")}${vat.matched_expression ? ` · eşleşen ifade ${escapeHtml(vat.matched_expression)}` : ""}${conditions}${verifiedNote}${vat.row_text ? ` · "${escapeHtml(vat.row_text)}"` : ""}</small></div><button type="button" data-use-vat="${escapeHtml(String(vat.rate))}">Öneriyi kullan</button></div>`;
+}
+
 function renderTradeMeasures(trade) {
   if (!trade) return "";
   const statusLabel = { in_force: "yürürlükte", expired: "süresi dolmuş", unknown: "süre bilgisi yok" };
@@ -2510,6 +2526,7 @@ function renderTariffTool(data) {
     ${tariffMatchSummary(tariff)}
     ${renderTradeMeasures(tariff.trade_measures)}
     ${renderExciseTax(tariff.excise_tax)}
+    ${renderVatSuggestion(tariff.vat_rate)}
     <table class="evidence-table"><thead><tr><th>GTİP / Önlem</th><th>Oran</th><th>Menşe sütunu</th><th>Kaynak satırı</th><th>Kanıt</th></tr></thead><tbody>${tariffRows(tariff.measures)}</tbody></table>
     ${exportBar("tool", [{ table: "measures", label: "Tarife satırları" }, ...(cost ? [{ table: "cost", label: "Maliyet defteri" }] : [])])}
     ${applyRatesButton(tariff, "tool")}
@@ -2518,6 +2535,25 @@ function renderTariffTool(data) {
     ${warnings.length ? `<div class="result-caution">${warnings.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}
     ${data.legal_notice ? `<div class="legal-banner"><strong>Önemli:</strong> ${escapeHtml(data.legal_notice)}</div>` : ""}`;
 }
+
+// KDV önerisi yalnız bu düğmeyle alana yazılır; sayfa hiçbir zaman otomatik doldurmaz.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-use-vat]");
+  if (!button) return;
+  const rate = Number(String(button.dataset.useVat).replace(",", "."));
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) return showToast("Geçersiz KDV oranı.");
+  const targets = [$("#tariffVat"), $("#vatRate")].filter(Boolean);
+  const filled = [];
+  targets.forEach((field, index) => {
+    if (index > 0 && field.value.trim()) return; // yardımcı formdaki dolu değeri ezme
+    field.value = String(rate);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    filled.push(field.id);
+  });
+  if (!filled.length) return;
+  if (typeof updateReadiness === "function") updateReadiness();
+  showToast(`KDV %${numberFormat.format(rate)} maliyet alanına aktarıldı; analizi yeniden çalıştırın.`);
+});
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-apply-rates]");
