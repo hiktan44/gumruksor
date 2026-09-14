@@ -177,3 +177,7 @@ data/
 trade_measures.sqlite3
 
 trade_measures.sqlite3
+
+# Yurt disi tarife motorunun yerel deposu (calisma aninda olusur, MEVZUAT_DATA_DIR altinda tutulur).
+foreign_tariff.sqlite3
+foreign_tariff.sqlite3-*

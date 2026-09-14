@@ -475,6 +475,10 @@
             <p class="rate-warning">Yukarıdaki maliyet kalemleri (fatura, navlun, sigorta, KDV, KKDF, ÖTV, damping, gözetim, EMY…) aynen kullanılır; doğrulanmamış kalem varsa o senaryo karşılaştırılamaz. Sıralama karar desteğidir, bağlayıcı değildir.</p>
             <button class="analyse-button" type="button" id="scenarioSavings"><span>Tasarruf önerisi</span></button>
             <div id="savingsOutput" aria-live="polite"></div>
+            <h3>Yurt dışı tarife karşılaştırma</h3>
+            <p class="rate-warning">Birleşik Krallık tarifesi resmî açık API'den oran düzeyinde okunur. Avrupa Birliği (TARIC/EBTI) ve İsviçre (Tares) makine okunur açık veri yayımlamadığı için bu iki ülkede oran otomatik alınamaz; sorgunuzu resmî ekranda açan bağlantılar üretilir. Eşleşme HS-6 düzeyindedir ve <b>hiçbir yurt dışı oran Türkiye maliyet hesabına aktarılmaz</b>.</p>
+            <button class="analyse-button" type="button" id="foreignCompare"><span>BK / AB / İsviçre karşılaştır</span></button>
+            <div id="foreignOutput" aria-live="polite"></div>
           </div>
         </section>
 

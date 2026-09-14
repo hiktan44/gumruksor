@@ -74,6 +74,7 @@ _HYBRID_CORPUS_LABEL = {
     "official_pages": "Resmî sayfa",
     "excise_tax": "ÖTV liste satırı",
     "vat_lists": "KDV liste satırı",
+    "foreign_tariff": "Yurt dışı tarife tanımı",
 }
 _SELECTED_TARIFF_RE = re.compile(r"^\d{6}(?:\d{2}){0,3}$")
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -85,6 +86,10 @@ _ALLOWED_SOURCE_HOSTS = {
     "csb.gov.tr",
     "europa.eu",
     "ec.europa.eu",
+    # Yurt dışı tarife karşılaştırma kaynakları (PRD Faz 4).
+    "trade-tariff.service.gov.uk",
+    "gov.uk",
+    "admin.ch",
 }
 _DISCLAIMER = (
     "Bu ön değerlendirme, {as_of} itibarıyla erişilebilen yürürlükteki resmî metinler "
@@ -2255,6 +2260,42 @@ def _sanitize_model_result(result: CustomsModelResult, valid_ids: set[str]) -> C
     return result
 
 
+
+_FOREIGN_LINK_CATALOG: dict[str, Any] | None = None
+
+
+def _foreign_tariff_sources(gtip: str | None, origin: str | None, as_of: str) -> list["EvidenceSource"]:
+    """AB / İsviçre / BK resmî tarife sorgu bağlantılarını kanıt kaynağı olarak döndürür."""
+    global _FOREIGN_LINK_CATALOG
+    code = re.sub(r"\D", "", str(gtip or ""))
+    if len(code) < 6:
+        return []
+    try:
+        from foreign_tariff import JURISDICTION_LABELS, build_links, load_link_catalog, origin_iso2
+
+        if _FOREIGN_LINK_CATALOG is None:
+            _FOREIGN_LINK_CATALOG = load_link_catalog()
+        iso2 = origin_iso2(origin)
+        sources: list[EvidenceSource] = []
+        for jurisdiction, record in _FOREIGN_LINK_CATALOG.items():
+            note = str(record.get("note") or "")
+            for link in build_links(record, code, iso2, as_of)[:2]:
+                sources.append(
+                    EvidenceSource(
+                        id=f"foreign_{jurisdiction}_{link['id']}"[:80],
+                        title=f"{JURISDICTION_LABELS.get(jurisdiction, jurisdiction.upper())} — {link['title']}"[:300],
+                        authority=link.get("authority") or str(record.get("authority") or ""),
+                        url=link["url"],
+                        excerpt=(link.get("note") or note or "Resmî tarife sorgu ekranı.")[:500],
+                        retrieved_at=as_of,
+                    )
+                )
+        return sources
+    except Exception:  # noqa: BLE001 – karşılaştırma bağlantıları ön değerlendirmeyi bozmaz
+        logger.warning("Yurt dışı tarife bağlantıları üretilemedi", exc_info=True)
+        return []
+
+
 class CustomsAdvisor:
     def __init__(
         self,
@@ -2453,12 +2494,19 @@ class CustomsAdvisor:
                     retrieved_at=as_of,
                 )
             )
+        # PRD Faz 4: yurt dışı tarife karşılaştırması. AB (TARIC/EBTI) ve İsviçre (Tares) açık
+        # veri yayımlamadığı için burada yalnız resmî sorgu bağlantıları üretilir; oran
+        # çekilmez ve hiçbir yabancı değer maliyet hesabına girmez. Birleşik Krallık'ın canlı
+        # oranları ayrı ``/api/foreign/tariff`` çağrısıyla istenir (ön değerlendirmeyi
+        # yavaşlatmamak için burada ağ çağrısı yapılmaz).
+        foreign_sources = _foreign_tariff_sources(inquiry.candidate_gtip, inquiry.origin_country, as_of)
         sources = [
             *await self.registry.gather(inquiry),
             *tariff_sources,
             *control_sources,
             *classification_sources,
             *hybrid_sources,
+            *foreign_sources,
         ]
         return CustomsEvidencePack(
             inquiry=inquiry,

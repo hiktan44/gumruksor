@@ -3071,6 +3071,66 @@ $("#scenarioSavings")?.addEventListener("click", async () => {
   }
 });
 
+const FOREIGN_MEASURE_LABELS = {
+  third_country_duty: "Üçüncü ülke gümrük vergisi", preference: "Tercihli tarife", customs_union_duty: "Gümrük birliği vergisi",
+  suspension: "Vergi askıya alma", quota: "Tarife kontenjanı", anti_dumping: "Damping önlemi", countervailing: "Telafi edici vergi",
+  safeguard: "Korunma önlemi", prohibition: "İthalat yasağı", restriction: "İthalat kontrolü / kısıtlama", vat: "KDV",
+  excise: "Özel tüketim", supplementary_unit: "Tamamlayıcı ölçü birimi", other: "Diğer önlem",
+};
+
+function foreignLinksHtml(links) {
+  if (!links || !links.length) return "";
+  return `<ul class="savings-list">${links.map((item) => `<li><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>${item.note ? ` <small>${escapeHtml(item.note)}</small>` : ""}</li>`).join("")}</ul>`;
+}
+
+function renderForeignTariff(data) {
+  const cards = (data.results || []).map((item) => {
+    const rows = (item.measures || []).slice(0, 12).map((measure) => `<tr>
+      <td>${escapeHtml(FOREIGN_MEASURE_LABELS[measure.kind] || measure.measure_type || "—")}</td>
+      <td>${escapeHtml(measure.geographical_area || measure.geographical_area_id || "—")}</td>
+      <td>${escapeHtml(measure.duty_expression || "—")}</td>
+    </tr>`).join("");
+    const rateBlock = item.data_kind === "api"
+      ? `<p><b>Üçüncü ülke vergisi:</b> ${escapeHtml(item.third_country_duty || "—")}${item.origin_preference ? ` &nbsp;|&nbsp; <b>Tercihli oran (${escapeHtml(item.origin_preference.geographical_area || item.origin_preference.geographical_area_id || "")}):</b> ${escapeHtml(item.origin_preference.duty_expression || "—")}` : ""}</p>
+         ${item.matched_code ? `<p><small>Eşleşen kod: <b>${escapeHtml(item.matched_code)}</b> — ${escapeHtml(item.description || "")} (${item.match_quality === "exact_hs6" ? "HS-6 tam eşleşme" : "yalnız pozisyon düzeyinde"})</small></p>` : ""}
+         ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Önlem</th><th>Ülke / grup</th><th>Oran</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`
+      : `<p class="missing-list">Bu ülke resmî açık veri yayımlamadığı için oran otomatik alınamaz; aşağıdaki resmî sorgu bağlantılarını kullanın.</p>`;
+    const notes = (item.notes || []).filter(Boolean).map((note) => `<li>${escapeHtml(note)}</li>`).join("");
+    return `<section class="answer-section">
+      <h4>${escapeHtml(item.label)} <small>${escapeHtml(item.authority || "")}</small></h4>
+      ${rateBlock}
+      ${foreignLinksHtml(item.links)}
+      ${item.bti_url ? `<p><small><a href="${escapeHtml(item.bti_url)}" target="_blank" rel="noopener noreferrer">Bağlayıcı tarife kararı bilgisi</a></small></p>` : ""}
+      ${notes ? `<ul class="savings-list">${notes}</ul>` : ""}
+    </section>`;
+  }).join("");
+  const warnings = (data.warnings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  return `<div class="answer-head"><span class="answer-status">HS-6: ${escapeHtml(data.hs6 || "")}</span><div><h2>Yurt dışı tarife karşılaştırma</h2><p>${escapeHtml(data.comparability_note || "")}</p></div></div>
+    ${warnings ? `<ul class="savings-list">${warnings}</ul>` : ""}
+    ${cards}
+    <p class="rate-warning">${escapeHtml(data.calculation_note || "")}</p>`;
+}
+
+$("#foreignCompare")?.addEventListener("click", async () => {
+  const output = $("#foreignOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const gtip = $("#tariffGtip").value.trim();
+  if (!gtip || gtip.replace(/\D/g, "").length < 6) {
+    output.innerHTML = '<p class="missing-list">Karşılaştırma için en az 6 haneli bir GTİP/HS kodu girin.</p>';
+    return;
+  }
+  const params = new URLSearchParams({ gtip });
+  const origin = $("#tariffOrigin")?.value.trim();
+  if (origin) params.set("origin", origin);
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>Yurt dışı tarifeler sorgulanıyor</b><span>Birleşik Krallık resmî API\'si okunuyor, AB ve İsviçre için resmî sorgu bağlantıları hazırlanıyor…</span></div></div>';
+  try {
+    const data = await fetchJson(`/api/foreign/tariff?${params.toString()}`);
+    output.innerHTML = renderForeignTariff(data);
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+});
+
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-open-plans]")) openAccount("plans");
 });

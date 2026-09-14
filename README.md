@@ -184,6 +184,33 @@ döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBR
 sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
 LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
 
+**Yurt dışı tarife karşılaştırma** (`foreign_tariff.py`, PRD Faz 4): aynı eşya için Türk tarifesinin
+yanında Birleşik Krallık, Avrupa Birliği ve İsviçre tarifesi gösterilir. Üç ülke veriyi aynı biçimde
+yayımlamadığı için ürün bu farkı gizlemez:
+
+* **Birleşik Krallık** — `trade-tariff.service.gov.uk` JSON:API'si anahtarsız ve makine okunurdur.
+  Fasıl listesi `foreign-tariff-sync` döngüsüyle günlük eşitlenir (değişiklik defteri + inceleme
+  kapısı `foreign_tariff` anahtarıyla); pozisyon ve emtia gövdeleri talep anında çekilip
+  `FOREIGN_TARIFF_CACHE_DAYS` (varsayılan 7 gün) boyunca önbelleğe alınır. Üçüncü ülke vergisi,
+  menşeye özgü tercihli oran (coğrafi grup üyeliği ve istisna ülkeler dâhil), kota, damping ve
+  yasaklar resmî ölçü satırlarından okunur.
+* **Avrupa Birliği (TARIC/EBTI)** ve **İsviçre (Tares)** — resmî açık uç nokta yayımlanmıyor: TARIC
+  danışma ekranı oturum/POST ile çalışıyor (kod içeren GET sorgusu sonucu değil arama formunu
+  döndürüyor), Tares ise koşul/giriş kontrolüne yönlendiriyor. Bu iki ülke için oran **çekilmez**;
+  `data/official/foreign_tariff_links.json` kataloğundan sorguyu resmî ekranda hazır açan
+  doğrulanmış derin bağlantılar üretilir ve arayüzde "otomatik oran alınamıyor" notu görünür.
+
+Eşleşme HS-6 düzeyindedir (Türk 12 haneli GTİP'inin ilk 6 hanesi ortaktır; sonraki haneler ulusaldır
+ve eşleştirilmez). **Hiçbir yurt dışı oran `calculate_landed_cost` girdisine aktarılmaz**; Türkiye
+maliyeti yalnız Türk resmî anlık görüntüleriyle hesaplanır. Her dış çağrı
+`security_firewall.validate_outbound_url` ile yalnız `trade-tariff.service.gov.uk` alan adına,
+her yönlendirme adımında yeniden doğrulanarak yapılır. Rotalar: `GET /api/foreign/tariff?gtip=&origin=
+&jurisdiction=uk|eu|ch|all&as_of=` (30/dk, `foreign_tariff` özellik kilidi — Uzman paketi ve üstü) ve
+`GET /api/foreign/tariff/status`; MCP tarafında `compare_foreign_tariff` aracı. UK nomenklatür
+tanımları hibrit indekse `foreign_tariff` korpusu olarak beslenir, böylece İngilizce ürün ifadeleri de
+sınıflandırma kanıtına girer. Ön değerlendirme kanıt defterine AB/İsviçre/BK resmî sorgu bağlantıları
+`foreign_…` kimlikli kaynak olarak eklenir (ağ çağrısı yapılmadan).
+
 Sınıflandırma ve ön değerlendirme bu indeksten **dipnotlu kanıt** alır. `classify_product` model
 çağrısından önce ürün tanımı ve evsaf metniyle nomenklatür/tarife tanımları, AB tüzük sayfaları ve
 önlem ürün tanımları korpuslarından en iyi 8 belgeyi çeker; belgeler isteme `official_evidence`

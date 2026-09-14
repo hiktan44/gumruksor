@@ -47,6 +47,7 @@ class Plan:
 FEATURES: dict[str, str] = {
     "detailed_query": "Detaylı sorgu (hukuki dayanak, dipnot ve istisnalar)",
     "scenario_compare": "Menşe senaryosu karşılaştırma ve tasarruf önerisi",
+    "foreign_tariff": "Yurt dışı tarife karşılaştırma (BK / AB / İsviçre)",
     "pdf_report": "Sunucu tarafı PDF rapor",
     "bulk_costing": "Toplu beyanname hesabı (CSV/XLSX)",
     "temporal_query": "Tarih bazlı mevzuat sorgusu (geçmiş yürürlük)",
@@ -55,7 +56,7 @@ FEATURES: dict[str, str] = {
     "data_review": "Veri inceleme kuyruğu (editoryal onay)",
 }
 
-_PRO_CAPABILITIES = frozenset({"detailed_query", "scenario_compare", "pdf_report"})
+_PRO_CAPABILITIES = frozenset({"detailed_query", "scenario_compare", "pdf_report", "foreign_tariff"})
 _PREMIUM_CAPABILITIES = _PRO_CAPABILITIES | {"bulk_costing", "temporal_query", "change_alerts"}
 _PREMIUM_PLUS_CAPABILITIES = _PREMIUM_CAPABILITIES | {"api_access"}
 
