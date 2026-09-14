@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from control_engine import ImportControlEngine, ImportControlLookupResult
 from customs_workflow import WorkflowStep, build_workflow
+from decision_questions import DecisionQuestion, apply_decision_answers, build_decision_questions
 from classification_evidence import ClassificationEvidenceEngine, ClassificationEvidenceHit
 from origin_documents import OriginDocumentRequirements, origin_document_requirements
 from security_firewall import (
@@ -149,6 +150,26 @@ class CustomsInquiry(BaseModel):
     stamp_duty_try: float | None = Field(None, ge=0, le=1_000_000_000)
     port_storage_try: float | None = Field(None, ge=0, le=1_000_000_000)
     gekap_try: float | None = Field(None, ge=0, le=1_000_000_000)
+    # PRD Faz 2.3: kullanıcının interaktif karar sorularına verdiği cevaplar
+    # (soru kimliği -> seçilen seçenek değeri). Oranlar yalnız bu cevaplarla hesaba girer.
+    decision_answers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("decision_answers")
+    @classmethod
+    def validate_decision_answers(cls, value: dict[str, str]) -> dict[str, str]:
+        if len(value) > 20:
+            raise ValueError("En fazla 20 karar sorusu cevaplanabilir.")
+        cleaned: dict[str, str] = {}
+        for key, answer in value.items():
+            question_id = str(key).strip()
+            option = str(answer).strip()
+            if not question_id or len(question_id) > 60:
+                raise ValueError("Karar sorusu kimliği 1-60 karakter olmalıdır.")
+            if len(option) > 80:
+                raise ValueError("Karar sorusu cevabı en fazla 80 karakter olabilir.")
+            if option:
+                cleaned[question_id] = option
+        return cleaned
 
     @field_validator("candidate_gtip")
     @classmethod
@@ -363,6 +384,8 @@ class CustomsPrecheckResult(BaseModel):
     # PRD Faz 2.4: deterministic step list derived from the fields above; optional so
     # dossiers saved before this field existed still validate.
     workflow: list[WorkflowStep] = Field(default_factory=list)
+    # PRD Faz 2.3: deterministic questions whose answers only the user can give.
+    decision_questions: list[DecisionQuestion] = Field(default_factory=list)
 
 
 class ExpertReviewPacket(BaseModel):
@@ -389,6 +412,7 @@ class CustomsEvidencePack(BaseModel):
     as_of: str
     missing_information: list[str]
     deterministic_cost: dict[str, Any] | None
+    decision_questions: list[DecisionQuestion] = Field(default_factory=list)
     tariff_lookup: TariffLookupResult | None = None
     control_lookup: ImportControlLookupResult | None = None
     origin_documents: OriginDocumentRequirements | None = None
@@ -1879,32 +1903,35 @@ def _deterministic_cost(
         if inquiry.additional_financial_liability_rate is not None
         else additional_financial_liability_rate
     )
-    result = calculate_landed_cost(
-        LandedCostInput(
-            invoice_value=inquiry.invoice_value,
-            freight=inquiry.freight or 0,
-            insurance=inquiry.insurance or 0,
-            other_costs=inquiry.other_pre_import_costs or 0,
-            quantity=inquiry.quantity,
-            currency=inquiry.currency,
-            customs_duty_rate=duty_rate,
-            additional_duty_rate=additional_rate,
-            additional_financial_liability_rate=emy_rate,
-            anti_dumping_amount=inquiry.anti_dumping_amount,
-            kkdf_rate=inquiry.kkdf_rate,
-            payment_method=inquiry.payment_method,
-            vat_rate=inquiry.vat_rate,
-            sct_amount=inquiry.sct_amount,
-            surveillance_unit_value=inquiry.surveillance_unit_value,
-            has_surveillance_certificate=inquiry.has_surveillance_certificate,
-            trt_bandrol_rate=inquiry.trt_bandrol_rate,
-            exchange_rate=inquiry.exchange_rate,
-            exchange_rate_date=inquiry.exchange_rate_date or inquiry.as_of_date,
-            stamp_duty_try=inquiry.stamp_duty_try,
-            port_storage_try=inquiry.port_storage_try,
-            gekap_try=inquiry.gekap_try,
-        )
-    )
+    cost_fields: dict[str, Any] = {
+        "invoice_value": inquiry.invoice_value,
+        "freight": inquiry.freight or 0,
+        "insurance": inquiry.insurance or 0,
+        "other_costs": inquiry.other_pre_import_costs or 0,
+        "quantity": inquiry.quantity,
+        "currency": inquiry.currency,
+        "customs_duty_rate": duty_rate,
+        "additional_duty_rate": additional_rate,
+        "additional_financial_liability_rate": emy_rate,
+        "anti_dumping_amount": inquiry.anti_dumping_amount,
+        "kkdf_rate": inquiry.kkdf_rate,
+        "payment_method": inquiry.payment_method,
+        "vat_rate": inquiry.vat_rate,
+        "sct_amount": inquiry.sct_amount,
+        "surveillance_unit_value": inquiry.surveillance_unit_value,
+        "has_surveillance_certificate": inquiry.has_surveillance_certificate,
+        "trt_bandrol_rate": inquiry.trt_bandrol_rate,
+        "exchange_rate": inquiry.exchange_rate,
+        "exchange_rate_date": inquiry.exchange_rate_date or inquiry.as_of_date,
+        "stamp_duty_try": inquiry.stamp_duty_try,
+        "port_storage_try": inquiry.port_storage_try,
+        "gekap_try": inquiry.gekap_try,
+    }
+    # PRD Faz 2.3: karar sorusu cevapları yalnız boş alanlara yazılır; kullanıcının
+    # doğrudan girdiği inquiry değeri her zaman kazanır ve hiçbir oran otomatik dolmaz.
+    answered = apply_decision_answers(inquiry.decision_answers, cost_fields)
+    cost_fields = {key: value for key, value in answered.items() if key in LandedCostInput.model_fields}
+    result = calculate_landed_cost(LandedCostInput(**cost_fields))
     by_code = {line["code"]: line for line in result.lines}
     rates_complete = result.status == "complete"
     rate_origin = "user" if all(
@@ -2252,6 +2279,11 @@ class CustomsAdvisor:
             ),
             sources=sources,
             legal_notice=_legal_notice(as_of),
+            decision_questions=build_decision_questions(
+                gtip=inquiry.candidate_gtip,
+                tariff_lookup=tariff_lookup,
+                inquiry=inquiry,
+            ),
         )
 
     async def describe_image(
@@ -2578,6 +2610,7 @@ class CustomsAdvisor:
                 summary=reason,
                 missing_information=pack.missing_information,
                 deterministic_cost=pack.deterministic_cost,
+                decision_questions=pack.decision_questions,
                 tariff_lookup=pack.tariff_lookup,
                 control_lookup=pack.control_lookup,
                 origin_documents=pack.origin_documents,
@@ -2624,6 +2657,7 @@ class CustomsAdvisor:
             required_documents=parsed.required_documents,
             taxes=parsed.taxes,
             deterministic_cost=pack.deterministic_cost,
+            decision_questions=pack.decision_questions,
             tariff_lookup=pack.tariff_lookup,
             control_lookup=pack.control_lookup,
             origin_documents=pack.origin_documents,
