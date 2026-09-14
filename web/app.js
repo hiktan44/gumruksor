@@ -3090,7 +3090,12 @@ function renderForeignTariff(data) {
       <td>${escapeHtml(measure.geographical_area || measure.geographical_area_id || "—")}</td>
       <td>${escapeHtml(measure.duty_expression || "—")}</td>
     </tr>`).join("");
-    const rateBlock = item.data_kind === "api"
+    const candidates = (item.candidates || []).slice(0, 8).map((c) => `<li><b>${escapeHtml(c.code)}</b> — ${escapeHtml(c.description)}</li>`).join("");
+    const rateBlock = item.data_kind === "nomenclature"
+      ? `${item.matched_code ? `<p><b>Tarife numarası:</b> ${escapeHtml(item.matched_code)} — ${escapeHtml(item.description || "")}</p>` : ""}
+         ${candidates ? `<ul class="savings-list">${candidates}</ul>` : ""}
+         <p class="missing-list">Bu ülke resmî açık verisinde <b>vergi oranı yayımlamıyor</b>; oran için aşağıdaki resmî sorgu ekranını kullanın.</p>`
+      : item.data_kind === "api"
       ? `<p><b>Üçüncü ülke vergisi:</b> ${escapeHtml(item.third_country_duty || "—")}${item.origin_preference ? ` &nbsp;|&nbsp; <b>Tercihli oran (${escapeHtml(item.origin_preference.geographical_area || item.origin_preference.geographical_area_id || "")}):</b> ${escapeHtml(item.origin_preference.duty_expression || "—")}` : ""}</p>
          ${item.matched_code ? `<p><small>Eşleşen kod: <b>${escapeHtml(item.matched_code)}</b> — ${escapeHtml(item.description || "")} (${item.match_quality === "exact_hs6" ? "HS-6 tam eşleşme" : "yalnız pozisyon düzeyinde"})</small></p>` : ""}
          ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Önlem</th><th>Ülke / grup</th><th>Oran</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`
