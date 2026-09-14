@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import html
 import hmac
 import io
@@ -36,6 +37,8 @@ from customs_advisor import (
     register_llm_usage_hook,
 )
 from email_service import MailError, ResendEmailSender, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
+import report_pdf
+from report_pdf import PdfRenderError, render_precheck_report_html, report_footer_html
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
     bedesten_client,
@@ -1951,6 +1954,85 @@ async def web_email_precheck(request: Request):
     except Exception:
         logger.exception("Precheck e-mail delivery failed")
         return JSONResponse({"error": "E-posta şu anda gönderilemedi; kısa süre sonra yeniden deneyin."}, status_code=502)
+
+
+REPORT_PDF_MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@mcp.custom_route("/api/customs/report.pdf", methods=["POST"])
+async def web_customs_report_pdf(request: Request):
+    """Server-rendered PDF of a precheck dossier with the mandatory legal footer (pdf_report feature).
+
+    Body: ``{"dossier_id": "..."}`` (saved dossier of the signed user) or
+    ``{"result": {...}}`` (a precheck result as returned by the API). No quota is
+    consumed; the report is a presentation of an already paid-for analysis.
+    """
+    limited = _rate_limit_response(request, "customs-report-pdf", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        require_feature(request, "pdf_report")
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        declared = int(request.headers.get("content-length", "0") or 0)
+        raw = b"" if declared > REPORT_PDF_MAX_BODY_BYTES else await request.body()
+        if declared > REPORT_PDF_MAX_BODY_BYTES or len(raw) > REPORT_PDF_MAX_BODY_BYTES:
+            raise ValueError("Rapor verisi 2 MB sınırını aşıyor.")
+        body = json.loads(raw or b"{}")
+        if not isinstance(body, dict):
+            raise ValueError("Rapor isteği bir nesne olmalıdır.")
+        dossier_id = str(body.get("dossier_id") or "").strip()
+        if dossier_id:
+            dossier = account_service.get_dossier(user, dossier_id)
+            payload = dossier["payload"]
+            report_id = re.sub(r"[^a-z0-9]", "", str(dossier["id"]).lower())[:8] or "dosya"
+        else:
+            payload = body.get("result")
+            if not isinstance(payload, dict):
+                raise ValueError("Rapor için analiz sonucu eksik.")
+            guard_data(payload, path="PDF raporu")
+            report_id = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:8]
+        result = CustomsPrecheckResult.model_validate(payload)
+        generated_at = datetime.now(UTC).isoformat(timespec="seconds")
+        generated_for = str(user.get("name") or user.get("email") or "Kayıtlı kullanıcı").strip()[:120]
+        html_report = render_precheck_report_html(
+            result, base_url=PUBLIC_BASE_URL, generated_for=generated_for, generated_at=generated_at
+        )
+        pdf = await report_pdf.render_pdf(html_report, footer_html=report_footer_html(result))
+        logger.info(
+            "PDF ön değerlendirme raporu üretildi: rapor=%s kaynak=%s bayt=%d renderer=%s",
+            report_id, "dossier" if dossier_id else "result", len(pdf), report_pdf.renderer_mode(),
+        )
+        return Response(
+            pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="gumruksor-on-degerlendirme-{report_id}.pdf"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Dosya verisi doğrulanamadı.")
+        return JSONResponse({"error": f"Dosya verisi doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Rapor isteği çözümlenemedi."}, status_code=422)
+    except PdfRenderError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("PDF ön değerlendirme raporu üretilemedi")
+        return JSONResponse({"error": "PDF raporu şu anda oluşturulamadı; kısa süre sonra yeniden deneyin."}, status_code=503)
 
 
 @mcp.custom_route("/api/tariff/countries", methods=["GET"])

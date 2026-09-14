@@ -2709,8 +2709,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-open-plans]")) openAccount("plans");
 });
 
-document.addEventListener("click", (event) => {
-  if (!event.target.closest("#printPrecheck")) return;
+function printPrecheckLocally() {
   document.body.classList.add("print-dossier");
   const closedDetails = document.querySelectorAll(".answer-sheet details:not([open])");
   closedDetails.forEach((el) => el.setAttribute("open", "true"));
@@ -2721,6 +2720,88 @@ document.addEventListener("click", (event) => {
   };
   window.addEventListener("afterprint", cleanup);
   window.print();
+}
+
+async function ensurePlanCatalog() {
+  if (state.plans && state.featureLabels) return;
+  try {
+    const plans = await fetchJson("/api/plans");
+    state.plans = plans.plans || [];
+    state.featureLabels = plans.features || {};
+  } catch (_) {
+    // Etiketler yüklenemezse genel "Bu özellik" metniyle devam edilir.
+  }
+}
+
+async function showPdfReportUpsell(button) {
+  const sheet = button.closest(".answer-sheet");
+  if (!sheet || sheet.parentElement?.querySelector('.feature-locked[data-feature="pdf_report"]')) return;
+  await ensurePlanCatalog();
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = featureUpsellHtml("pdf_report");
+  const node = wrapper.firstElementChild;
+  if (!node) return;
+  node.dataset.feature = "pdf_report";
+  node.insertAdjacentHTML("beforeend", "<p>Tarayıcı yazdırma penceresi açılıyor; sunucu tarafı rapor her sayfada zorunlu yasal alt bilgi ve kaynak defteriyle üretilir.</p>");
+  sheet.insertAdjacentElement("afterend", node);
+}
+
+async function downloadPrecheckPdf(button) {
+  const result = state.currentCustomsResult;
+  if (!result) { showToast("İndirilecek ön değerlendirme dosyası bulunamadı."); return; }
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "PDF hazırlanıyor…";
+  try {
+    let response;
+    try {
+      response = await fetch("/api/customs/report.pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/pdf" },
+        body: JSON.stringify({ result }),
+      });
+    } catch (_) {
+      throw new Error("Sunucuya ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.");
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const error = new Error(data.error || "PDF raporu oluşturulamadı.");
+      error.code = data.code;
+      throw error;
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : "gumruksor-on-degerlendirme.pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast("PDF raporu zorunlu yasal alt bilgiyle indirildi.");
+  } catch (error) {
+    showToast(error.message || "PDF raporu oluşturulamadı.");
+    if (error.code === "feature_required" || error.code === "authentication_required") {
+      if (error.code === "feature_required") await showPdfReportUpsell(button);
+      printPrecheckLocally();
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("#printPrecheck");
+  if (!button) return;
+  if (state.auth?.authenticated && hasCapability("pdf_report")) {
+    await downloadPrecheckPdf(button);
+    return;
+  }
+  if (state.auth?.authenticated) await showPdfReportUpsell(button);
+  printPrecheckLocally();
 });
 
 document.addEventListener("click", async (event) => {
