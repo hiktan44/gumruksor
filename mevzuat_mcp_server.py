@@ -52,6 +52,7 @@ from tariff_engine import (
 )
 from control_engine import ImportControlEngine, ImportControlLookupResult, ControlSyncStatus
 from foreign_tariff import SYNC_ENABLED as FOREIGN_TARIFF_SYNC_ENABLED, ForeignTariffEngine
+from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
 from classification_evidence import (
@@ -95,12 +96,15 @@ control_engine = ImportControlEngine()
 classification_engine = ClassificationEvidenceEngine()
 # Yurt dışı tarife karşılaştırma (PRD Faz 4): UK açık API'si + AB/İsviçre resmî bağlantıları.
 foreign_tariff_engine = ForeignTariffEngine()
+# AB Bağlayıcı Tarife Bilgisi kararları (resmî günlük yayın akışı).
+ebti_engine = EbtiDecisionEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
 control_engine.ledger = change_ledger
 classification_engine.ledger = change_ledger
 foreign_tariff_engine.ledger = change_ledger
+ebti_engine.ledger = change_ledger
 trade_measure_engine.store.ledger = change_ledger
 # Editorial review gate (DATA_REVIEW_MODE=off|auto|strict); shared by the engines and the admin API.
 review_policy = policy_from_env()
@@ -108,6 +112,7 @@ tariff_engine.review_policy = review_policy
 control_engine.review_policy = review_policy
 classification_engine.review_policy = review_policy
 foreign_tariff_engine.review_policy = review_policy
+ebti_engine.review_policy = review_policy
 review_service = ReviewService(
     policy=review_policy,
     engines={
@@ -115,6 +120,7 @@ review_service = ReviewService(
         "controls": control_engine,
         "classification": classification_engine,
         "foreign_tariff": foreign_tariff_engine,
+        "ebti": ebti_engine,
     },
     ledger=change_ledger,
 )
@@ -143,6 +149,8 @@ BACKGROUND_LOOPS.append(("trade-measures-sync", trade_measure_engine.periodic_sy
 BACKGROUND_LOOPS.append(("vat-lists-sync", vat_rate_index.periodic_sync_loop))
 if FOREIGN_TARIFF_SYNC_ENABLED:
     BACKGROUND_LOOPS.append(("foreign-tariff-sync", foreign_tariff_engine.periodic_sync_loop))
+if EBTI_SYNC_ENABLED:
+    BACKGROUND_LOOPS.append(("ebti-sync", ebti_engine.periodic_sync_loop))
 
 
 async def backfill_change_ledger() -> None:
@@ -160,6 +168,7 @@ async def backfill_change_ledger() -> None:
                 "tariff_validity": tariff_engine.backfill_validity(),
                 "control_validity": control_engine.backfill_validity(),
                 "foreign_tariff": foreign_tariff_engine.backfill_ledger(),
+                "ebti": ebti_engine.backfill_ledger(),
             }
         )
         if any(counts.values()):
@@ -174,6 +183,8 @@ BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
 hybrid_index = HybridIndex(embedder=_embedder)
 # PRD Faz 3.2: sınıflandırma ve ön değerlendirme dipnotlu hibrit kanıt kullanır.
 customs_advisor_service.hybrid_index = hybrid_index
+# PRD Faz 4: AB BTB kararları sınıflandırma kanıtına girer.
+customs_advisor_service.ebti_engine = ebti_engine
 
 
 async def hybrid_index_refresh_loop() -> None:
@@ -190,6 +201,7 @@ async def hybrid_index_refresh_loop() -> None:
                 vat_index=vat_rate_index,
                 tariff_engine=tariff_engine,
                 foreign_tariff_engine=foreign_tariff_engine,
+                ebti_engine=ebti_engine,
             )
             counts = await hybrid_index.refresh(corpora)
             logger.info("Hybrid index refresh: %s", counts)
@@ -2824,6 +2836,34 @@ async def compare_foreign_tariff(
         result = await foreign_tariff_engine.lookup(
             gtip, origin=origin_country, jurisdiction=jurisdiction, as_of=as_of
         )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "AB Bağlayıcı Tarife Bilgisi kararlarını ara",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def search_eu_bti_decisions(
+    gtip: Optional[str] = Field(None, max_length=20, description="4-10 haneli kod; ön ek olarak eşleşir."),
+    query: Optional[str] = Field(None, max_length=500, description="Eşya tanımı veya anahtar kelime (kararın kendi dilinde)."),
+    limit: int = Field(8, ge=1, le=25, description="Dönecek karar sayısı."),
+) -> dict:
+    """Search official EU Binding Tariff Information decisions published daily by the Commission.
+
+    Kararlar üye ülke gümrük idarelerince verilir ve resmî EBTI günlük yayınından alınır;
+    her satır eşyanın hangi koda, hangi hukuki gerekçeyle sınıflandırıldığını gösterir.
+    Bu kararlar Türkiye'de bağlayıcı değildir; karşılaştırmalı kanıt olarak kullanılır.
+    """
+    try:
+        result = ebti_engine.search(query or "", code_prefix=gtip, limit=limit)
     except ValueError as exc:
         return {"error": str(exc)}
     return result.as_dict()

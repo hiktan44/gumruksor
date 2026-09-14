@@ -52,6 +52,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    ebti_engine,
     foreign_tariff_engine,
     hybrid_index,
     review_service,
@@ -2598,6 +2599,39 @@ async def web_foreign_tariff(request: Request):
     return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
 
 
+@mcp.custom_route("/api/foreign/ebti", methods=["GET"])
+async def web_ebti_decisions(request: Request):
+    """AB Bağlayıcı Tarife Bilgisi kararlarında GTİP veya kelime araması."""
+    limited = _rate_limit_response(request, "ebti-search", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "foreign_tariff")
+        result = ebti_engine.search(
+            str(request.query_params.get("q", "")),
+            code_prefix=(request.query_params.get("gtip") or None),
+            limit=int(request.query_params.get("limit") or 8),
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("EBTI search failed")
+        return JSONResponse({"error": "AB karar verisi şu anda sorgulanamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
+
+
+@mcp.custom_route("/api/foreign/ebti/status", methods=["GET"])
+async def web_ebti_status(request: Request):
+    limited = _rate_limit_response(request, "ebti-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(ebti_engine.status())
+
+
 @mcp.custom_route("/api/foreign/tariff/status", methods=["GET"])
 async def web_foreign_tariff_status(request: Request):
     limited = _rate_limit_response(request, "foreign-tariff-status", limit=30, window_seconds=60)
@@ -3444,6 +3478,7 @@ async def health_check(request):
     control_status = control_engine.status()
     classification_status = classification_engine.status()
     foreign_status = foreign_tariff_engine.status()
+    ebti_status = ebti_engine.status()
     return JSONResponse({
         "status": "healthy",
         "service": "Mevzuat MCP Server",
@@ -3459,12 +3494,15 @@ async def health_check(request):
         "classification_evidence_pages": classification_status.page_count,
         "foreign_tariff_ready": foreign_status.get("ready", False),
         "foreign_tariff_chapters": foreign_status.get("chapter_count", 0),
+        "ebti_ready": ebti_status.get("ready", False),
+        "ebti_decisions": ebti_status.get("decision_count", 0),
         "review_mode": review_service.policy.mode,
         "pending_reviews": (
             tariff_status.pending_review_count
             + control_status.pending_review_count
             + classification_status.pending_review_count
             + int(foreign_status.get("pending_review_count", 0))
+            + int(ebti_status.get("pending_review_count", 0))
         ),
     })
 
