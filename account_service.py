@@ -390,6 +390,17 @@ class AccountService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def compliance_recipients(self) -> list[dict[str, Any]]:
+        """Users with at least one dossier or watch (e-mail only; used by the compliance digest)."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT u.google_sub, u.email FROM users u
+                   WHERE EXISTS (SELECT 1 FROM dossiers d WHERE d.google_sub=u.google_sub)
+                      OR EXISTS (SELECT 1 FROM watchlist w WHERE w.google_sub=u.google_sub)
+                   ORDER BY u.google_sub"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def notification_sent(self, google_sub: str, kind: str, target_key: str) -> bool:
         with self._connect() as connection:
             return connection.execute(

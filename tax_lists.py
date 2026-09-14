@@ -9,9 +9,9 @@ kanuni değer uygulanır. (III) sayılı listede bazı hücreler resmî PDF'te t
 basıldığı için sütun eşlemesi doğrulanamamıştır; bu bölümlerde yalnız kapsam bilgisi
 verilir, oran gösterilmez.
 
-KDV tarafı bu modülde yer almaz: 2007/13033 sayılı Kararın ekli listeleri GTİP tablosu
-değil, fasıl ve pozisyonlara atıf yapan anlatı biçimindedir ve güncel konsolide metni
-bu ortamdan doğrulanabilir bir resmî kaynaktan alınamamıştır (bkz. PROJECT_NOTES).
+KDV tarafı: ``estimate_vat_rate`` fasıl bazlı sezgisel bir tahmindir. 2007/13033 sayılı
+Kararın ekli (I)/(II) sayılı listelerinden satır bazlı öneri ``vat_lists.VatRateIndex``
+ile üretilir; ``vat_rate_for`` verilen dizini kullanır, dizin yoksa sezgisele düşer.
 """
 
 from __future__ import annotations
@@ -100,6 +100,39 @@ def estimate_vat_rate(gtip: str) -> dict[str, Any]:
         "list": "Genel Oran",
         "legal_basis": "3065 sayılı KDV Kanunu md. 28 (Genel Mal ve Hizmetler)",
     }
+
+def heuristic_vat_lookup(gtip: str) -> dict[str, Any]:
+    """``VatRateIndex.lookup`` ile aynı şekilde sezgisel KDV önerisi (resmî liste eşleşmesi yok)."""
+    code = normalise_code(gtip)
+    estimate = estimate_vat_rate(code)
+    return {
+        "gtip": code,
+        "rate": estimate["rate"],
+        "basis": "heuristic",
+        "list": estimate["list"],
+        "legal_basis": estimate["legal_basis"],
+        "matched_expression": None,
+        "row_text": None,
+        "conditions": [],
+        "ambiguous": False,
+        "candidates": [],
+        "verified": None,
+        "source": "fasıl bazlı sezgisel kural (tax_lists.estimate_vat_rate)",
+        "source_url": None,
+        "retrieved_at": None,
+        "note": "Sezgisel tahmindir; resmî listede satır eşleşmedi. Beyanname öncesi doğrulayın.",
+    }
+
+
+def vat_rate_for(gtip: str, index: Any = None) -> dict[str, Any]:
+    """Resmî liste dizini (``vat_lists.VatRateIndex``) varsa onu, yoksa sezgiseli kullanır."""
+    if index is not None:
+        try:
+            return index.lookup(gtip)
+        except Exception:  # noqa: BLE001 – KDV önerisi arama sonucunu düşürmemeli
+            logger.exception("VAT list lookup failed for %s", gtip)
+    return heuristic_vat_lookup(gtip)
+
 
 _VALUE_LABELS = {
     "tax_rate": "Kanuni vergi oranı (%)",

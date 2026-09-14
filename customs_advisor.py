@@ -1895,7 +1895,7 @@ def _deterministic_cost(
             has_surveillance_certificate=inquiry.has_surveillance_certificate,
             trt_bandrol_rate=inquiry.trt_bandrol_rate,
             exchange_rate=inquiry.exchange_rate,
-            exchange_rate_date=inquiry.exchange_rate_date,
+            exchange_rate_date=inquiry.exchange_rate_date or inquiry.as_of_date,
             stamp_duty_try=inquiry.stamp_duty_try,
             port_storage_try=inquiry.port_storage_try,
             gekap_try=inquiry.gekap_try,
@@ -2104,6 +2104,7 @@ class CustomsAdvisor:
                 origin_country=inquiry.origin_country,
                 dispatch_country=inquiry.dispatch_country,
                 atr_certificate=inquiry.atr_certificate,
+                as_of=inquiry.as_of_date,
             )
             official_rates.update(tariff_lookup.unambiguous_rates)
             for measure in tariff_lookup.measures:
@@ -2173,7 +2174,7 @@ class CustomsAdvisor:
             and len(inquiry.candidate_gtip) == 12
             and inquiry.exact_gtip_confirmed
         ):
-            control_lookup = await self.control_engine.lookup(inquiry.candidate_gtip)
+            control_lookup = await self.control_engine.lookup(inquiry.candidate_gtip, as_of=inquiry.as_of_date)
             for index, match in enumerate(control_lookup.matches):
                 rule = match.rule
                 control_sources.append(

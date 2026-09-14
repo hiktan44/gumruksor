@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from tax_lists import ExciseTaxIndex, estimate_vat_rate
+from tax_lists import ExciseTaxIndex, vat_rate_for
 
 logger = logging.getLogger(__name__)
 
@@ -185,12 +185,13 @@ def format_gtip(digits: str | None) -> str:
 class UnifiedSearchEngine:
     """Bütünleşik gümrük arama, otomatik tamamlama ve mevzuat fihristi."""
 
-    def __init__(self, data_dir: Path | None = None) -> None:
+    def __init__(self, data_dir: Path | None = None, vat_index: Any = None) -> None:
         self.data_dir = data_dir or DATA_DIR
         self.tariff_db = self.data_dir / "tariff.sqlite3"
         self.controls_db = self.data_dir / "controls.sqlite3"
         self.trade_db = self.data_dir / "trade_measures.sqlite3"
         self.excise_index = ExciseTaxIndex()
+        self.vat_index = vat_index  # vat_lists.VatRateIndex; yoksa sezgisel fasıl kuralı
 
     def _connect_tariff(self) -> sqlite3.Connection | None:
         if not self.tariff_db.exists():
@@ -320,8 +321,9 @@ class UnifiedSearchEngine:
         has_excise = bool(excise_res.get("in_scope"))
         excise_note = excise_res.get("matches", [{}])[0].get("list_label") if has_excise else None
 
-        # KDV tahmini
-        vat = estimate_vat_rate(clean)
+        # KDV önerisi (resmî liste dizini varsa satır bazlı, yoksa sezgisel); otomatik uygulanmaz
+        vat = vat_rate_for(clean, self.vat_index)
+        vat_label = "belirsiz (şarta bağlı)" if vat.get("ambiguous") else (vat.get("list") or "Genel Oran")
 
         # TAREKS / Denetim kontrolü
         has_tareks = False
@@ -361,8 +363,10 @@ class UnifiedSearchEngine:
             "list_name": list_name,
             "has_excise": has_excise,
             "excise_label": excise_note,
-            "vat_rate": vat["rate"],
-            "vat_label": vat["list"],
+            "vat_rate": vat.get("rate"),
+            "vat_label": vat_label,
+            "vat_basis": vat.get("basis"),
+            "vat_ambiguous": bool(vat.get("ambiguous")),
             "has_controls": has_tareks,
             "control_badges": control_titles,
             "source": source,

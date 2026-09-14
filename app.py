@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import html
 import hmac
 import io
@@ -35,7 +36,10 @@ from customs_advisor import (
     decode_image_data_url,
     register_llm_usage_hook,
 )
-from email_service import MailError, ResendEmailSender, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
+from compliance import compliance_report, high_alert_digest
+from email_service import MailError, ResendEmailSender, render_compliance_email, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
+import report_pdf
+from report_pdf import PdfRenderError, render_precheck_report_html, report_footer_html
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
     bedesten_client,
@@ -50,10 +54,12 @@ from mevzuat_mcp_server import (
     tariff_engine,
     ticaret_client,
     trade_measure_engine,
+    vat_rate_index,
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
 from countries import COUNTRIES, PENDING_AGREEMENTS
-from origin_documents import origin_document_requirements
+from savings import evaluate_scenarios, rank_savings
+from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, detect_bot_wall, extract_product_page
 from shipping_documents import decode_document_data_url, extract_shipping_document
 from mevzuat_mcp_server import (
@@ -61,10 +67,12 @@ from mevzuat_mcp_server import (
     app as mcp,
 )
 from security_firewall import AgentTokenVerifier, SecurityViolation, guard_data, redact_data
+from temporal import normalise_as_of, parse_iso_date, today_iso
 from exchange_rates import ExchangeRateError, parse_registration_date
 from eylemio_client import EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, summary_lines as trade_measure_summary
 from tax_lists import summary_lines as excise_tax_summary
+from vat_lists import summary_lines as vat_rate_summary
 from tariff_engine import LandedCostInput
 from unified_search import UnifiedSearchEngine
 
@@ -82,7 +90,7 @@ account_service = AccountService(google_auth.data_dir)
 stripe_billing = StripeBilling()
 email_sender = ResendEmailSender()
 agent_identity = AgentTokenVerifier()
-unified_search = UnifiedSearchEngine()
+unified_search = UnifiedSearchEngine(vat_index=vat_rate_index)
 
 
 def _track_llm_telemetry(
@@ -665,6 +673,31 @@ async def web_account(request: Request):
         return JSONResponse(account_service.account(user), headers={"Cache-Control": "no-store"})
     except AuthError as exc:
         return _auth_error(exc)
+
+
+def _build_compliance_report(google_sub: str) -> dict[str, Any]:
+    """Deterministic compliance dashboard for one user (PRD Faz 2.6); no LLM involved."""
+    return compliance_report(
+        account_service, google_sub,
+        ledger=change_ledger, trade_engine=trade_measure_engine, control_engine=control_engine,
+    )
+
+
+@mcp.custom_route("/api/account/compliance", methods=["GET"])
+async def web_account_compliance(request: Request):
+    limited = _rate_limit_response(request, "account-compliance", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        user = _required_user(request)
+        report = await asyncio.to_thread(_build_compliance_report, str(user["sub"]))
+        report["email_alerts"] = "change_alerts" in account_service.capabilities_for(user)
+        return JSONResponse(report, headers={"Cache-Control": "no-store"})
+    except AuthError as exc:
+        return _auth_error(exc)
+    except Exception:
+        logger.exception("Compliance report failed")
+        return JSONResponse({"error": "Uyum raporu şu anda oluşturulamadı."}, status_code=500, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/account", methods=["DELETE"])
@@ -1799,6 +1832,7 @@ async def web_customs_ingest_shipping_document(request: Request):
         )
     data = result.model_dump(mode="json")
     data["document_type_label"] = result.document_type_label
+    data["payment_method_label"] = result.payment_method_label
     return JSONResponse(redact_data(data, contact_data=True))
 
 
@@ -1953,6 +1987,85 @@ async def web_email_precheck(request: Request):
         return JSONResponse({"error": "E-posta şu anda gönderilemedi; kısa süre sonra yeniden deneyin."}, status_code=502)
 
 
+REPORT_PDF_MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@mcp.custom_route("/api/customs/report.pdf", methods=["POST"])
+async def web_customs_report_pdf(request: Request):
+    """Server-rendered PDF of a precheck dossier with the mandatory legal footer (pdf_report feature).
+
+    Body: ``{"dossier_id": "..."}`` (saved dossier of the signed user) or
+    ``{"result": {...}}`` (a precheck result as returned by the API). No quota is
+    consumed; the report is a presentation of an already paid-for analysis.
+    """
+    limited = _rate_limit_response(request, "customs-report-pdf", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        require_feature(request, "pdf_report")
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        declared = int(request.headers.get("content-length", "0") or 0)
+        raw = b"" if declared > REPORT_PDF_MAX_BODY_BYTES else await request.body()
+        if declared > REPORT_PDF_MAX_BODY_BYTES or len(raw) > REPORT_PDF_MAX_BODY_BYTES:
+            raise ValueError("Rapor verisi 2 MB sınırını aşıyor.")
+        body = json.loads(raw or b"{}")
+        if not isinstance(body, dict):
+            raise ValueError("Rapor isteği bir nesne olmalıdır.")
+        dossier_id = str(body.get("dossier_id") or "").strip()
+        if dossier_id:
+            dossier = account_service.get_dossier(user, dossier_id)
+            payload = dossier["payload"]
+            report_id = re.sub(r"[^a-z0-9]", "", str(dossier["id"]).lower())[:8] or "dosya"
+        else:
+            payload = body.get("result")
+            if not isinstance(payload, dict):
+                raise ValueError("Rapor için analiz sonucu eksik.")
+            guard_data(payload, path="PDF raporu")
+            report_id = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:8]
+        result = CustomsPrecheckResult.model_validate(payload)
+        generated_at = datetime.now(UTC).isoformat(timespec="seconds")
+        generated_for = str(user.get("name") or user.get("email") or "Kayıtlı kullanıcı").strip()[:120]
+        html_report = render_precheck_report_html(
+            result, base_url=PUBLIC_BASE_URL, generated_for=generated_for, generated_at=generated_at
+        )
+        pdf = await report_pdf.render_pdf(html_report, footer_html=report_footer_html(result))
+        logger.info(
+            "PDF ön değerlendirme raporu üretildi: rapor=%s kaynak=%s bayt=%d renderer=%s",
+            report_id, "dossier" if dossier_id else "result", len(pdf), report_pdf.renderer_mode(),
+        )
+        return Response(
+            pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="gumruksor-on-degerlendirme-{report_id}.pdf"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Dosya verisi doğrulanamadı.")
+        return JSONResponse({"error": f"Dosya verisi doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Rapor isteği çözümlenemedi."}, status_code=422)
+    except PdfRenderError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("PDF ön değerlendirme raporu üretilemedi")
+        return JSONResponse({"error": "PDF raporu şu anda oluşturulamadı; kısa süre sonra yeniden deneyin."}, status_code=503)
+
+
 @mcp.custom_route("/api/tariff/countries", methods=["GET"])
 async def web_tariff_countries(request: Request):
     """Canonical origin/dispatch country list shared by the tariff and origin-document modules."""
@@ -2020,6 +2133,19 @@ async def web_classification_evidence(request: Request):
         return JSONResponse({"error": "Resmî sınıflandırma kanıtları şu anda sorgulanamadı."}, status_code=502)
 
 
+
+def _as_of_param(request: Request, body: dict[str, Any] | None, *, query: bool = False) -> str | None:
+    """Validate the optional as-of date; a past date requires the temporal_query feature.
+
+    Today (or no date) is the normal current lookup and stays open to everyone.
+    """
+    raw = (request.query_params.get("as_of") if query else None) or (body or {}).get("as_of")
+    as_of = normalise_as_of(raw)  # ValueError → 422 by the caller
+    if as_of and as_of < today_iso():
+        require_feature(request, "temporal_query")
+    return as_of
+
+
 @mcp.custom_route("/api/tariff/lookup", methods=["POST"])
 async def web_tariff_lookup(request: Request):
     """Look up official customs/IGV rows for a 6/8/10/12 digit tariff code and origin."""
@@ -2030,13 +2156,19 @@ async def web_tariff_lookup(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Tarife isteği bir nesne olmalıdır.")
+        as_of = _as_of_param(request, body)
         result = await tariff_engine.lookup(
             str(body.get("gtip", "")),
             origin_country=str(body.get("origin_country", "")).strip()[:100] or None,
             dispatch_country=str(body.get("dispatch_country", "") or "").strip()[:100] or None,
             atr_certificate=_tri_state(body.get("atr_certificate")),
+            as_of=as_of,
         )
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2054,11 +2186,17 @@ async def web_tariff_tree(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Tarife karar ağacı isteği bir nesne olmalıdır.")
+        as_of = _as_of_param(request, body)
         result = await tariff_engine.decision_tree(
             str(body.get("gtip", "")),
             origin_country=str(body.get("origin_country", "")).strip() or None,
+            as_of=as_of,
         )
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2080,11 +2218,18 @@ async def web_tariff_cost(request: Request):
         origin = str(body.pop("origin_country", "")).strip()[:100]
         dispatch = str(body.pop("dispatch_country", "") or "").strip()[:100] or None
         atr_certificate = _tri_state(body.pop("atr_certificate", None))
+        as_of = _as_of_param(request, {"as_of": body.pop("as_of", None)})
         if not origin:
             raise ValueError("Menşe ülke gereklidir.")
         inputs = LandedCostInput.model_validate(body)
-        result = await tariff_engine.calculate(gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate)
+        result = await tariff_engine.calculate(
+            gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
+        )
         return JSONResponse(result)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except ValidationError as exc:
         message = exc.errors(include_url=False)[0].get("msg", "Alanları kontrol edin.")
         return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
@@ -2128,7 +2273,14 @@ async def web_trade_measures(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("İstek bir nesne olmalıdır.")
-        report = trade_measure_engine.lookup(str(body.get("gtip", "")), (body.get("origin_country") or None))
+        as_of = _as_of_param(request, body)
+        report = trade_measure_engine.lookup(
+            str(body.get("gtip", "")), (body.get("origin_country") or None), today=parse_iso_date(as_of) if as_of else None
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     payload = report.as_dict()
@@ -2159,6 +2311,21 @@ async def web_excise_tax(request: Request):
     report = excise_tax_index.lookup(str(body.get("gtip", "")))
     report["summary"] = excise_tax_summary(report)
     return JSONResponse(report)
+
+
+@mcp.custom_route("/api/tariff/vat", methods=["GET"])
+async def web_vat_rate(request: Request):
+    """2007/13033 sayılı Karar eki (I)/(II) sayılı listelerden KDV oranı önerisi (onay gerekir)."""
+    limited = _rate_limit_response(request, "vat-rate", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    gtip = re.sub(r"\D", "", str(request.query_params.get("gtip") or ""))
+    if not 2 <= len(gtip) <= 12:
+        return JSONResponse({"error": "GTİP 2-12 haneli olmalıdır (?gtip=...)."}, status_code=422)
+    report = vat_rate_index.lookup(gtip)
+    report["summary"] = vat_rate_summary(report)
+    report["status"] = vat_rate_index.status()
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/tariff/communiques", methods=["GET"])
@@ -2323,6 +2490,22 @@ async def web_tariff_bulk(request: Request):
         return JSONResponse({"error": "Toplu hesap şu anda tamamlanamadı."}, status_code=502)
 
 
+def _parse_scenario_body(body: Any) -> tuple[str, list[str], str | None, bool | None]:
+    """Shared validation for the origin-scenario and savings routes."""
+    if not isinstance(body, dict):
+        raise ValueError("Senaryo isteği bir nesne olmalıdır.")
+    gtip = str(body.get("gtip", "")).strip()
+    origins_raw = body.get("origins", [])
+    if not isinstance(origins_raw, list):
+        raise ValueError("Menşe listesi geçersiz.")
+    origins = list(dict.fromkeys(str(item).strip()[:100] for item in origins_raw if str(item).strip()))[:6]
+    dispatch = str(body.get("dispatch_country", "") or "").strip()[:100] or None
+    atr_certificate = _tri_state(body.get("atr_certificate"))
+    if not gtip or len(origins) < 2:
+        raise ValueError("Karşılaştırma için tarife kodu ve en az iki farklı menşe ülke gereklidir.")
+    return gtip, origins, dispatch, atr_certificate
+
+
 @mcp.custom_route("/api/tariff/scenarios", methods=["POST"])
 async def web_tariff_scenarios(request: Request):
     """Compare deterministic tariff burden and origin documents across origin countries."""
@@ -2337,45 +2520,78 @@ async def web_tariff_scenarios(request: Request):
         return _auth_error(exc)
     try:
         body = await request.json()
-        if not isinstance(body, dict):
-            raise ValueError("Senaryo isteği bir nesne olmalıdır.")
-        gtip = str(body.get("gtip", "")).strip()
-        origins_raw = body.get("origins", [])
-        if not isinstance(origins_raw, list):
-            raise ValueError("Menşe listesi geçersiz.")
-        origins = list(dict.fromkeys(str(item).strip()[:100] for item in origins_raw if str(item).strip()))[:6]
-        dispatch = str(body.get("dispatch_country", "") or "").strip()[:100] or None
-        atr_certificate = _tri_state(body.get("atr_certificate"))
-        if not gtip or len(origins) < 2:
-            raise ValueError("Karşılaştırma için tarife kodu ve en az iki farklı menşe ülke gereklidir.")
-        rows = []
-        for origin in origins:
-            lookup = await tariff_engine.lookup(gtip, origin_country=origin, dispatch_country=dispatch, atr_certificate=atr_certificate)
-            documents = origin_document_requirements(origin, gtip=lookup.gtip, dispatch_country=dispatch)
-            rows.append(
-                {
-                    "origin_country": origin,
-                    "dispatch_country": dispatch,
-                    "status": lookup.status,
-                    "origin_recognised": lookup.origin_recognised,
-                    "resolved_country_group": lookup.resolved_country_group,
-                    "matched_gtip_count": lookup.matched_gtip_count,
-                    "unambiguous_rates": lookup.unambiguous_rates or {},
-                    "ambiguous_measure_types": lookup.ambiguous_measure_types,
-                    "atr_free_circulation": lookup.atr_free_circulation,
-                    "atr_available": lookup.atr_available,
-                    "origin_proof_required": lookup.origin_proof_required,
-                    "fallback_rates": lookup.fallback_rates,
-                    "origin_documents": documents.model_dump(mode="json") if documents else None,
-                    "warnings": lookup.warnings,
-                }
-            )
-        return JSONResponse({"gtip": gtip, "dispatch_country": dispatch, "rows": rows, "generated_at": time.time()})
+        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(body)
+        as_of = _as_of_param(request, body)
+        rows = await build_origin_scenarios(
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
+        )
+        return JSONResponse({"gtip": gtip, "dispatch_country": dispatch, "as_of": as_of, "rows": rows, "generated_at": time.time()})
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
         logger.exception("Tariff scenario comparison failed")
         return JSONResponse({"error": "Menşe senaryoları şu anda karşılaştırılamadı."}, status_code=502)
+
+
+@mcp.custom_route("/api/tariff/savings", methods=["POST"])
+async def web_tariff_savings(request: Request):
+    """Rank origin scenarios by landed cost with the user's cost inputs (decision support, not advice)."""
+    limited = _rate_limit_response(request, "tariff-savings", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "scenario_compare")
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        body = await request.json()
+        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(body)
+        baseline_origin = str(body.get("baseline_origin", "") or "").strip()[:100] or None
+        cost_body = body.get("cost")
+        if not isinstance(cost_body, dict):
+            raise ValueError("Tasarruf önerisi için maliyet girdileri (cost) gereklidir; en az fatura bedelini girin.")
+        cost_input = LandedCostInput.model_validate(cost_body)
+        rows = await build_origin_scenarios(
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate
+        )
+        atr_rows = None
+        atr_origins = [row["origin_country"] for row in rows if row.get("atr_available") and not row.get("atr_free_circulation")]
+        if atr_origins and atr_certificate is not True:
+            atr_rows = await build_origin_scenarios(
+                tariff_engine, gtip, atr_origins, dispatch_country=dispatch, atr_certificate=True
+            )
+        outcomes = evaluate_scenarios(rows, cost_input, atr_rows=atr_rows, atr_certificate=atr_certificate)
+        ranking = rank_savings(outcomes, baseline_origin)
+        baseline_note = None
+        if baseline_origin and not any(origin.casefold() == baseline_origin.casefold() for origin in origins):
+            baseline_note = "Temel senaryo menşe listesinde bulunmadığı için en yüksek maliyetli senaryo temel alındı."
+        return JSONResponse(
+            {
+                "gtip": gtip,
+                "dispatch_country": dispatch,
+                "atr_certificate": atr_certificate,
+                "baseline_origin": baseline_origin,
+                "baseline_note": baseline_note,
+                "currency": cost_input.currency,
+                "rows_evaluated": len(outcomes),
+                **ranking,
+                "generated_at": time.time(),
+            }
+        )
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Alanları kontrol edin.")
+        return JSONResponse({"error": f"Maliyet girdileri doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Tariff savings ranking failed")
+        return JSONResponse({"error": "Tasarruf önerisi şu anda hesaplanamadı."}, status_code=502)
 
 
 @mcp.custom_route("/api/controls/status", methods=["GET"])
@@ -2396,8 +2612,13 @@ async def web_control_lookup(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Kontrol isteği bir nesne olmalıdır.")
-        result = await control_engine.lookup(str(body.get("gtip", "")))
+        as_of = _as_of_param(request, body)
+        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of)
         return JSONResponse(result.model_dump(mode="json"))
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -2583,6 +2804,52 @@ async def notify_watchlist_changes() -> dict[str, int]:
     return stats
 
 
+async def notify_compliance_alerts(*, today: date | None = None) -> dict[str, int]:
+    """E-mail a digest of high-severity compliance alerts (change_alerts users, at most once a day).
+
+    Two idempotency keys in ``notification_log``: ``day:<date>`` caps delivery at one
+    per calendar day, ``digest:<hash>`` stops the same unchanged set of high alerts from
+    being re-sent on later days.
+    """
+    stats = {"users": 0, "sent": 0, "skipped": 0}
+    today = today or date.today()
+    for recipient in account_service.compliance_recipients():
+        google_sub, email = str(recipient["google_sub"]), str(recipient.get("email") or "")
+        if "change_alerts" not in account_service.capabilities_for({"sub": google_sub, "email": email}):
+            continue
+        if account_service.notification_sent(google_sub, "compliance", f"day:{today.isoformat()}"):
+            continue
+        try:
+            report = await asyncio.to_thread(_build_compliance_report, google_sub)
+        except Exception:
+            logger.exception("Compliance digest failed for %s", google_sub)
+            continue
+        if not report["alert_counts"].get("high"):
+            continue
+        stats["users"] += 1
+        digest = high_alert_digest(report)
+        if account_service.notification_sent(google_sub, "compliance", f"digest:{digest}"):
+            stats["skipped"] += 1
+            continue
+        if not email_sender.configured or not email:
+            stats["skipped"] += 1
+            continue
+        try:
+            await email_sender.send(
+                to=email,
+                subject=f"Uyum özeti: {report['alert_counts']['high']} yüksek öncelikli uyarı",
+                html_body=render_compliance_email(report, PUBLIC_BASE_URL),
+            )
+        except MailError as exc:
+            logger.warning("Compliance digest failed for %s: %s", google_sub, exc)
+            stats["skipped"] += 1
+            continue
+        account_service.mark_notified(google_sub, "compliance", f"day:{today.isoformat()}")
+        account_service.mark_notified(google_sub, "compliance", f"digest:{digest}")
+        stats["sent"] += 1
+    return stats
+
+
 async def watchlist_notification_loop() -> None:
     interval = max(300, int(os.environ.get("WATCHLIST_NOTIFY_INTERVAL_SECONDS", "1800")))
     while True:
@@ -2591,6 +2858,9 @@ async def watchlist_notification_loop() -> None:
             stats = await notify_watchlist_changes()
             if stats["users"]:
                 logger.info("Watch-list notifications: %s", stats)
+            compliance_stats = await notify_compliance_alerts()
+            if compliance_stats["users"]:
+                logger.info("Compliance digests: %s", compliance_stats)
         except asyncio.CancelledError:
             raise
         except Exception:

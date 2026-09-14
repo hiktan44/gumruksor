@@ -1,0 +1,1382 @@
+{
+ "source": "2007/13033 sayılı BKK eki (I) ve (II) sayılı listeler (konsolide metinden derlenmiş tohum)",
+ "source_url": "https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=200713033&MevzuatTur=3&MevzuatTertip=5",
+ "parser_version": 1,
+ "retrieved_at": null,
+ "sha256": null,
+ "note": "Elle derlenmiş tohum verisidir; sunucu çalışırken mevzuat.gov.tr konsolide metni okunabilirse MEVZUAT_DATA_DIR/vat_lists.json ile değiştirilir. verified=false satırlar tarife pozisyonu eşlemesi ya da yürürlükteki oranı doğrulanmamış kalemlerdir. (I) sayılı liste %1, (II) sayılı liste %10, diğerleri %20 (3065 s. KDVK md. 28; 7346 s. CK, 7/7/2023). Gıda maddeleri 5189 s. CK (14/2/2022) ile (I) sayılı listeye alınmıştır. Oranlar yalnız öneridir; maliyet hesabına kullanıcı onayıyla girer.",
+ "rows": [
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Kuru üzüm (I sayılı liste 1 inci sıra: kuru üzüm, kuru incir, kuru kayısı, ceviz, fındık, antep fıstığı, çam fıstığı, yer fıstığı, kestane, leblebi, ayçiçeği çekirdeği, kabak çekirdeği).",
+   "gtip_expressions": [
+    "0806.20"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Kuru kayısı (I sayılı liste 1 inci sıra).",
+   "gtip_expressions": [
+    "0813.10"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Kuru incir (I sayılı liste 1 inci sıra); 08.04.20 pozisyonu taze inciri de kapsar, taze meyve de gıda maddesi olarak %1'dir.",
+   "gtip_expressions": [
+    "0804.20"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Fındık; kabuklu ve kabuksuz (I sayılı liste 1 inci sıra).",
+   "gtip_expressions": [
+    "0802.21",
+    "0802.22"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Ceviz; kabuklu ve kabuksuz (I sayılı liste 1 inci sıra).",
+   "gtip_expressions": [
+    "0802.31",
+    "0802.32"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Antep fıstığı; kabuklu ve kabuksuz (I sayılı liste 1 inci sıra).",
+   "gtip_expressions": [
+    "0802.51",
+    "0802.52"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Kestane (I sayılı liste 1 inci sıra).",
+   "gtip_expressions": [
+    "0802.41",
+    "0802.42"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Yer fıstığı (I sayılı liste 1 inci sıra; 12.02 pozisyonu).",
+   "gtip_expressions": [
+    "1202"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Ayçiçeği çekirdeği (I sayılı liste 1 inci sıra; 12.06 pozisyonu).",
+   "gtip_expressions": [
+    "1206.00"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "1",
+   "text": "Kabak çekirdeği (I sayılı liste 1 inci sıra); tarife pozisyonu eşlemesi doğrulanmadı.",
+   "gtip_expressions": [
+    "1207.70",
+    "1207.99"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 1",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Kuru fasulye, kuru barbunya, kuru bakla, nohut, mercimek (I sayılı liste 3 üncü sıra; 07.13 pozisyonu kuru baklagiller).",
+   "gtip_expressions": [
+    "0713"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Buğday, arpa, mısır, yulaf, çavdar, darı, çeltik (I sayılı liste 3 üncü sıra; 10. fasıl hububat).",
+   "gtip_expressions": [
+    "1001",
+    "1002",
+    "1003",
+    "1004",
+    "1005",
+    "1006.10",
+    "1008"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Soya (I sayılı liste 3 üncü sıra; 12.01 pozisyonu).",
+   "gtip_expressions": [
+    "1201"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Patates (I sayılı liste 3 üncü sıra; 07.01 pozisyonu).",
+   "gtip_expressions": [
+    "0701"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Kuru soğan ve sarımsak (I sayılı liste 3 üncü sıra).",
+   "gtip_expressions": [
+    "0703.10",
+    "0703.20"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Zeytin; taze, salamura ve konserve (I sayılı liste 3 üncü sıra).",
+   "gtip_expressions": [
+    "0709.92",
+    "0711.20",
+    "2005.70"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Zeytinyağı (I sayılı liste 3 üncü sıra; 15.09 ve 15.10 pozisyonları).",
+   "gtip_expressions": [
+    "1509",
+    "1510"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Küçük ve büyükbaş canlı hayvanlar (I sayılı liste 3 üncü sıra; 01.02 sığır, 01.04 koyun ve keçi).",
+   "gtip_expressions": [
+    "0102",
+    "0104"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "3",
+   "text": "Arılar (I sayılı liste 3 üncü sıra: küçük ve büyükbaş hayvanlar (arılar dahil)); 0106.41 pozisyonu eşlemesi doğrulanmadı.",
+   "gtip_expressions": [
+    "0106.41"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 3",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "4",
+   "text": "Buğday unu (I sayılı liste 4 üncü sıra; 11.01 pozisyonu).",
+   "gtip_expressions": [
+    "1101"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 4",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "4",
+   "text": "Buğday unundan imal edilen ekmekler (kepekli olanlar dahil, diğer katkı maddeliler hariç) ve yufka (I sayılı liste 4 üncü sıra); 1905.90 alt pozisyon eşlemesi doğrulanmadı.",
+   "gtip_expressions": [
+    "1905.90"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 4",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "5",
+   "text": "Buğday, arpa, mısır, çeltik, fasulye, yer fıstığı, ayçiçeği, soya, şeker pancarı, patates, pamuk, nohut, yonca, korunga, fiğ, sorgum ve sudan otunun sertifikalı tohumlukları (I sayılı liste 5 inci sıra); tohumluk alt pozisyonları.",
+   "gtip_expressions": [
+    "1001.11",
+    "1001.91",
+    "1003.10",
+    "1005.10",
+    "1006.10.10",
+    "0713.33.10",
+    "1202.30",
+    "1206.00.10",
+    "1201.10",
+    "1209.10",
+    "0701.10",
+    "1207.21",
+    "1209.21",
+    "1209.29",
+    "1007.10"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "sertifikalı",
+    "tohumluk"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 5",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "5",
+   "text": "Sertifikalı meyve fidanları (I sayılı liste 5 inci sıra); 0602.20 pozisyonu eşlemesi doğrulanmadı.",
+   "gtip_expressions": [
+    "0602.20"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "sertifikalı"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 5",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "7",
+   "text": "Suni döllenme için dondurulmuş hayvan spermaları (I sayılı liste 7 nci sıra; 0511.10 sığır spermi).",
+   "gtip_expressions": [
+    "0511.10"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 7",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "8",
+   "text": "Gazete ve dergiler (I sayılı liste 8 inci sıra); 1117 sayılı Kanuna göre poşetlenerek satılanlar genel orana tabidir. Basılı süreli yayınların teslimi 3065 s. KDVK md. 13/n uyarınca 22/2/2019'dan itibaren istisna olabilir; doğrulayın.",
+   "gtip_expressions": [
+    "4902"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç",
+    "poşetlenerek"
+   ],
+   "conditional": true,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 8",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": "9",
+   "text": "Yalnız 'kullanılmış' binek otomobilleri ve esas itibariyle insan taşımak üzere imal edilmiş diğer motorlu taşıtlar (87.03 pozisyonu; 87.02 pozisyonuna girenler ile ambulans, cenaze arabası gibi özel amaçlı taşıtlar hariç). Sıfır araçlar ve KDVK md. 30/b kapsamında indirim hakkı olanların teslimi genel orana tabidir (I sayılı liste 9 uncu sıra).",
+   "gtip_expressions": [
+    "87.03"
+   ],
+   "excluded_expressions": [
+    "87.02"
+   ],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç",
+    "kullanılmış",
+    "yalnız"
+   ],
+   "conditional": true,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste, 9",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Etler ve yenilen sakatat (Türk Gümrük Tarife Cetvelinin 2 no.lu faslında yer alan mallar).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     2,
+     2
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Balıklar, kabuklu hayvanlar, yumuşakçalar (3 no.lu fasıl); 0301.11 ve 0301.19 süs balıkları hariç.",
+   "gtip_expressions": [],
+   "excluded_expressions": [
+    "0301.11",
+    "0301.19"
+   ],
+   "chapter_ranges": [
+    [
+     3,
+     3
+    ]
+   ],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Süt ve süt ürünleri, yumurta, tabii bal (4 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     4,
+     4
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Hayvan bağırsak, mesane ve mideleri (0504.00 pozisyonu); eşleme doğrulanmadı.",
+   "gtip_expressions": [
+    "0504"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Yenilen sebzeler, kökler ve yumrular (7 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     7,
+     7
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Yenilen meyveler ve sert kabuklu meyveler (8 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     8,
+     8
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Kahve, çay, paraguay çayı ve baharat (9 no.lu fasıl); fasıl kapsamının tamamı doğrulanmadı.",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     9,
+     9
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Hububat (10 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     10,
+     10
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Değirmencilik ürünleri, malt, nişasta, inülin, buğday gluteni (11 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     11,
+     11
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Yağlı tohum ve meyveler, muhtelif tane, tohum ve meyveler, sanayide ve tıpta kullanılan bitkiler (12 no.lu fasıl); istisnalar doğrulanmadı.",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     12,
+     12
+    ]
+   ],
+   "conditions": [
+    "sanayi"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Hayvansal ve bitkisel katı ve sıvı yağlar (15 no.lu fasıl); gıda dışı teknik yağlar (15.05, 15.06, 15.18, 15.20-15.22) hariç tutulabilir, doğrulayın.",
+   "gtip_expressions": [],
+   "excluded_expressions": [
+    "1505",
+    "1506",
+    "1518",
+    "1520",
+    "1521",
+    "1522"
+   ],
+   "chapter_ranges": [
+    [
+     15,
+     15
+    ]
+   ],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Et, balık, kabuklu hayvan müstahzarları (16 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     16,
+     16
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Şeker ve şeker mamulleri (17 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     17,
+     17
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Kakao ve kakao müstahzarları (18 no.lu fasıl); fasıl kapsamının tamamı doğrulanmadı.",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     18,
+     18
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Hububat, un, nişasta veya süt müstahzarları; pastacılık ürünleri (19 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     19,
+     19
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Sebze, meyve ve sert kabuklu meyve müstahzarları (20 no.lu fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     20,
+     20
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": true
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Yenilen çeşitli gıda müstahzarları (21 no.lu fasıl); alkollü müstahzarlar (2106.90.20) hariç, doğrulayın.",
+   "gtip_expressions": [],
+   "excluded_expressions": [
+    "2106.90.20"
+   ],
+   "chapter_ranges": [
+    [
+     21,
+     21
+    ]
+   ],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Sular, maden suları (22.01 pozisyonu); eşleme doğrulanmadı.",
+   "gtip_expressions": [
+    "2201"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Alkolsüz içecekler ve meyve suları (22.02 pozisyonu); ÖTV Kanunu eki (III) sayılı listedeki gazlı/kolalı içecekler (2202.10) hariç, doğrulayın.",
+   "gtip_expressions": [
+    "2202"
+   ],
+   "excluded_expressions": [
+    "2202.10"
+   ],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "I",
+   "rate": 1.0,
+   "section": null,
+   "row_no": null,
+   "text": "Sofra tuzu (25.01 pozisyonu); eşleme doğrulanmadı.",
+   "gtip_expressions": [
+    "2501"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (I) sayılı liste ((II) sayılı liste A bölümü gıda maddeleri atfı; 5189 s. CK)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "1",
+   "text": "Kütlü ve elyaf pamuk, linter pamuk, pamuk lifi döküntüleri, natürel veya tops haldeki tiftik, yün ve yapağı.",
+   "gtip_expressions": [
+    "5201",
+    "5202",
+    "5101",
+    "5102",
+    "5105"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/1",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "2",
+   "text": "41.01 pozisyonundaki sığır ve atların, 41.02 pozisyonundaki koyun ve kuzuların (astragan, karakul, persaniye, breitschwanz ve benzerleri, Hint, Çin, Moğolistan ve Tibet kuzuları hariç), 41.03 pozisyonundaki keçi ve oğlakların (Yemen, Moğolistan ve Tibet keçi ve oğlakları hariç) ham post ve derileri.",
+   "gtip_expressions": [
+    "41.01",
+    "41.02",
+    "41.03"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/2",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "3",
+   "text": "İplikler ve iplik imali için hazırlanan her nevi filamentler, lifler; pamuklu, yünlü, ipekli, sentetik, suni veya karışım her nevi mensucat (50-55. fasıllar).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     50,
+     55
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/3",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "4",
+   "text": "Vatka ve keçe (56.01 ve 56.02 pozisyonları); 56. faslın diğer eşyası (ip, halat, ağ) için kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "5601",
+    "5602"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     56,
+     56
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/4",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "9",
+   "text": "Halılar ve diğer dokumaya elverişli maddelerden yer kaplamaları (57. fasıl).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     57,
+     57
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/9",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "4",
+   "text": "Özel mensucat, dantela, kordela, işlemeler, emdirilmiş/sıvanmış mensucat ve örme mensucat (58-60. fasıllar).",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     58,
+     60
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/4",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "5",
+   "text": "Mensucattan mamul iç ve dış giyim eşyası; örme (61. fasıl) ve örülmemiş (62. fasıl); şapka, kravat, kaşkol, kemer, çorap, eldiven dahil.",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     61,
+     62
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/5",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "5",
+   "text": "Havlu, bornoz, perde, çarşaf, yastık, yorgan, battaniye, uyku tulumu, her türlü kılıf ve örtüler ile benzeri ev tekstil ürünleri (yataklar hariç).",
+   "gtip_expressions": [
+    "6301",
+    "6302",
+    "6303",
+    "6304"
+   ],
+   "excluded_expressions": [
+    "9404.21",
+    "9404.29"
+   ],
+   "chapter_ranges": [],
+   "conditions": [
+    "hariç"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/5",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "5",
+   "text": "63. faslın diğer hazır eşyası (çuval, branda, paçavra vb.); kapsam doğrulanmadı.",
+   "gtip_expressions": [],
+   "excluded_expressions": [],
+   "chapter_ranges": [
+    [
+     63,
+     63
+    ]
+   ],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/5",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "6",
+   "text": "İşlenmiş post, deri ve köseleler ile bunların taklitleri (41.04-41.15 pozisyonları); kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "4104",
+    "4105",
+    "4106",
+    "4107",
+    "4112",
+    "4113",
+    "4114",
+    "4115"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/6",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "6",
+   "text": "Deri ve suni deriden mamul giyim eşyası ve aksesuarı (42.03 pozisyonu).",
+   "gtip_expressions": [
+    "4203"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/6",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "7",
+   "text": "Her nevi maddeden mamul ayakkabı, terlik, çizme ve benzerleri (64.01-64.05 pozisyonları).",
+   "gtip_expressions": [
+    "6401",
+    "6402",
+    "6403",
+    "6404",
+    "6405"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/7",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": "8",
+   "text": "Her nevi maddeden mamul çanta, bavul, valiz ve benzerleri (42.02 pozisyonu).",
+   "gtip_expressions": [
+    "4202"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B/8",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Sağlık Bakanlığı tarafından ruhsatlandırılan veya ithaline izin verilen beşeri tıbbi ürünler (30.03 ve 30.04 pozisyonları).",
+   "gtip_expressions": [
+    "3003",
+    "3004"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [
+    "ruhsat"
+   ],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (beşeri tıbbi ürünler sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Diğer eczacılık ürünleri: 30.01, 30.02 (kan, aşı, serum), 30.05 (pansuman), 30.06; kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "3001",
+    "3002",
+    "3005",
+    "3006"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tıbbi ürün ve cihaz sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Tıbbi Cihaz Yönetmeliği kapsamındaki tıbbi cihazlar: 90.18 tıp, cerrahi, dişçilik alet ve cihazları, 90.19 mekanoterapi, 90.21 ortopedik cihaz ve protezler, 90.22 röntgen cihazları; alt pozisyon kapsamı doğrulanmadı.",
+   "gtip_expressions": [
+    "9018",
+    "9019",
+    "9021",
+    "9022"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tıbbi ürün ve cihaz sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Kontakt lensler ve gözlük camları (9001.30, 9001.40, 9001.50); kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "9001.30",
+    "9001.40",
+    "9001.50"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tıbbi ürün ve cihaz sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Engelliler için tekerlekli koltuklar ve benzerleri (87.13 pozisyonu); KDVK md. 17/4-s istisnası ayrıca değerlendirilmeli, doğrulanmadı.",
+   "gtip_expressions": [
+    "8713"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tıbbi ürün ve cihaz sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Kitap ve benzeri yayınlar (49.01 pozisyonu); basılı kitapların teslimi 3065 s. KDVK md. 13/n uyarınca 22/2/2019'dan itibaren istisna olabilir, elektronik yayınlar için oran doğrulanmadı.",
+   "gtip_expressions": [
+    "4901"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (kitap ve benzeri yayınlar sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Sabun (34.01 pozisyonu).",
+   "gtip_expressions": [
+    "3401"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Şampuan (3305.10 pozisyonu).",
+   "gtip_expressions": [
+    "3305.10"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Deterjan ve yıkama müstahzarları (34.02 pozisyonu).",
+   "gtip_expressions": [
+    "3402"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Dezenfektanlar (3808.94 pozisyonu); kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "3808.94"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Tuvalet kağıdı, kağıt havlu, kağıt mendil ve peçete (4818.10, 4818.20, 4818.30 pozisyonları).",
+   "gtip_expressions": [
+    "4818.10",
+    "4818.20",
+    "4818.30"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Diş fırçası (9603.21), diş macunu (3306.10) ve diş iplikleri (3306.20).",
+   "gtip_expressions": [
+    "9603.21",
+    "3306.10",
+    "3306.20"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Kadın hijyen pedleri ve bebek bezleri (96.19 pozisyonu).",
+   "gtip_expressions": [
+    "9619"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (5359 s. CK ile eklenen hijyen ürünleri sırası)",
+   "verified": true
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Tarım makineleri: toprak hazırlama (84.32), hasat ve harman (84.33), süt sağma (8434.10), diğer tarım makineleri (84.36); oran ve kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "8432",
+    "8433",
+    "8434.10",
+    "8436"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tarım makineleri sırası)",
+   "verified": false
+  },
+  {
+   "list": "II",
+   "rate": 10.0,
+   "section": "B",
+   "row_no": null,
+   "text": "Tarım traktörleri (8701.91-8701.95 alt pozisyonları); oran ve kapsam doğrulanmadı.",
+   "gtip_expressions": [
+    "8701.91",
+    "8701.92",
+    "8701.93",
+    "8701.94",
+    "8701.95"
+   ],
+   "excluded_expressions": [],
+   "chapter_ranges": [],
+   "conditions": [],
+   "conditional": false,
+   "legal_basis": "2007/13033 s. BKK eki (II) sayılı liste, B bölümü (tarım makineleri sırası)",
+   "verified": false
+  }
+ ]
+}
