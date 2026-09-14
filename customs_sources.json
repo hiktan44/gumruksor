@@ -140,6 +140,36 @@
       "title": "Güncel AB sınıflandırma tüzükleri konsolide listesi",
       "authority": "European Commission – DG TAXUD",
       "url": "https://taxation-customs.ec.europa.eu/news/big-step-simplification-commission-publishes-consolidated-list-classification-regulations-2025-05-12_en"
+    },
+    {
+      "id": "uk_trade_tariff",
+      "title": "UK Integrated Online Tariff (açık API)",
+      "authority": "HM Revenue & Customs",
+      "url": "https://www.trade-tariff.service.gov.uk/find_commodity"
+    },
+    {
+      "id": "uk_atar",
+      "title": "Birleşik Krallık Bağlayıcı Tarife Kararı (Advance Tariff Ruling)",
+      "authority": "GOV.UK",
+      "url": "https://www.gov.uk/guidance/apply-for-an-advance-tariff-ruling"
+    },
+    {
+      "id": "eu_access2markets",
+      "title": "Access2Markets – AB ürün ve menşe bazlı vergi/koşul sorgusu",
+      "authority": "European Commission – DG TRADE",
+      "url": "https://trade.ec.europa.eu/access-to-markets/en/home"
+    },
+    {
+      "id": "ch_tares",
+      "title": "Tares – İsviçre gümrük tarifesi sorgu ekranı",
+      "authority": "Bundesamt für Zoll und Grenzsicherheit (BAZG)",
+      "url": "https://xtares.admin.ch/tares/"
+    },
+    {
+      "id": "ch_bazg",
+      "title": "BAZG – İsviçre Federal Gümrük ve Sınır Güvenliği Dairesi",
+      "authority": "Bundesamt für Zoll und Grenzsicherheit (BAZG)",
+      "url": "https://www.bazg.admin.ch/en"
     }
   ]
 }

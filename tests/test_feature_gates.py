@@ -80,6 +80,30 @@ class FeatureGateRouteTests(unittest.TestCase):
             self.assertNotIn(as_admin.status_code, (401, 403), as_admin.text)
         self.assertGreaterEqual(lookup.await_count, 2)
 
+    def test_foreign_tariff_route_is_gated_and_link_only_for_eu(self) -> None:
+        anonymous = self.request("GET", "/api/foreign/tariff?gtip=851713000000&jurisdiction=eu")
+        self.assertEqual(anonymous.status_code, 401)
+
+        locked = self.request("GET", "/api/foreign/tariff?gtip=851713000000&jurisdiction=eu", self.free)
+        self.assertEqual(locked.status_code, 403, locked.text)
+        self.assertEqual(locked.json()["feature"], "foreign_tariff")
+
+        # AB ve İsviçre için ağ çağrısı yapılmaz: yalnız resmî sorgu bağlantısı döner.
+        allowed = self.request("GET", "/api/foreign/tariff?gtip=851713000000&origin=TR&jurisdiction=eu", self.paid)
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        payload = allowed.json()
+        self.assertEqual(len(payload["results"]), 1)
+        result = payload["results"][0]
+        self.assertEqual(result["jurisdiction"], "eu")
+        self.assertEqual(result["data_kind"], "links")
+        self.assertIsNone(result["third_country_duty"])
+        self.assertTrue(result["links"])
+        self.assertIn("hesabına aktarılmaz", payload["calculation_note"])
+
+    def test_foreign_tariff_rejects_short_code(self) -> None:
+        response = self.request("GET", "/api/foreign/tariff?gtip=8517&jurisdiction=ch", self.paid)
+        self.assertEqual(response.status_code, 422, response.text)
+
     def test_bulk_costing_is_premium_only(self) -> None:
         body = {"rows": [{"gtip": "851712", "invoice_value": 100}]}
         locked = self.request("POST", "/api/tariff/bulk", self.paid, json=body)

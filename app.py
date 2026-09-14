@@ -52,6 +52,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    foreign_tariff_engine,
     hybrid_index,
     review_service,
     tariff_engine,
@@ -2568,6 +2569,43 @@ async def web_trade_measures_status(request: Request):
     return JSONResponse(trade_measure_engine.status())
 
 
+@mcp.custom_route("/api/foreign/tariff", methods=["GET"])
+async def web_foreign_tariff(request: Request):
+    """Yurt dışı tarife karşılaştırma: BK açık API'sinden oran, AB/İsviçre için resmî sorgu bağlantısı."""
+    limited = _rate_limit_response(request, "foreign-tariff", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "foreign_tariff")
+        as_of = _as_of_param(request, {}, query=True)
+        result = await foreign_tariff_engine.lookup(
+            str(request.query_params.get("gtip", "")),
+            origin=(request.query_params.get("origin") or None),
+            jurisdiction=str(request.query_params.get("jurisdiction", "all")),
+            as_of=as_of,
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except SecurityViolation as exc:
+        return JSONResponse({"error": str(exc), "code": exc.code}, status_code=403)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Foreign tariff lookup failed")
+        return JSONResponse({"error": "Yurt dışı tarife verisi şu anda alınamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
+
+
+@mcp.custom_route("/api/foreign/tariff/status", methods=["GET"])
+async def web_foreign_tariff_status(request: Request):
+    limited = _rate_limit_response(request, "foreign-tariff-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(foreign_tariff_engine.status())
+
+
 @mcp.custom_route("/api/tariff/excise", methods=["POST"])
 async def web_excise_tax(request: Request):
     """4760 sayılı ÖTV Kanunu ekli listelerinde GTİP kapsamı."""
@@ -3405,6 +3443,7 @@ async def health_check(request):
     tariff_status = tariff_engine.status()
     control_status = control_engine.status()
     classification_status = classification_engine.status()
+    foreign_status = foreign_tariff_engine.status()
     return JSONResponse({
         "status": "healthy",
         "service": "Mevzuat MCP Server",
@@ -3418,9 +3457,14 @@ async def health_check(request):
         "control_scope_rows": control_status.scope_count,
         "classification_evidence_ready": classification_status.ready,
         "classification_evidence_pages": classification_status.page_count,
+        "foreign_tariff_ready": foreign_status.get("ready", False),
+        "foreign_tariff_chapters": foreign_status.get("chapter_count", 0),
         "review_mode": review_service.policy.mode,
         "pending_reviews": (
-            tariff_status.pending_review_count + control_status.pending_review_count + classification_status.pending_review_count
+            tariff_status.pending_review_count
+            + control_status.pending_review_count
+            + classification_status.pending_review_count
+            + int(foreign_status.get("pending_review_count", 0))
         ),
     })
 

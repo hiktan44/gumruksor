@@ -27,6 +27,7 @@ CORPUS_OFFICIAL_PAGES = "official_pages"
 CORPUS_EXCISE = "excise_tax"
 CORPUS_VAT = "vat_lists"
 CORPUS_TARIFF = "tariff_descriptions"
+CORPUS_FOREIGN_TARIFF = "foreign_tariff"
 PAGE_CHUNK_CHARS = 1200
 
 
@@ -295,6 +296,13 @@ def tariff_description_documents(engine: Any, *, limit: int = 20_000) -> list[di
     return docs
 
 
+def foreign_tariff_documents(engine: Any, limit: int = 4000) -> list[dict[str, Any]]:
+    """Yurt dışı (Birleşik Krallık) nomenklatür satırları; İngilizce ürün ifadelerini yakalar."""
+    if engine is None:
+        return []
+    return list(engine.corpus_rows(limit=limit))
+
+
 def collect_all(
     *,
     control_engine: Any = None,
@@ -303,6 +311,7 @@ def collect_all(
     excise_index: Any = None,
     vat_index: Any = None,
     tariff_engine: Any = None,
+    foreign_tariff_engine: Any = None,
     sources_path: str | Path | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Tüm korpusları toplar; tek bir kaynak hatası diğerlerini engellemez."""
@@ -314,6 +323,7 @@ def collect_all(
         (CORPUS_EXCISE, lambda: excise_documents(excise_index) if excise_index is not None else []),
         (CORPUS_VAT, lambda: vat_documents(vat_index) if vat_index is not None else []),
         (CORPUS_TARIFF, lambda: tariff_description_documents(tariff_engine) if tariff_engine is not None else []),
+        (CORPUS_FOREIGN_TARIFF, lambda: foreign_tariff_documents(foreign_tariff_engine)),
     ]
     result: dict[str, list[dict[str, Any]]] = {}
     for corpus, feeder in feeders:
@@ -334,4 +344,5 @@ __all__ = [
     "excise_documents",
     "vat_documents",
     "tariff_description_documents",
+    "foreign_tariff_documents",
 ]

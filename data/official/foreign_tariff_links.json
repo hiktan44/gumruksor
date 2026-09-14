@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-14",
+  "note": "Resmî sorgu bağlantısı şablonları. Yer tutucular: {code12} {code10} {code8} {hs6} {heading} {chapter} {area} {date_compact} {date_iso}. Her bağlantı yayımlanmadan önce canlı olarak doğrulanmıştır.",
+  "jurisdictions": [
+    {
+      "code": "uk",
+      "label": "Birleşik Krallık",
+      "authority": "HM Revenue & Customs – UK Integrated Online Tariff",
+      "data_kind": "api",
+      "hosts": ["trade-tariff.service.gov.uk", "gov.uk"],
+      "note": "Birleşik Krallık tarifesi anahtarsız açık JSON API ile yayımlanır; oranlar doğrudan resmî ölçü satırlarından okunur.",
+      "links": [
+        {
+          "id": "uk_commodity",
+          "title": "UK Tarifesi – emtia kodu sayfası",
+          "url": "https://www.trade-tariff.service.gov.uk/commodities/{code10}",
+          "requires": ["code10"],
+          "authority": "HM Revenue & Customs"
+        },
+        {
+          "id": "uk_find_commodity",
+          "title": "UK Tarifesi – kod arama",
+          "url": "https://www.trade-tariff.service.gov.uk/find_commodity",
+          "authority": "HM Revenue & Customs"
+        },
+        {
+          "id": "uk_atar",
+          "title": "UK Bağlayıcı Tarife Kararı (Advance Tariff Ruling) başvurusu",
+          "url": "https://www.gov.uk/guidance/apply-for-an-advance-tariff-ruling",
+          "authority": "GOV.UK",
+          "note": "Birleşik Krallık'ta BTB karşılığı ATaR kararıdır."
+        }
+      ]
+    },
+    {
+      "code": "eu",
+      "label": "Avrupa Birliği",
+      "authority": "European Commission – DG TAXUD",
+      "data_kind": "links",
+      "hosts": ["ec.europa.eu", "europa.eu"],
+      "note": "AB, TARIC ve EBTI verisini makine okunur açık uç nokta olarak yayımlamıyor; danışma ekranları oturum tabanlı çalıştığı için oran otomatik alınamaz. Aşağıdaki bağlantılar sorguyu resmî ekranda hazır açar.",
+      "links": [
+        {
+          "id": "eu_taric_measures",
+          "title": "TARIC – ölçüler (menşe ve tarih ile)",
+          "url": "https://ec.europa.eu/taxation_customs/dds2/taric/measures.jsp?Lang=en&SimDate={date_compact}&Area={area}&Taric={code10}",
+          "requires": ["code10", "area"],
+          "authority": "European Commission – DG TAXUD"
+        },
+        {
+          "id": "eu_taric_consultation",
+          "title": "TARIC – tarife danışması",
+          "url": "https://ec.europa.eu/taxation_customs/dds2/taric/taric_consultation.jsp?Lang=en&Taric={code10}",
+          "requires": ["code10"],
+          "authority": "European Commission – DG TAXUD"
+        },
+        {
+          "id": "eu_ebti_consultation",
+          "title": "EBTI – Avrupa Bağlayıcı Tarife Bilgisi sorgusu",
+          "url": "https://ec.europa.eu/taxation_customs/dds2/ebti/ebti_consultation.jsp?Lang=en",
+          "authority": "European Commission – DG TAXUD",
+          "note": "Kod alanına {code8} yazılarak sorgulanır; ekran doğrudan bağlantı ile sonuç döndürmez."
+        },
+        {
+          "id": "eu_access2markets",
+          "title": "Access2Markets – ürün ve menşe bazlı vergi/koşul sorgusu",
+          "url": "https://trade.ec.europa.eu/access-to-markets/en/search?product={hs6}&origin={area}&destination=DE",
+          "requires": ["hs6", "area"],
+          "authority": "European Commission – DG TRADE",
+          "note": "Varış ülkesi örnek olarak Almanya seçilmiştir; ekranda değiştirilebilir."
+        }
+      ]
+    },
+    {
+      "code": "ch",
+      "label": "İsviçre",
+      "authority": "Bundesamt für Zoll und Grenzsicherheit (BAZG)",
+      "data_kind": "links",
+      "hosts": ["admin.ch"],
+      "note": "İsviçre Tares tarifesi açık uç nokta yayımlamıyor; sorgu ekranı koşul/giriş kontrolünden geçiyor, bu nedenle oran otomatik alınamaz.",
+      "links": [
+        {
+          "id": "ch_tares",
+          "title": "Tares – İsviçre gümrük tarifesi sorgu ekranı",
+          "url": "https://xtares.admin.ch/tares/",
+          "authority": "BAZG",
+          "note": "Ekran açıldıktan sonra tarife numarası alanına {code8} yazılır."
+        },
+        {
+          "id": "ch_bazg",
+          "title": "BAZG – Federal Gümrük ve Sınır Güvenliği Dairesi",
+          "url": "https://www.bazg.admin.ch/en",
+          "authority": "BAZG"
+        },
+        {
+          "id": "ch_fedlex_tariff_act",
+          "title": "Fedlex – İsviçre Gümrük Tarifesi Kanunu (SR 632.10)",
+          "url": "https://www.fedlex.admin.ch/eli/cc/1987/1871_1871_1871/de",
+          "authority": "Schweizerische Bundeskanzlei"
+        }
+      ]
+    }
+  ]
+}

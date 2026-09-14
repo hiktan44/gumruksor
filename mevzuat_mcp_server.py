@@ -51,6 +51,7 @@ from tariff_engine import (
     TariffSyncStatus,
 )
 from control_engine import ImportControlEngine, ImportControlLookupResult, ControlSyncStatus
+from foreign_tariff import SYNC_ENABLED as FOREIGN_TARIFF_SYNC_ENABLED, ForeignTariffEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
 from classification_evidence import (
@@ -92,20 +93,29 @@ tariff_engine.vat_rates = vat_rate_index
 eylemio_client = EylemioClient()
 control_engine = ImportControlEngine()
 classification_engine = ClassificationEvidenceEngine()
+# Yurt dışı tarife karşılaştırma (PRD Faz 4): UK açık API'si + AB/İsviçre resmî bağlantıları.
+foreign_tariff_engine = ForeignTariffEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
 control_engine.ledger = change_ledger
 classification_engine.ledger = change_ledger
+foreign_tariff_engine.ledger = change_ledger
 trade_measure_engine.store.ledger = change_ledger
 # Editorial review gate (DATA_REVIEW_MODE=off|auto|strict); shared by the engines and the admin API.
 review_policy = policy_from_env()
 tariff_engine.review_policy = review_policy
 control_engine.review_policy = review_policy
 classification_engine.review_policy = review_policy
+foreign_tariff_engine.review_policy = review_policy
 review_service = ReviewService(
     policy=review_policy,
-    engines={"tariff": tariff_engine, "controls": control_engine, "classification": classification_engine},
+    engines={
+        "tariff": tariff_engine,
+        "controls": control_engine,
+        "classification": classification_engine,
+        "foreign_tariff": foreign_tariff_engine,
+    },
     ledger=change_ledger,
 )
 customs_advisor_service = CustomsAdvisor(
@@ -131,6 +141,8 @@ customs_assistant = CustomsAssistant(
 BACKGROUND_LOOPS: list[tuple[str, "Callable[[], Coroutine[Any, Any, None]]"]] = []
 BACKGROUND_LOOPS.append(("trade-measures-sync", trade_measure_engine.periodic_sync_loop))
 BACKGROUND_LOOPS.append(("vat-lists-sync", vat_rate_index.periodic_sync_loop))
+if FOREIGN_TARIFF_SYNC_ENABLED:
+    BACKGROUND_LOOPS.append(("foreign-tariff-sync", foreign_tariff_engine.periodic_sync_loop))
 
 
 async def backfill_change_ledger() -> None:
@@ -147,6 +159,7 @@ async def backfill_change_ledger() -> None:
                 # Temporal validity: close open intervals of superseded snapshots (PRD Faz 1.4).
                 "tariff_validity": tariff_engine.backfill_validity(),
                 "control_validity": control_engine.backfill_validity(),
+                "foreign_tariff": foreign_tariff_engine.backfill_ledger(),
             }
         )
         if any(counts.values()):
@@ -176,6 +189,7 @@ async def hybrid_index_refresh_loop() -> None:
                 excise_index=excise_tax_index,
                 vat_index=vat_rate_index,
                 tariff_engine=tariff_engine,
+                foreign_tariff_engine=foreign_tariff_engine,
             )
             counts = await hybrid_index.refresh(corpora)
             logger.info("Hybrid index refresh: %s", counts)
@@ -2782,6 +2796,37 @@ async def lookup_trade_measures(
     payload = report.as_dict()
     payload["summary"] = trade_measure_summary(report)
     return payload
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "Yurt dışı tarifeyi karşılaştır (BK / AB / İsviçre)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def compare_foreign_tariff(
+    gtip: str = Field(..., min_length=6, max_length=20, description="En az 6 haneli GTİP/HS kodu; eşleşme HS-6 düzeyindedir."),
+    origin_country: Optional[str] = Field(None, max_length=100, description="Menşe ülke; tercihli oran eşleştirmesi için kullanılır."),
+    jurisdiction: str = Field("all", description="uk | eu | ch | all"),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Sorgu tarihi (YYYY-AA-GG); resmî bağlantılar bu tarihle açılır."),
+) -> dict:
+    """Compare the Turkish code against the UK tariff (live API) and EU/Swiss official query links.
+
+    Birleşik Krallık verisi resmî açık API'den oran düzeyinde çekilir. AB (TARIC/EBTI) ve
+    İsviçre (Tares) makine okunur açık veri yayımlamadığı için yalnız resmî sorgu bağlantısı
+    döner. Hiçbir yabancı oran Türkiye maliyet hesabına aktarılmaz.
+    """
+    try:
+        result = await foreign_tariff_engine.lookup(
+            gtip, origin=origin_country, jurisdiction=jurisdiction, as_of=as_of
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result.as_dict()
 
 
 @app.tool(
