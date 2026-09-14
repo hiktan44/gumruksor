@@ -312,6 +312,14 @@
                     <button id="goToCostFields" type="button">Maliyet alanlarına git</button>
                   </div>
                 </section>
+                <section class="decision-question-panel" id="decisionQuestionPanel" hidden aria-labelledby="decisionQuestionTitle">
+                  <header>
+                    <div><span class="eyebrow">Oranlar yalnız cevabınızla hesaba girer</span><h4 id="decisionQuestionTitle">Karar soruları</h4></div>
+                    <span id="decisionQuestionProgress">0 / 0 cevap</span>
+                  </header>
+                  <div class="decision-question-list" id="decisionQuestionList" data-decision-context="precheck"></div>
+                  <p class="decision-question-note">Sorular resmî listelerden kural tabanlı üretilir; cevabınız ilgili maliyet alanına yazılır ve analizi yeniden çalıştırdığınızda hesaba girer. Hiçbir oran otomatik doldurulmaz.</p>
+                </section>
                 <label class="field attribute-wide required-field"><span>Kullanıcının tamamlaması gereken bilgiler</span><textarea id="requiredUserInputs" maxlength="1800" placeholder="Görselden belirlenemeyen menşe, teknik belge ve maliyet bilgileri"></textarea></label>
               </div>
               <div class="attribute-actions">

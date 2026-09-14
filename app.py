@@ -76,6 +76,7 @@ from eylemio_client import EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, summary_lines as trade_measure_summary
 from tax_lists import summary_lines as excise_tax_summary
 from vat_lists import summary_lines as vat_rate_summary
+from decision_questions import apply_decision_answers, build_decision_questions
 from tariff_engine import LandedCostInput
 from unified_search import UnifiedSearchEngine
 
@@ -2463,10 +2464,39 @@ async def web_tariff_cost(request: Request):
         as_of = _as_of_param(request, {"as_of": body.pop("as_of", None)})
         if not origin:
             raise ValueError("Menşe ülke gereklidir.")
+        # PRD Faz 2.3: karar sorusu cevapları girdilere yalnız burada, kullanıcı cevabı
+        # olarak yansır. LandedCostInput extra=forbid olduğu için önce ayrılır.
+        raw_answers = body.pop("decision_answers", None)
+        answers = (
+            {str(key)[:60]: str(value)[:80] for key, value in list(raw_answers.items())[:20]}
+            if isinstance(raw_answers, dict)
+            else {}
+        )
+        if answers:
+            body = apply_decision_answers(answers, body)
+            answered_atr = _tri_state(body.pop("atr_certificate", None))
+            if atr_certificate is None:
+                atr_certificate = answered_atr
         inputs = LandedCostInput.model_validate(body)
         result = await tariff_engine.calculate(
             gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
         )
+        if isinstance(result, dict):
+            lookup_payload = result.get("tariff") or {}
+            vat_payload = lookup_payload.get("vat_rate")
+            if vat_payload is None and getattr(tariff_engine, "vat_rates", None) is not None:
+                try:
+                    vat_payload = tariff_engine.vat_rates.lookup(gtip)
+                except Exception:  # noqa: BLE001 – KDV önerisi maliyet yanıtını düşürmemeli
+                    logger.exception("VAT suggestion lookup failed for %s", gtip)
+                    vat_payload = None
+            questions = build_decision_questions(
+                gtip=gtip,
+                tariff_lookup=lookup_payload,
+                vat_lookup=vat_payload,
+                inquiry={**inputs.model_dump(), "atr_certificate": atr_certificate},
+            )
+            result["decision_questions"] = [item.model_dump(mode="json") for item in questions]
         return JSONResponse(result)
     except FeatureNotAvailable as exc:
         return _feature_error(exc)
