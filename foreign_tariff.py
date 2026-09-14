@@ -458,6 +458,16 @@ def build_links(record: dict[str, Any], gtip: str, iso2: str | None, as_of: str 
 
 # --------------------------------------------------------------------------- depo
 
+def _ensure_columns(db: sqlite3.Connection, table: str, columns: Iterable[tuple[str, str]]) -> None:
+    """Eksik sütunları ekler; var olanlara dokunmaz (additive, veri kaybı yok)."""
+    if not table.replace("_", "").isalnum():
+        raise ValueError("Geçersiz tablo adı")
+    existing = {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+    for column, definition in columns:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 class ForeignTariffStore:
     """Anlık görüntüler, nomenklatür satırları ve talep anında çekilen gövdelerin önbelleği."""
 
@@ -518,6 +528,13 @@ class ForeignTariffStore:
             )
             ensure_review_columns(connection, "snapshots")
             ensure_validity_columns(connection, "snapshots")
+            # Mevcut kurulumlarda tablo zaten var; CREATE TABLE IF NOT EXISTS yeni sütun eklemez.
+            # Şema değişiklikleri her zaman PRAGMA korumalı ALTER TABLE ile eklenir (depo kuralı).
+            _ensure_columns(
+                connection,
+                "nomenclature",
+                (("description_alt", "TEXT NOT NULL DEFAULT ''"), ("valid_from", "TEXT"), ("valid_to", "TEXT")),
+            )
         try:
             self.db_path.chmod(0o600)
         except OSError:

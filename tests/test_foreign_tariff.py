@@ -286,6 +286,57 @@ def _transport(calls: list[str], chapters: dict | None = None, swiss: str | None
     return httpx.MockTransport(handler)
 
 
+class SchemaMigrationTests(unittest.TestCase):
+    """Canlıda yakalandı: mevcut kurulumda tablo zaten vardı ve yeni sütunlar eklenmemişti."""
+
+    def test_existing_database_gains_new_columns(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "foreign_tariff.sqlite3"
+            # PR #25'teki eski şema: description_alt / valid_from / valid_to yok.
+            with sqlite3.connect(path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE nomenclature (
+                        snapshot_id TEXT NOT NULL, jurisdiction TEXT NOT NULL, kind TEXT NOT NULL,
+                        code TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                        source_url TEXT NOT NULL DEFAULT '', PRIMARY KEY (snapshot_id, kind, code)
+                    );
+                    """
+                )
+            store = ft.ForeignTariffStore(tmp)
+            with store.connect() as connection:
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(nomenclature)").fetchall()}
+            self.assertIn("description_alt", columns)
+            self.assertIn("valid_from", columns)
+            self.assertIn("valid_to", columns)
+
+    def test_migration_preserves_existing_rows(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "foreign_tariff.sqlite3"
+            with sqlite3.connect(path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE nomenclature (
+                        snapshot_id TEXT NOT NULL, jurisdiction TEXT NOT NULL, kind TEXT NOT NULL,
+                        code TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                        source_url TEXT NOT NULL DEFAULT '', PRIMARY KEY (snapshot_id, kind, code)
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO nomenclature(snapshot_id,jurisdiction,kind,code,description) VALUES('s','uk','chapter','01','Live animals')"
+                )
+            store = ft.ForeignTariffStore(tmp)
+            with store.connect() as connection:
+                row = connection.execute("SELECT description, description_alt FROM nomenclature WHERE code='01'").fetchone()
+            self.assertEqual(row["description"], "Live animals")
+            self.assertEqual(row["description_alt"], "")
+
+
 class SwissParserTests(unittest.TestCase):
     def test_parse_swiss_nomenclature(self):
         rows = ft.parse_swiss_nomenclature(_ch_csv())
