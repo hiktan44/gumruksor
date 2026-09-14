@@ -56,7 +56,8 @@ from mevzuat_mcp_server import (
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
 from countries import COUNTRIES, PENDING_AGREEMENTS
-from origin_documents import origin_document_requirements
+from savings import evaluate_scenarios, rank_savings
+from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, detect_bot_wall, extract_product_page
 from shipping_documents import decode_document_data_url, extract_shipping_document
 from mevzuat_mcp_server import (
@@ -2405,6 +2406,22 @@ async def web_tariff_bulk(request: Request):
         return JSONResponse({"error": "Toplu hesap şu anda tamamlanamadı."}, status_code=502)
 
 
+def _parse_scenario_body(body: Any) -> tuple[str, list[str], str | None, bool | None]:
+    """Shared validation for the origin-scenario and savings routes."""
+    if not isinstance(body, dict):
+        raise ValueError("Senaryo isteği bir nesne olmalıdır.")
+    gtip = str(body.get("gtip", "")).strip()
+    origins_raw = body.get("origins", [])
+    if not isinstance(origins_raw, list):
+        raise ValueError("Menşe listesi geçersiz.")
+    origins = list(dict.fromkeys(str(item).strip()[:100] for item in origins_raw if str(item).strip()))[:6]
+    dispatch = str(body.get("dispatch_country", "") or "").strip()[:100] or None
+    atr_certificate = _tri_state(body.get("atr_certificate"))
+    if not gtip or len(origins) < 2:
+        raise ValueError("Karşılaştırma için tarife kodu ve en az iki farklı menşe ülke gereklidir.")
+    return gtip, origins, dispatch, atr_certificate
+
+
 @mcp.custom_route("/api/tariff/scenarios", methods=["POST"])
 async def web_tariff_scenarios(request: Request):
     """Compare deterministic tariff burden and origin documents across origin countries."""
@@ -2418,46 +2435,73 @@ async def web_tariff_scenarios(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     try:
-        body = await request.json()
-        if not isinstance(body, dict):
-            raise ValueError("Senaryo isteği bir nesne olmalıdır.")
-        gtip = str(body.get("gtip", "")).strip()
-        origins_raw = body.get("origins", [])
-        if not isinstance(origins_raw, list):
-            raise ValueError("Menşe listesi geçersiz.")
-        origins = list(dict.fromkeys(str(item).strip()[:100] for item in origins_raw if str(item).strip()))[:6]
-        dispatch = str(body.get("dispatch_country", "") or "").strip()[:100] or None
-        atr_certificate = _tri_state(body.get("atr_certificate"))
-        if not gtip or len(origins) < 2:
-            raise ValueError("Karşılaştırma için tarife kodu ve en az iki farklı menşe ülke gereklidir.")
-        rows = []
-        for origin in origins:
-            lookup = await tariff_engine.lookup(gtip, origin_country=origin, dispatch_country=dispatch, atr_certificate=atr_certificate)
-            documents = origin_document_requirements(origin, gtip=lookup.gtip, dispatch_country=dispatch)
-            rows.append(
-                {
-                    "origin_country": origin,
-                    "dispatch_country": dispatch,
-                    "status": lookup.status,
-                    "origin_recognised": lookup.origin_recognised,
-                    "resolved_country_group": lookup.resolved_country_group,
-                    "matched_gtip_count": lookup.matched_gtip_count,
-                    "unambiguous_rates": lookup.unambiguous_rates or {},
-                    "ambiguous_measure_types": lookup.ambiguous_measure_types,
-                    "atr_free_circulation": lookup.atr_free_circulation,
-                    "atr_available": lookup.atr_available,
-                    "origin_proof_required": lookup.origin_proof_required,
-                    "fallback_rates": lookup.fallback_rates,
-                    "origin_documents": documents.model_dump(mode="json") if documents else None,
-                    "warnings": lookup.warnings,
-                }
-            )
+        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(await request.json())
+        rows = await build_origin_scenarios(
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate
+        )
         return JSONResponse({"gtip": gtip, "dispatch_country": dispatch, "rows": rows, "generated_at": time.time()})
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
         logger.exception("Tariff scenario comparison failed")
         return JSONResponse({"error": "Menşe senaryoları şu anda karşılaştırılamadı."}, status_code=502)
+
+
+@mcp.custom_route("/api/tariff/savings", methods=["POST"])
+async def web_tariff_savings(request: Request):
+    """Rank origin scenarios by landed cost with the user's cost inputs (decision support, not advice)."""
+    limited = _rate_limit_response(request, "tariff-savings", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "scenario_compare")
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        body = await request.json()
+        gtip, origins, dispatch, atr_certificate = _parse_scenario_body(body)
+        baseline_origin = str(body.get("baseline_origin", "") or "").strip()[:100] or None
+        cost_body = body.get("cost")
+        if not isinstance(cost_body, dict):
+            raise ValueError("Tasarruf önerisi için maliyet girdileri (cost) gereklidir; en az fatura bedelini girin.")
+        cost_input = LandedCostInput.model_validate(cost_body)
+        rows = await build_origin_scenarios(
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate
+        )
+        atr_rows = None
+        atr_origins = [row["origin_country"] for row in rows if row.get("atr_available") and not row.get("atr_free_circulation")]
+        if atr_origins and atr_certificate is not True:
+            atr_rows = await build_origin_scenarios(
+                tariff_engine, gtip, atr_origins, dispatch_country=dispatch, atr_certificate=True
+            )
+        outcomes = evaluate_scenarios(rows, cost_input, atr_rows=atr_rows, atr_certificate=atr_certificate)
+        ranking = rank_savings(outcomes, baseline_origin)
+        baseline_note = None
+        if baseline_origin and not any(origin.casefold() == baseline_origin.casefold() for origin in origins):
+            baseline_note = "Temel senaryo menşe listesinde bulunmadığı için en yüksek maliyetli senaryo temel alındı."
+        return JSONResponse(
+            {
+                "gtip": gtip,
+                "dispatch_country": dispatch,
+                "atr_certificate": atr_certificate,
+                "baseline_origin": baseline_origin,
+                "baseline_note": baseline_note,
+                "currency": cost_input.currency,
+                "rows_evaluated": len(outcomes),
+                **ranking,
+                "generated_at": time.time(),
+            }
+        )
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Alanları kontrol edin.")
+        return JSONResponse({"error": f"Maliyet girdileri doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Tariff savings ranking failed")
+        return JSONResponse({"error": "Tasarruf önerisi şu anda hesaplanamadı."}, status_code=502)
 
 
 @mcp.custom_route("/api/controls/status", methods=["GET"])

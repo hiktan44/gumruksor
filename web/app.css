@@ -1272,3 +1272,9 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .danger-btn { background: rgba(248,113,113,0.18); color: #f87171; border: 1px solid rgba(248,113,113,0.4); border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 600; }
 .danger-btn:hover { background: rgba(248,113,113,0.3); }
 .review-strip { border-left: 4px solid #f59e0b; padding-left: 10px; }
+
+/* Tasarruf önerisi */
+.savings-best td { background: rgba(16, 185, 129, 0.08); }
+.savings-best td:first-child { font-weight: 700; color: var(--teal-dark, var(--teal)); }
+.savings-negative { color: var(--danger); }
+.savings-list { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: .63rem; line-height: 1.7; }
