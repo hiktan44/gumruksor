@@ -305,6 +305,28 @@ def render_review_email(items: list[dict[str, Any]], base_url: str) -> str:
 </div>"""
 
 
+def render_compliance_email(report: dict[str, Any], base_url: str) -> str:
+    """Daily digest of high-severity compliance alerts: titles and codes only, never dossier content."""
+    highs = [item for item in report.get("alerts", []) if item.get("severity") == "high"][:20]
+    rows = "".join(
+        f"<tr><td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(item.get('gtip') or '—')}</td>"
+        f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(item.get('title'))}</td>"
+        f"<td style='padding:4px 10px;border:1px solid #d6dee8;'>{_esc(item.get('due_date') or '—')}</td></tr>"
+        for item in highs
+    )
+    counts = report.get("alert_counts") or {}
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;color:#0b1e3f;max-width:640px;">
+  <p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#006678;">Ticaret Bilgi Masası · Uyum özeti</p>
+  <h2 style="margin:0 0 8px;font-size:19px;">Uyum puanı {_esc(report.get('score'))}/100 · {len(highs)} yüksek öncelikli uyarı</h2>
+  <p style="margin:0 0 10px;font-size:12px;color:#43536c;">{_esc(report.get('dossier_count', 0))} kanıt dosyası · {_esc(report.get('watch_count', 0))} izlenen kod · uyarılar: {_esc(counts.get('high', 0))} yüksek / {_esc(counts.get('medium', 0))} orta / {_esc(counts.get('low', 0))} düşük</p>
+  <table style="border-collapse:collapse;font-size:12px;"><tr>
+  <th style="padding:4px 10px;border:1px solid #d6dee8;">GTİP</th><th style="padding:4px 10px;border:1px solid #d6dee8;">Uyarı</th>
+  <th style="padding:4px 10px;border:1px solid #d6dee8;">Tarih</th></tr>{rows}</table>
+  <p style="margin:14px 0 0;font-size:12px;">Ayrıntı ve bileşenler: <a href="{_esc(base_url)}/app?scope=customs#account-compliance" style="color:#006678;">{_esc(base_url)}/app</a> → Hesabım → Uyum</p>
+  <p style="margin:8px 0 0;font-size:11px;color:#738097;">Bu özet yalnızca uyarı başlıklarını içerir; dosya içeriği e-postayla gönderilmez. Puan karar desteğidir, bağlayıcı tarife veya uygunluk görüşü değildir; beyan öncesi resmî kaynağı doğrulayın. Günde en fazla bir özet gönderilir.</p>
+</div>"""
+
+
 def render_consultation_email(kind: str, subject: str, snippet: str, base_url: str) -> str:
     titles = {
         "new_request": "Yeni danışmanlık talebi",

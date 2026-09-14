@@ -562,6 +562,7 @@
       <nav class="account-tabs" aria-label="Hesap bölümleri">
         <button type="button" class="active" data-account-tab="summary">Özet</button>
         <button type="button" data-account-tab="dossiers">Kanıt dosyaları</button>
+        <button type="button" data-account-tab="compliance">Uyum</button>
         <button type="button" data-account-tab="plans">Paketler</button>
       </nav>
       <section class="account-panel" data-account-panel="summary">
@@ -573,6 +574,22 @@
       <section class="account-panel" data-account-panel="dossiers" hidden>
         <header class="panel-section-head"><div><h3>Sunucudaki kanıt dosyalarınız</h3><p>Görseller saklanmaz. Sonuç, resmî URL ve arşiv hash’leri saklanır.</p></div><button type="button" id="refreshDossiers">Yenile</button></header>
         <div class="dossier-list" id="dossierList"><p>Dosyalar yükleniyor.</p></div>
+      </section>
+      <section class="account-panel" data-account-panel="compliance" id="account-compliance" hidden>
+        <header class="panel-section-head"><div><h3>Uyum gösterge paneli</h3><p>Kayıtlı kanıt dosyalarınız, izleme listeniz ve resmî değişiklik defterinden kural tabanlı üretilir; yapay zekâ kullanılmaz. Karar desteğidir, bağlayıcı görüş değildir.</p></div><button type="button" id="refreshCompliance">Yenile</button></header>
+        <div class="compliance-summary">
+          <div class="compliance-ring" id="complianceRing" role="img" aria-label="Uyum puanı">
+            <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-track" cx="60" cy="60" r="52"></circle><circle class="ring-value" id="complianceRingValue" cx="60" cy="60" r="52"></circle></svg>
+            <div class="ring-label"><strong id="complianceScore">—</strong><small>/ 100</small></div>
+          </div>
+          <div class="compliance-meta">
+            <p id="complianceStatus">Uyum raporu henüz yüklenmedi.</p>
+            <ul id="complianceCounts"></ul>
+          </div>
+        </div>
+        <div class="compliance-components" id="complianceComponents"></div>
+        <h4 class="compliance-alerts-title">Erken uyarılar</h4>
+        <div class="compliance-alerts" id="complianceAlerts"><p>Uyarılar yüklendiğinde burada listelenir.</p></div>
       </section>
       <section class="account-panel" data-account-panel="plans" hidden>
         <div class="pricing-grid" id="pricingGrid"></div>

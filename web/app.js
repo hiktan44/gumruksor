@@ -700,6 +700,48 @@ function switchAccountTab(tab) {
   $$('[data-account-tab]').forEach((button) => button.classList.toggle("active", button.dataset.accountTab === tab));
   $$('[data-account-panel]').forEach((panel) => { panel.hidden = panel.dataset.accountPanel !== tab; });
   if (tab === "dossiers") loadDossiers();
+  if (tab === "compliance") loadCompliance();
+}
+
+const complianceStatusLabels = { good: "İyi durumda", watch: "Dikkat gerektiren noktalar var", risk: "Riskli: yüksek öncelikli uyarıları ele alın" };
+const complianceSeverityLabels = { high: "Yüksek", medium: "Orta", low: "Düşük" };
+
+function complianceBand(score) {
+  return score >= 85 ? "good" : score >= 60 ? "watch" : "risk";
+}
+
+function renderCompliance(report) {
+  const score = Math.max(0, Math.min(100, Number(report.score) || 0));
+  const ring = $("#complianceRing");
+  ring.dataset.status = report.status || complianceBand(score);
+  const circumference = 2 * Math.PI * 52;
+  $("#complianceRingValue").style.strokeDashoffset = String(circumference * (1 - score / 100));
+  $("#complianceScore").textContent = String(score);
+  const dossierNote = report.dossier_count ? `${report.dossier_count} kanıt dosyası · ${report.watch_count} izlenen kod` : "Henüz kanıt dosyası yok; puan yalnızca izleme listesine dayanır.";
+  $("#complianceStatus").textContent = `${complianceStatusLabels[ring.dataset.status] || ""} · ${dossierNote}${report.email_alerts ? " · Yüksek uyarılar günde en fazla bir e-postayla özetlenir." : ""}`;
+  const counts = report.alert_counts || {};
+  $("#complianceCounts").innerHTML = ["high", "medium", "low"].map((level) => `<li data-severity="${level}">${complianceSeverityLabels[level]}: ${counts[level] || 0}</li>`).join("");
+  $("#complianceComponents").innerHTML = (report.components || []).map((item) => `<article class="compliance-component" data-band="${complianceBand(item.score)}"><div><b>${escapeHtml(item.label)}</b><small>${escapeHtml(item.detail)} · ağırlık %${item.weight}</small></div><span class="component-score">${item.score}</span><div class="component-track"><i style="width:${item.score}%"></i></div></article>`).join("");
+  const alerts = report.alerts || [];
+  $("#complianceAlerts").innerHTML = alerts.length
+    ? alerts.map((alert) => {
+      const meta = [alert.gtip ? `GTİP <code>${escapeHtml(alert.gtip)}</code>` : "", alert.due_date ? `tarih ${escapeHtml(alert.due_date)}` : "", alert.source ? `kaynak ${escapeHtml(alert.source)}` : ""].filter(Boolean).join(" · ");
+      return `<article class="compliance-alert" data-severity="${escapeHtml(alert.severity)}"><span class="severity">${escapeHtml(complianceSeverityLabels[alert.severity] || alert.severity)}</span><div><b>${escapeHtml(alert.title)}</b><small>${escapeHtml(alert.detail || "")}</small>${meta ? `<div class="alert-meta">${meta}</div>` : ""}</div></article>`;
+    }).join("")
+    : "<p>Erken uyarı yok. Kanıt dosyalarınız ve izleme listeniz için süresi dolan önlem, yakın değişiklik veya eksik onay bulunmadı.</p>";
+  if (Array.isArray(report.warnings) && report.warnings.length) {
+    $("#complianceAlerts").insertAdjacentHTML("beforeend", `<p class="alert-meta">${report.warnings.map((item) => escapeHtml(item)).join("<br>")}</p>`);
+  }
+}
+
+async function loadCompliance() {
+  $("#complianceStatus").textContent = "Uyum raporu hesaplanıyor…";
+  try {
+    renderCompliance(await fetchJson("/api/account/compliance"));
+  } catch (error) {
+    $("#complianceStatus").textContent = error.message;
+    $("#complianceAlerts").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function hasCapability(feature) {
@@ -798,6 +840,7 @@ $("#closeAccount").addEventListener("click", () => $("#accountDialog").close());
 $("#accountDialog").addEventListener("click", (event) => { if (event.target === $("#accountDialog")) $("#accountDialog").close(); });
 $$('[data-account-tab]').forEach((button) => button.addEventListener("click", () => switchAccountTab(button.dataset.accountTab)));
 $("#refreshDossiers").addEventListener("click", loadDossiers);
+$("#refreshCompliance").addEventListener("click", loadCompliance);
 $("#dossierList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-delete-dossier]");
   if (!button || !confirm("Bu kanıt dosyası kalıcı olarak silinsin mi?")) return;

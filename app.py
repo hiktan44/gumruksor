@@ -36,7 +36,8 @@ from customs_advisor import (
     decode_image_data_url,
     register_llm_usage_hook,
 )
-from email_service import MailError, ResendEmailSender, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
+from compliance import compliance_report, high_alert_digest
+from email_service import MailError, ResendEmailSender, render_compliance_email, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
 import report_pdf
 from report_pdf import PdfRenderError, render_precheck_report_html, report_footer_html
 from mevzuat_mcp_server import (
@@ -672,6 +673,31 @@ async def web_account(request: Request):
         return JSONResponse(account_service.account(user), headers={"Cache-Control": "no-store"})
     except AuthError as exc:
         return _auth_error(exc)
+
+
+def _build_compliance_report(google_sub: str) -> dict[str, Any]:
+    """Deterministic compliance dashboard for one user (PRD Faz 2.6); no LLM involved."""
+    return compliance_report(
+        account_service, google_sub,
+        ledger=change_ledger, trade_engine=trade_measure_engine, control_engine=control_engine,
+    )
+
+
+@mcp.custom_route("/api/account/compliance", methods=["GET"])
+async def web_account_compliance(request: Request):
+    limited = _rate_limit_response(request, "account-compliance", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        user = _required_user(request)
+        report = await asyncio.to_thread(_build_compliance_report, str(user["sub"]))
+        report["email_alerts"] = "change_alerts" in account_service.capabilities_for(user)
+        return JSONResponse(report, headers={"Cache-Control": "no-store"})
+    except AuthError as exc:
+        return _auth_error(exc)
+    except Exception:
+        logger.exception("Compliance report failed")
+        return JSONResponse({"error": "Uyum raporu şu anda oluşturulamadı."}, status_code=500, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/account", methods=["DELETE"])
@@ -2778,6 +2804,52 @@ async def notify_watchlist_changes() -> dict[str, int]:
     return stats
 
 
+async def notify_compliance_alerts(*, today: date | None = None) -> dict[str, int]:
+    """E-mail a digest of high-severity compliance alerts (change_alerts users, at most once a day).
+
+    Two idempotency keys in ``notification_log``: ``day:<date>`` caps delivery at one
+    per calendar day, ``digest:<hash>`` stops the same unchanged set of high alerts from
+    being re-sent on later days.
+    """
+    stats = {"users": 0, "sent": 0, "skipped": 0}
+    today = today or date.today()
+    for recipient in account_service.compliance_recipients():
+        google_sub, email = str(recipient["google_sub"]), str(recipient.get("email") or "")
+        if "change_alerts" not in account_service.capabilities_for({"sub": google_sub, "email": email}):
+            continue
+        if account_service.notification_sent(google_sub, "compliance", f"day:{today.isoformat()}"):
+            continue
+        try:
+            report = await asyncio.to_thread(_build_compliance_report, google_sub)
+        except Exception:
+            logger.exception("Compliance digest failed for %s", google_sub)
+            continue
+        if not report["alert_counts"].get("high"):
+            continue
+        stats["users"] += 1
+        digest = high_alert_digest(report)
+        if account_service.notification_sent(google_sub, "compliance", f"digest:{digest}"):
+            stats["skipped"] += 1
+            continue
+        if not email_sender.configured or not email:
+            stats["skipped"] += 1
+            continue
+        try:
+            await email_sender.send(
+                to=email,
+                subject=f"Uyum özeti: {report['alert_counts']['high']} yüksek öncelikli uyarı",
+                html_body=render_compliance_email(report, PUBLIC_BASE_URL),
+            )
+        except MailError as exc:
+            logger.warning("Compliance digest failed for %s: %s", google_sub, exc)
+            stats["skipped"] += 1
+            continue
+        account_service.mark_notified(google_sub, "compliance", f"day:{today.isoformat()}")
+        account_service.mark_notified(google_sub, "compliance", f"digest:{digest}")
+        stats["sent"] += 1
+    return stats
+
+
 async def watchlist_notification_loop() -> None:
     interval = max(300, int(os.environ.get("WATCHLIST_NOTIFY_INTERVAL_SECONDS", "1800")))
     while True:
@@ -2786,6 +2858,9 @@ async def watchlist_notification_loop() -> None:
             stats = await notify_watchlist_changes()
             if stats["users"]:
                 logger.info("Watch-list notifications: %s", stats)
+            compliance_stats = await notify_compliance_alerts()
+            if compliance_stats["users"]:
+                logger.info("Compliance digests: %s", compliance_stats)
         except asyncio.CancelledError:
             raise
         except Exception:
