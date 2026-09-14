@@ -36,6 +36,7 @@ from customs_advisor import (
     decode_image_data_url,
     register_llm_usage_hook,
 )
+from assistant import AssistantRequest
 from compliance import compliance_report, high_alert_digest
 from email_service import MailError, ResendEmailSender, render_compliance_email, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
 import report_pdf
@@ -47,6 +48,7 @@ from mevzuat_mcp_server import (
     classification_engine,
     control_engine,
     customs_advisor_service,
+    customs_assistant,
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
@@ -2179,6 +2181,55 @@ async def web_email_precheck(request: Request):
 
 
 REPORT_PDF_MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+@mcp.custom_route("/api/customs/assistant", methods=["POST"])
+async def web_customs_assistant(request: Request):
+    """Tool-calling assistant: the model may only cite deterministic tool outputs (PRD Faz 3.3)."""
+    limited = _rate_limit_response(request, "customs-assistant", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        _agent_or_browser_identity(request)
+        _required_user(request)
+        quota_user = _enforce_quota(request, "classification")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asistan isteği bir nesne olmalıdır.")
+        guard_data(body, path="asistan sorusu")
+        payload = AssistantRequest.model_validate(body)
+        as_of = _as_of_param(request, {"as_of": payload.as_of})
+        result = await customs_assistant.ask(
+            payload.question,
+            gtip=payload.gtip,
+            origin_country=payload.origin_country,
+            as_of=as_of,
+            history=[item.model_dump() for item in payload.history],
+        )
+        _record_usage(quota_user, "classification")
+        return JSONResponse(redact_data(result.model_dump(mode="json"), contact_data=True))
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Soruyu kontrol edin.")
+        return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("Customs assistant failed")
+        return JSONResponse(
+            {"error": "Asistan yanıtı şu anda üretilemedi. Lütfen biraz sonra yeniden deneyin."},
+            status_code=502,
+        )
 
 
 @mcp.custom_route("/api/customs/report.pdf", methods=["POST"])

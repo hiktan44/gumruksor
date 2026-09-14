@@ -1,4 +1,5 @@
 const state = {
+  assistantHistory: [],
   scope: "ticaret",
   activeKind: "",
   offset: 0,
@@ -3966,3 +3967,119 @@ async function loadCommuniquesCatalog() {
 bindLocalizedNumberInputs();
 if (new URLSearchParams(location.search).get("scope") === "customs" || location.hash === "#customs") switchScope("customs");
 runTicaretSearch({ offset: 0 });
+
+/* ---------------------------------------------------------------- Araç çağıran asistan (PRD Faz 3.3) */
+
+const ASSISTANT_MAX_HISTORY = 6;
+
+function assistantSourceBadges(ids) {
+  if (!Array.isArray(ids) || !ids.length) return "";
+  return ids.map((id) => `<span class="source-badge">${escapeHtml(id)}</span>`).join("");
+}
+
+function renderAssistantAnswer(data) {
+  const claims = Array.isArray(data.claims) ? data.claims : [];
+  const rates = Array.isArray(data.rates) ? data.rates : [];
+  const candidates = Array.isArray(data.gtip_candidates) ? data.gtip_candidates : [];
+  const steps = Array.isArray(data.next_steps) ? data.next_steps : [];
+  const unverified = Array.isArray(data.unverified) ? data.unverified : [];
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  const toolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  const parts = [
+    '<span class="assistant-role">Gümrükçe asistanı</span>',
+    `<p>${escapeHtml(data.answer || "Yanıt üretilemedi.")}</p>`,
+  ];
+  if (claims.length) {
+    parts.push(`<ul class="assistant-claims">${claims.map((item) =>
+      `<li>${escapeHtml(item.text || "")}${assistantSourceBadges(item.source_ids)}</li>`).join("")}</ul>`);
+  }
+  if (candidates.length) {
+    parts.push(`<ul class="assistant-claims">${candidates.map((item) =>
+      `<li><b>${escapeHtml(item.code || "")}</b> — ${escapeHtml(item.explanation || "")}${assistantSourceBadges(item.source_ids)}</li>`).join("")}</ul>`);
+  }
+  if (rates.length) {
+    parts.push(`<table class="assistant-rates"><thead><tr><th>Kalem</th><th>Değer</th><th>Kaynak</th></tr></thead><tbody>${rates.map((item) =>
+      `<tr><td>${escapeHtml(item.name || "")}</td><td>${escapeHtml(item.value || "")}</td><td>${assistantSourceBadges(item.source_ids) || "—"}</td></tr>`).join("")}</tbody></table>`);
+  }
+  if (steps.length) {
+    parts.push(`<ul class="assistant-steps">${steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+  }
+  if (unverified.length) {
+    parts.push(`<div class="assistant-unverified"><b>Doğrulanamadı ve yanıttan düşürüldü:</b><ul class="assistant-claims">${unverified.map((item) =>
+      `<li>${escapeHtml(item.value || "")} — ${escapeHtml(item.reason || "")}</li>`).join("")}</ul></div>`);
+  }
+  if (warnings.length) {
+    parts.push(`<div class="assistant-unverified">${warnings.map((item) => escapeHtml(item)).join("<br>")}</div>`);
+  }
+  if (toolCalls.length) {
+    parts.push(`<details class="assistant-tools"><summary>${toolCalls.length} araç çağrısı</summary>${toolCalls.map((call) =>
+      `<div class="assistant-tool"><b>${escapeHtml(call.id || "")} · ${escapeHtml(call.name || "")}</b>
+        <pre>${escapeHtml(JSON.stringify(call.args || {}, null, 1))}</pre>
+        <pre>${escapeHtml(call.summary || "")}</pre></div>`).join("")}</details>`);
+  }
+  if (data.legal_notice) parts.push(`<p class="assistant-notice">${escapeHtml(data.legal_notice)}</p>`);
+  return parts.join("");
+}
+
+function appendAssistantMessage(kind, html) {
+  const thread = $("#assistantThread");
+  if (!thread) return null;
+  const node = document.createElement("div");
+  node.className = `assistant-msg ${kind}`;
+  node.innerHTML = html;
+  thread.appendChild(node);
+  thread.scrollTop = thread.scrollHeight;
+  return node;
+}
+
+function assistantContext() {
+  const gtip = ($("#candidateGtip")?.value || "").replace(/\D/g, "");
+  const origin = ($("#originCountry")?.value || "").trim();
+  const asOf = ($("#tariffAsOf")?.value || "").trim();
+  const body = { question: "", history: state.assistantHistory.slice(-ASSISTANT_MAX_HISTORY) };
+  if (gtip) body.gtip = gtip;
+  if (origin) body.origin_country = origin;
+  if (asOf) body.as_of = asOf;
+  return body;
+}
+
+$("#assistantForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("#assistantQuestion");
+  const button = $("#assistantSend");
+  const question = (input.value || "").trim();
+  if (!question) return;
+  const body = assistantContext();
+  body.question = question;
+  appendAssistantMessage("user", `<span class="assistant-role">Siz</span><p>${escapeHtml(question)}</p>`);
+  input.value = "";
+  button.disabled = true;
+  const pending = appendAssistantMessage("assistant", '<span class="assistant-role">Gümrükçe asistanı</span><p>Resmî araçlar sorgulanıyor…</p>');
+  try {
+    const data = await fetchJson("/api/customs/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs: AI_ANALYSIS_TIMEOUT_MS,
+    });
+    if (pending) pending.innerHTML = renderAssistantAnswer(data);
+    state.assistantHistory.push({ role: "user", content: question.slice(0, 2000) });
+    state.assistantHistory.push({ role: "assistant", content: String(data.answer || "").slice(0, 2000) });
+    state.assistantHistory = state.assistantHistory.slice(-ASSISTANT_MAX_HISTORY);
+  } catch (error) {
+    const message = error.message || "Asistan yanıtı alınamadı.";
+    if (pending) {
+      pending.className = "assistant-msg error";
+      pending.innerHTML = `<span class="assistant-role">Hata</span><p>${escapeHtml(message)}</p>`;
+    }
+    showToast(message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("#assistantClear")?.addEventListener("click", () => {
+  state.assistantHistory = [];
+  const thread = $("#assistantThread");
+  if (thread) thread.innerHTML = "";
+});

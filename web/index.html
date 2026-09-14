@@ -392,6 +392,24 @@
           <div class="analysis-loading" id="analysisLoading" hidden><i></i><div><b>Resmî kaynaklar taranıyor</b><span>TAREKS, tarife, vergi ve ürün güvenliği kanıtları karşılaştırılıyor…</span></div></div>
           <div id="customsOutput"></div>
         </section>
+
+        <section class="assistant-chat" id="assistantChat" aria-labelledby="assistantChatTitle">
+          <header class="assistant-head">
+            <div>
+              <span class="eyebrow">Araç çağıran asistan</span>
+              <h2 id="assistantChatTitle">Sohbetle sor</h2>
+              <p>Asistan yanıtı yalnız resmî sorgu araçlarının çıktısına dayandırır; kaynağı olmayan kod ve oranlar silinir. Bulduğu GTİP otomatik olarak forma yazılmaz.</p>
+            </div>
+          </header>
+          <div class="assistant-thread" id="assistantThread" aria-live="polite"></div>
+          <form class="assistant-form" id="assistantForm">
+            <label class="field field-wide"><span>Sorunuz</span><textarea id="assistantQuestion" maxlength="2000" required placeholder="Örn. 6104630000 için Çin menşeli ithalatta gümrük vergisi ve İGV oranı nedir, TAREKS kapsamında mı?"></textarea></label>
+            <div class="assistant-actions">
+              <button type="submit" id="assistantSend">Gönder</button>
+              <button type="button" id="assistantClear" class="secondary-action">Sohbeti temizle</button>
+            </div>
+          </form>
+        </section>
         </div>
 
         <section class="customs-tool-panel" data-customs-panel="tariff" hidden aria-labelledby="tariffPanelTitle">

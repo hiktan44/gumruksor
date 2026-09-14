@@ -27,6 +27,7 @@ from ticaret_models import (
     TicaretDocumentContent,
     TicaretSearchResult,
 )
+from assistant import CustomsAssistant, build_default_tools as build_assistant_tools
 from customs_advisor import (
     ClassificationAnswer,
     CustomsAdvisor,
@@ -111,6 +112,18 @@ customs_advisor_service = CustomsAdvisor(
     tariff_engine=tariff_engine,
     control_engine=control_engine,
     classification_engine=classification_engine,
+)
+# Tool-calling assistant (PRD Faz 3.3): the LLM orchestrates these deterministic engines only.
+customs_assistant = CustomsAssistant(
+    tools=build_assistant_tools(
+        tariff_engine=tariff_engine,
+        control_engine=control_engine,
+        classification_engine=classification_engine,
+        trade_measure_engine=trade_measure_engine,
+        excise_tax_index=excise_tax_index,
+        exchange_rate_service=exchange_rate_service,
+        vat_rate_index=vat_rate_index,
+    )
 )
 
 
