@@ -36,6 +36,7 @@ from customs_advisor import (
     decode_image_data_url,
     register_llm_usage_hook,
 )
+from assistant import AssistantRequest
 from compliance import compliance_report, high_alert_digest
 from email_service import MailError, ResendEmailSender, render_compliance_email, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
 import report_pdf
@@ -47,6 +48,7 @@ from mevzuat_mcp_server import (
     classification_engine,
     control_engine,
     customs_advisor_service,
+    customs_assistant,
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
@@ -74,6 +76,7 @@ from eylemio_client import EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, summary_lines as trade_measure_summary
 from tax_lists import summary_lines as excise_tax_summary
 from vat_lists import summary_lines as vat_rate_summary
+from decision_questions import apply_decision_answers, build_decision_questions
 from tariff_engine import LandedCostInput
 from unified_search import UnifiedSearchEngine
 
@@ -2181,6 +2184,55 @@ async def web_email_precheck(request: Request):
 REPORT_PDF_MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
+@mcp.custom_route("/api/customs/assistant", methods=["POST"])
+async def web_customs_assistant(request: Request):
+    """Tool-calling assistant: the model may only cite deterministic tool outputs (PRD Faz 3.3)."""
+    limited = _rate_limit_response(request, "customs-assistant", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        _agent_or_browser_identity(request)
+        _required_user(request)
+        quota_user = _enforce_quota(request, "classification")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asistan isteği bir nesne olmalıdır.")
+        guard_data(body, path="asistan sorusu")
+        payload = AssistantRequest.model_validate(body)
+        as_of = _as_of_param(request, {"as_of": payload.as_of})
+        result = await customs_assistant.ask(
+            payload.question,
+            gtip=payload.gtip,
+            origin_country=payload.origin_country,
+            as_of=as_of,
+            history=[item.model_dump() for item in payload.history],
+        )
+        _record_usage(quota_user, "classification")
+        return JSONResponse(redact_data(result.model_dump(mode="json"), contact_data=True))
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Soruyu kontrol edin.")
+        return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("Customs assistant failed")
+        return JSONResponse(
+            {"error": "Asistan yanıtı şu anda üretilemedi. Lütfen biraz sonra yeniden deneyin."},
+            status_code=502,
+        )
+
+
 @mcp.custom_route("/api/customs/report.pdf", methods=["POST"])
 async def web_customs_report_pdf(request: Request):
     """Server-rendered PDF of a precheck dossier with the mandatory legal footer (pdf_report feature).
@@ -2412,10 +2464,39 @@ async def web_tariff_cost(request: Request):
         as_of = _as_of_param(request, {"as_of": body.pop("as_of", None)})
         if not origin:
             raise ValueError("Menşe ülke gereklidir.")
+        # PRD Faz 2.3: karar sorusu cevapları girdilere yalnız burada, kullanıcı cevabı
+        # olarak yansır. LandedCostInput extra=forbid olduğu için önce ayrılır.
+        raw_answers = body.pop("decision_answers", None)
+        answers = (
+            {str(key)[:60]: str(value)[:80] for key, value in list(raw_answers.items())[:20]}
+            if isinstance(raw_answers, dict)
+            else {}
+        )
+        if answers:
+            body = apply_decision_answers(answers, body)
+            answered_atr = _tri_state(body.pop("atr_certificate", None))
+            if atr_certificate is None:
+                atr_certificate = answered_atr
         inputs = LandedCostInput.model_validate(body)
         result = await tariff_engine.calculate(
             gtip, origin, inputs, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
         )
+        if isinstance(result, dict):
+            lookup_payload = result.get("tariff") or {}
+            vat_payload = lookup_payload.get("vat_rate")
+            if vat_payload is None and getattr(tariff_engine, "vat_rates", None) is not None:
+                try:
+                    vat_payload = tariff_engine.vat_rates.lookup(gtip)
+                except Exception:  # noqa: BLE001 – KDV önerisi maliyet yanıtını düşürmemeli
+                    logger.exception("VAT suggestion lookup failed for %s", gtip)
+                    vat_payload = None
+            questions = build_decision_questions(
+                gtip=gtip,
+                tariff_lookup=lookup_payload,
+                vat_lookup=vat_payload,
+                inquiry={**inputs.model_dump(), "atr_certificate": atr_certificate},
+            )
+            result["decision_questions"] = [item.model_dump(mode="json") for item in questions]
         return JSONResponse(result)
     except FeatureNotAvailable as exc:
         return _feature_error(exc)

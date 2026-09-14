@@ -27,6 +27,7 @@ from ticaret_models import (
     TicaretDocumentContent,
     TicaretSearchResult,
 )
+from assistant import CustomsAssistant, build_default_tools as build_assistant_tools
 from customs_advisor import (
     ClassificationAnswer,
     CustomsAdvisor,
@@ -112,6 +113,18 @@ customs_advisor_service = CustomsAdvisor(
     control_engine=control_engine,
     classification_engine=classification_engine,
 )
+# Tool-calling assistant (PRD Faz 3.3): the LLM orchestrates these deterministic engines only.
+customs_assistant = CustomsAssistant(
+    tools=build_assistant_tools(
+        tariff_engine=tariff_engine,
+        control_engine=control_engine,
+        classification_engine=classification_engine,
+        trade_measure_engine=trade_measure_engine,
+        excise_tax_index=excise_tax_index,
+        exchange_rate_service=exchange_rate_service,
+        vat_rate_index=vat_rate_index,
+    )
+)
 
 
 # Extra background coroutines registered by the web layer (e.g. watch-list notifier).
@@ -146,6 +159,8 @@ BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
 
 # Persistent hybrid search index (BM25 + embedding; PRD Faz 3.1).
 hybrid_index = HybridIndex(embedder=_embedder)
+# PRD Faz 3.2: sınıflandırma ve ön değerlendirme dipnotlu hibrit kanıt kullanır.
+customs_advisor_service.hybrid_index = hybrid_index
 
 
 async def hybrid_index_refresh_loop() -> None:

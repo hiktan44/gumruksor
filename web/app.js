@@ -1,4 +1,5 @@
 const state = {
+  assistantHistory: [],
   scope: "ticaret",
   activeKind: "",
   offset: 0,
@@ -25,6 +26,7 @@ const state = {
   customsTariffTree: null,
   customsSelectedCandidate: null,
   customsClassificationAnswers: {},
+  decisionAnswers: { precheck: {}, tool: {} },
   auth: null,
   currentCustomsResult: null,
   selectedConsultant: null,
@@ -1138,11 +1140,134 @@ function renderWorkflow(steps) {
   output.hidden = false;
 }
 
+// PRD Faz 2.3: karar soruları. Sorular sunucuda kural tabanlı üretilir; cevap yalnız
+// kullanıcıdan gelir ve seçildiği anda ilgili maliyet alanına yazılır (otomatik doldurma yok).
+const DECISION_FIELDS = {
+  precheck: {
+    vat_rate: "#vatRate", kkdf_rate: "#kkdfRate", payment_method: "#paymentMethod",
+    has_surveillance_certificate: "#hasSurveillanceCertificate", atr_certificate: "#assistAtr",
+    condition: "#productCondition",
+  },
+  tool: {
+    vat_rate: "#tariffVat", kkdf_rate: "#tariffKkdf", payment_method: "#tariffPayment",
+    has_surveillance_certificate: "#tariffSurveillanceCertificate", atr_certificate: "#tariffAtr",
+  },
+};
+
+function decisionQuestionsHtml(questions, context) {
+  const list = Array.isArray(questions) ? questions : [];
+  if (!list.length) return "";
+  const answered = state.decisionAnswers[context] || {};
+  const rows = list.map((question) => {
+    const id = String(question.id || "");
+    const current = answered[id] || "";
+    const options = (question.options || []).map((option) => {
+      const value = String(option.value);
+      const checked = current === value ? " checked" : "";
+      return `<label><input type="radio" name="decision-${escapeHtml(context)}-${escapeHtml(id)}" value="${escapeHtml(value)}" data-decision-context="${escapeHtml(context)}" data-decision-id="${escapeHtml(id)}"${checked}><span>${escapeHtml(option.label)}</span></label>`;
+    }).join("");
+    return `<div class="decision-question-row${current ? " answered" : ""}" data-decision-row="${escapeHtml(id)}">
+      <p>${escapeHtml(question.text)}</p>
+      <div class="decision-question-options">${options}</div>
+      <span class="decision-filled">cevabınızla dolduruldu</span>
+      <small>${escapeHtml(question.reason || "")}${question.legal_basis ? ` · ${escapeHtml(question.legal_basis)}` : ""}</small>
+    </div>`;
+  }).join("");
+  return `<section class="decision-question-panel">
+    <header><div><span class="eyebrow">Oranlar yalnız cevabınızla hesaba girer</span><h4>Karar soruları</h4></div><span>${list.length} soru</span></header>
+    <div class="decision-question-list" data-decision-context="${escapeHtml(context)}">${rows}</div>
+    <p class="decision-question-note">Cevabınız ilgili maliyet alanına yazılır; hesabı yeniden çalıştırdığınızda cevaplar birlikte gönderilir. Hiçbir oran otomatik doldurulmaz.</p>
+  </section>`;
+}
+
+function updateDecisionProgress() {
+  const panel = $("#decisionQuestionPanel");
+  const progress = $("#decisionQuestionProgress");
+  if (!panel || !progress) return;
+  const rows = panel.querySelectorAll("[data-decision-row]").length;
+  const answered = panel.querySelectorAll(".decision-question-row.answered").length;
+  progress.textContent = `${answered} / ${rows} cevap`;
+}
+
+function renderDecisionQuestionPanel(questions) {
+  const panel = $("#decisionQuestionPanel");
+  const list = $("#decisionQuestionList");
+  if (!panel || !list) return;
+  const items = Array.isArray(questions) ? questions : [];
+  panel.hidden = items.length === 0;
+  if (!items.length) {
+    list.replaceChildren();
+    updateDecisionProgress();
+    return;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = decisionQuestionsHtml(items, "precheck");
+  const rendered = wrapper.querySelector(".decision-question-list");
+  list.innerHTML = rendered ? rendered.innerHTML : "";
+  updateDecisionProgress();
+}
+
+function setDecisionField(selector, value) {
+  const field = $(selector);
+  if (!field || value == null) return false;
+  const text = String(value);
+  if (field.tagName === "SELECT") {
+    const match = Array.from(field.options).find((option) => option.value === text || option.text === text);
+    if (!match) return false;
+    field.value = match.value;
+  } else {
+    field.value = text;
+  }
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+// Cevabın maliyet alanlarına eşlemesi; sunucudaki apply_decision_answers ile aynı kurallar.
+function applyDecisionAnswerToFields(questionId, value, context) {
+  const fields = DECISION_FIELDS[context] || {};
+  const applied = [];
+  const remember = (label, ok) => { if (ok) applied.push(label); };
+  if (questionId === "vat_rate" || questionId === "vat_rate_confirm") {
+    const rate = Number(String(value).replace(",", "."));
+    if (Number.isFinite(rate) && rate >= 0 && rate <= 100) remember("KDV", setDecisionField(fields.vat_rate, rate));
+  } else if (questionId === "payment_method") {
+    const cash = value === "pesin";
+    remember("Ödeme şekli", setDecisionField(fields.payment_method, cash ? "Peşin" : "Vadeli mal mukabili")
+      || setDecisionField(fields.payment_method, cash ? "Peşin" : "Vadeli"));
+    remember("KKDF", setDecisionField(fields.kkdf_rate, cash ? 0 : 6));
+  } else if (questionId === "surveillance_certificate") {
+    remember("Gözetim belgesi", setDecisionField(fields.has_surveillance_certificate, value));
+  } else if (questionId === "atr_certificate") {
+    remember("A.TR", setDecisionField(fields.atr_certificate, value));
+  } else if (questionId === "used_goods") {
+    remember("Ürün durumu", setDecisionField(fields.condition, value === "true" ? "used" : "new"));
+  }
+  return applied;
+}
+
+document.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-decision-id]");
+  if (!input || !input.checked) return;
+  const context = input.dataset.decisionContext === "tool" ? "tool" : "precheck";
+  const questionId = input.dataset.decisionId;
+  state.decisionAnswers[context] = { ...(state.decisionAnswers[context] || {}), [questionId]: input.value };
+  const row = input.closest(".decision-question-row");
+  if (row) row.classList.add("answered");
+  updateDecisionProgress();
+  const applied = applyDecisionAnswerToFields(questionId, input.value, context);
+  if (typeof updateReadiness === "function") updateReadiness();
+  showToast(applied.length
+    ? `${applied.join(", ")} alanı cevabınızla dolduruldu; hesabı yeniden çalıştırın.`
+    : "Cevabınız kaydedildi; hesabı yeniden çalıştırdığınızda gönderilir.");
+});
+
 function renderCustomsResult(data) {
   exportStore.precheck = data;
   state.currentCustomsResult = data;
   saveLocalScenario(data);
   renderWorkflow(data.workflow);
+  renderDecisionQuestionPanel(data.decision_questions);
   const sourceMap = customsSourceMap(data);
   const statusLabels = {
     preliminary: "Ön değerlendirme",
@@ -1157,7 +1282,7 @@ function renderCustomsResult(data) {
     : '<p class="missing-list">Kanıtla desteklenen aday kod üretilemedi. Fotoğraf tek başına kesin GTİP değildir.</p>';
   const sources = (data.sources || []).map((source) => `
     <a href="${safeUrl(source.url)}" target="_blank" rel="noreferrer">
-      <code>[${escapeHtml(source.id)}]</code><span><b>${escapeHtml(source.title)}</b><small>${escapeHtml(source.authority)}${source.fetch_warning ? ` · ${escapeHtml(source.fetch_warning)}` : ""}</small></span>
+      <code>[${escapeHtml(source.id)}]</code><span><b>${escapeHtml(source.title)}${String(source.id || "").startsWith("hyb_") ? '<em class="source-badge">anlamsal eşleşme</em>' : ""}</b><small>${escapeHtml(source.authority)}${source.fetch_warning ? ` · ${escapeHtml(source.fetch_warning)}` : ""}</small></span>
     </a>`).join("");
   $("#customsOutput").innerHTML = `
     <article class="answer-sheet">
@@ -1394,6 +1519,7 @@ function classificationRequestBody() {
     inferred_features: $("#inferredFeatures").value.trim(),
     classification_questions: $("#classificationQuestions").value.trim(),
     classification_answers: collectClassificationAnswers(),
+    decision_answers: { ...(state.decisionAnswers.precheck || {}) },
     origin_country: $("#originCountry").value.trim(),
   };
 }
@@ -2667,6 +2793,7 @@ function renderTariffTool(data) {
     ${applyRatesButton(tariff, "tool")}
     ${tariff.conditional_measures?.length ? `<details class="advanced-fields"><summary><span>Şarta bağlı askıya alma / nihai kullanım satırları</span><small>${tariff.conditional_measures.length} kayıt</small></summary><table class="evidence-table"><tbody>${tariffRows(tariff.conditional_measures)}</tbody></table></details>` : ""}
     ${costLedger}
+    ${decisionQuestionsHtml(data.decision_questions, "tool")}
     ${warnings.length ? `<div class="result-caution">${warnings.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}
     ${data.legal_notice ? `<div class="legal-banner"><strong>Önemli:</strong> ${escapeHtml(data.legal_notice)}</div>` : ""}`;
 }
@@ -2743,7 +2870,7 @@ $("#tariffForm").addEventListener("submit", async (event) => {
     const invoice = nullableNumber("#tariffInvoice");
     const data = invoice == null
       ? await fetchJson("/api/tariff/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(common) })
-      : await fetchJson("/api/tariff/cost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...common, ...collectTariffCostInputs(invoice) }) });
+      : await fetchJson("/api/tariff/cost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...common, ...collectTariffCostInputs(invoice), decision_answers: { ...(state.decisionAnswers.tool || {}) } }) });
     output.innerHTML = renderTariffTool(data);
     const scenarioBox = $("#scenarioBox");
     if (scenarioBox) {
@@ -3966,3 +4093,119 @@ async function loadCommuniquesCatalog() {
 bindLocalizedNumberInputs();
 if (new URLSearchParams(location.search).get("scope") === "customs" || location.hash === "#customs") switchScope("customs");
 runTicaretSearch({ offset: 0 });
+
+/* ---------------------------------------------------------------- Araç çağıran asistan (PRD Faz 3.3) */
+
+const ASSISTANT_MAX_HISTORY = 6;
+
+function assistantSourceBadges(ids) {
+  if (!Array.isArray(ids) || !ids.length) return "";
+  return ids.map((id) => `<span class="source-badge">${escapeHtml(id)}</span>`).join("");
+}
+
+function renderAssistantAnswer(data) {
+  const claims = Array.isArray(data.claims) ? data.claims : [];
+  const rates = Array.isArray(data.rates) ? data.rates : [];
+  const candidates = Array.isArray(data.gtip_candidates) ? data.gtip_candidates : [];
+  const steps = Array.isArray(data.next_steps) ? data.next_steps : [];
+  const unverified = Array.isArray(data.unverified) ? data.unverified : [];
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  const toolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  const parts = [
+    '<span class="assistant-role">Gümrükçe asistanı</span>',
+    `<p>${escapeHtml(data.answer || "Yanıt üretilemedi.")}</p>`,
+  ];
+  if (claims.length) {
+    parts.push(`<ul class="assistant-claims">${claims.map((item) =>
+      `<li>${escapeHtml(item.text || "")}${assistantSourceBadges(item.source_ids)}</li>`).join("")}</ul>`);
+  }
+  if (candidates.length) {
+    parts.push(`<ul class="assistant-claims">${candidates.map((item) =>
+      `<li><b>${escapeHtml(item.code || "")}</b> — ${escapeHtml(item.explanation || "")}${assistantSourceBadges(item.source_ids)}</li>`).join("")}</ul>`);
+  }
+  if (rates.length) {
+    parts.push(`<table class="assistant-rates"><thead><tr><th>Kalem</th><th>Değer</th><th>Kaynak</th></tr></thead><tbody>${rates.map((item) =>
+      `<tr><td>${escapeHtml(item.name || "")}</td><td>${escapeHtml(item.value || "")}</td><td>${assistantSourceBadges(item.source_ids) || "—"}</td></tr>`).join("")}</tbody></table>`);
+  }
+  if (steps.length) {
+    parts.push(`<ul class="assistant-steps">${steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+  }
+  if (unverified.length) {
+    parts.push(`<div class="assistant-unverified"><b>Doğrulanamadı ve yanıttan düşürüldü:</b><ul class="assistant-claims">${unverified.map((item) =>
+      `<li>${escapeHtml(item.value || "")} — ${escapeHtml(item.reason || "")}</li>`).join("")}</ul></div>`);
+  }
+  if (warnings.length) {
+    parts.push(`<div class="assistant-unverified">${warnings.map((item) => escapeHtml(item)).join("<br>")}</div>`);
+  }
+  if (toolCalls.length) {
+    parts.push(`<details class="assistant-tools"><summary>${toolCalls.length} araç çağrısı</summary>${toolCalls.map((call) =>
+      `<div class="assistant-tool"><b>${escapeHtml(call.id || "")} · ${escapeHtml(call.name || "")}</b>
+        <pre>${escapeHtml(JSON.stringify(call.args || {}, null, 1))}</pre>
+        <pre>${escapeHtml(call.summary || "")}</pre></div>`).join("")}</details>`);
+  }
+  if (data.legal_notice) parts.push(`<p class="assistant-notice">${escapeHtml(data.legal_notice)}</p>`);
+  return parts.join("");
+}
+
+function appendAssistantMessage(kind, html) {
+  const thread = $("#assistantThread");
+  if (!thread) return null;
+  const node = document.createElement("div");
+  node.className = `assistant-msg ${kind}`;
+  node.innerHTML = html;
+  thread.appendChild(node);
+  thread.scrollTop = thread.scrollHeight;
+  return node;
+}
+
+function assistantContext() {
+  const gtip = ($("#candidateGtip")?.value || "").replace(/\D/g, "");
+  const origin = ($("#originCountry")?.value || "").trim();
+  const asOf = ($("#tariffAsOf")?.value || "").trim();
+  const body = { question: "", history: state.assistantHistory.slice(-ASSISTANT_MAX_HISTORY) };
+  if (gtip) body.gtip = gtip;
+  if (origin) body.origin_country = origin;
+  if (asOf) body.as_of = asOf;
+  return body;
+}
+
+$("#assistantForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("#assistantQuestion");
+  const button = $("#assistantSend");
+  const question = (input.value || "").trim();
+  if (!question) return;
+  const body = assistantContext();
+  body.question = question;
+  appendAssistantMessage("user", `<span class="assistant-role">Siz</span><p>${escapeHtml(question)}</p>`);
+  input.value = "";
+  button.disabled = true;
+  const pending = appendAssistantMessage("assistant", '<span class="assistant-role">Gümrükçe asistanı</span><p>Resmî araçlar sorgulanıyor…</p>');
+  try {
+    const data = await fetchJson("/api/customs/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs: AI_ANALYSIS_TIMEOUT_MS,
+    });
+    if (pending) pending.innerHTML = renderAssistantAnswer(data);
+    state.assistantHistory.push({ role: "user", content: question.slice(0, 2000) });
+    state.assistantHistory.push({ role: "assistant", content: String(data.answer || "").slice(0, 2000) });
+    state.assistantHistory = state.assistantHistory.slice(-ASSISTANT_MAX_HISTORY);
+  } catch (error) {
+    const message = error.message || "Asistan yanıtı alınamadı.";
+    if (pending) {
+      pending.className = "assistant-msg error";
+      pending.innerHTML = `<span class="assistant-role">Hata</span><p>${escapeHtml(message)}</p>`;
+    }
+    showToast(message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("#assistantClear")?.addEventListener("click", () => {
+  state.assistantHistory = [];
+  const thread = $("#assistantThread");
+  if (thread) thread.innerHTML = "";
+});
