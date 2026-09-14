@@ -53,7 +53,7 @@ dependencies = [
 mevzuat-mcp = "mevzuat_mcp_server:main"
 
 [tool.setuptools]
-py-modules = ["mevzuat_mcp_server", "app", "unified_search", "countries", "bulk_costing", "origin_documents", "email_service", "exchange_rates", "trade_measures", "tax_lists", "eylemio_client", "mevzuat_client", "mevzuat_models", "article_search", "bedesten_client", "bedesten_models", "ticaret_client", "ticaret_models", "customs_advisor", "tariff_engine", "control_engine", "classification_evidence", "customs_benchmark", "trusted_certificates", "auth_service", "account_service", "billing_service", "security_firewall", "product_page", "shipping_documents"]
+py-modules = ["mevzuat_mcp_server", "app", "unified_search", "countries", "bulk_costing", "origin_documents", "email_service", "exchange_rates", "trade_measures", "tax_lists", "eylemio_client", "mevzuat_client", "mevzuat_models", "article_search", "bedesten_client", "bedesten_models", "ticaret_client", "ticaret_models", "customs_advisor", "tariff_engine", "control_engine", "classification_evidence", "customs_benchmark", "trusted_certificates", "auth_service", "account_service", "billing_service", "security_firewall", "product_page", "shipping_documents", "hybrid_index", "hybrid_corpora"]
 packages = ["semantic_search"]
 
 [tool.setuptools.data-files]

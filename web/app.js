@@ -13,6 +13,7 @@ const state = {
   customsImageData: null,
   customsVisionStatus: "idle",
   customsVisionResult: null,
+  customsDocumentPages: null,
   customsClassificationResult: null,
   customsAutoGtip: null,
   customsGtipSelectionConfirmed: false,
@@ -1254,7 +1255,7 @@ function setVisionState(status, message, provider = "") {
     idle: "Bekliyor", ready: "Analize hazır", analysing: "Analiz ediliyor", review: "Kullanıcı kontrolü", confirmed: "Onaylandı", error: "Elle doldurun",
   };
   const panel = $("#attributeReview");
-  if (panel) panel.hidden = !state.customsImageData || ["idle", "ready"].includes(status);
+  if (panel) panel.hidden = !(state.customsImageData || state.customsDocumentPages) || ["idle", "ready"].includes(status);
   const badge = $("#visionState");
   badge.dataset.state = status;
   badge.textContent = labels[status] || status;
@@ -3113,11 +3114,18 @@ $("#ingestSource")?.addEventListener("click", async () => {
     const structuredNote = data.extraction === "structured"
       ? `<p class="missing-list">Sayfadan ürün verisi okundu: <b>${escapeHtml([structured.brand, structured.name].filter(Boolean).join(" · ") || data.title || "")}</b>${structured.attributes?.length ? ` · ${structured.attributes.length} özellik` : ""}</p>`
       : (data.source_type === "url" ? '<p class="missing-list">Sayfada yapılandırılmış ürün verisi bulunamadı; görünen metin alındı. Gereksiz kısımları silip yalnızca ürünle ilgili bölümü bırakın.</p>' : "");
+    const pagesBadge = data.source_kind === "pdf_pages"
+      ? `<p><span class="source-badge" data-kind="pdf_pages">${escapeHtml(data.badge || "Taranmış/çizim PDF'i sayfa görseli olarak analiz edildi")} · ${data.pages_used || 0}/${data.page_count || data.pages_used || 0} sayfa</span></p>`
+      : "";
+    const attributeAction = data.source_kind === "pdf_pages" && data.attributes
+      ? '<button type="button" class="secondary-action" id="ingestApplyAttributes">Evsafları forma aktar</button>'
+      : "";
     output.innerHTML = `
+      ${pagesBadge}
       <p class="missing-list">${escapeHtml(data.warning || "")}</p>
       ${structuredNote}
       <textarea class="ingest-textarea" id="ingestText">${escapeHtml(data.text)}</textarea>
-      <div class="result-actions"><button type="button" id="ingestAppend">Ürün tanımına ekle</button></div>
+      <div class="result-actions"><button type="button" id="ingestAppend">Ürün tanımına ekle</button>${attributeAction}</div>
       ${data.truncated ? '<p class="missing-list">Belge uzun olduğu için metin kısaltıldı.</p>' : ""}`;
     $("#ingestAppend")?.addEventListener("click", () => {
       const target = $("#productDescription");
@@ -3126,6 +3134,55 @@ $("#ingestSource")?.addEventListener("click", async () => {
       target.value = `${target.value ? `${target.value.trimEnd()} ` : ""}${text}`.slice(0, 2000);
       target.dispatchEvent(new Event("input", { bubbles: true }));
       showToast("Belge metni ürün tanımına eklendi; gözden geçirip onaylayın.");
+    });
+    $("#ingestApplyAttributes")?.addEventListener("click", () => {
+      // Sayfa görsellerinden çıkarılan evsaflar, fotoğraf analiziyle aynı inceleme
+      // satırlarına gider; GTİP alanına hiçbir şey yazılmaz.
+      state.customsDocumentPages = { pages_used: data.pages_used || 0 };
+      state.customsVisionResult = data.attributes;
+      applyVisionAttributes(data.attributes);
+      setVisionState(
+        "review",
+        `${data.warning || ""} Alanları düzeltin; araştırma ancak onayınızdan sonra başlar.`,
+        `PDF sayfa analizi (${data.pages_used || 0} sayfa) · güven: ${confidenceLabel(data.attributes.confidence)}`,
+      );
+      $("#attributeReview")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+});
+
+$("#verifyBrandModel")?.addEventListener("click", async () => {
+  const output = $("#brandModelOutput");
+  const brand = ($("#brandInput")?.value || "").trim();
+  const model = ($("#modelInput")?.value || "").trim();
+  const url = ($("#ingestUrl")?.value || "").trim();
+  if (!brand && !model) { output.innerHTML = '<p class="missing-list">Doğrulanacak marka ve/veya model girin.</p>'; return; }
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>Sayfa okunuyor</b><span>Marka/model metni sayfayla karşılaştırılıyor…</span></div></div>';
+  try {
+    const data = await fetchJson("/api/customs/brand-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brand, model, url: url || undefined }),
+    });
+    if (data.status === "source_required") {
+      output.innerHTML = `<p class="missing-list">${escapeHtml(data.message || "")}</p><ul class="missing-list">${(data.suggestions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+      return;
+    }
+    const match = data.match || {};
+    const verdictLabel = { match: "Eşleşti", partial: "Kısmen eşleşti", no_match: "Eşleşmedi" }[match.verdict] || "Belirsiz";
+    output.innerHTML = `
+      <p><span class="match-score" data-verdict="${escapeHtml(match.verdict || "")}">${verdictLabel} · ${match.score ?? 0}/100</span> <small>${escapeHtml(data.title || data.url || "")}</small></p>
+      <ul class="missing-list">${(match.evidence || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p class="missing-list">${escapeHtml(data.warning || "")}</p>
+      <div class="result-actions"><button type="button" class="secondary-action" id="brandModelApply">Marka/modeli evsaf alanına yaz</button></div>`;
+    $("#brandModelApply")?.addEventListener("click", () => {
+      const target = $("#brandModel");
+      if (!target) return;
+      target.value = [brand, model].filter(Boolean).join(" / ").slice(0, 300);
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      showToast("Marka/model evsaf alanına yazıldı; GTİP seçimi size aittir.");
     });
   } catch (error) {
     output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;

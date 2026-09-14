@@ -86,6 +86,10 @@ Web arayüzündeki **Gümrükçe’ye Sor** sekmesi üç güvenlik aşaması kul
 
 Çalışma masasında ayrıca **Tarife & Maliyet**, **Kontroller & Belgeler**, **Değişiklikler**, **Gümrük Danışmanları** ve **İşlem Rehberi** sekmeleri bulunur. Tarife ekranı resmî workbook/sheet/row ve arşiv checksum'unu; kontrol ekranı tebliğ Ek-1 satırını, yetkili sistemi ve risk uyarısını; değişiklik ekranı snapshot farklarını, cihazdaki GTİP izleme listesini ve kaydedilmiş ön değerlendirmeleri gösterir. Menşe ülke ile sevk ülkesi ayrı girilir: AB'den A.TR ile gelen üçüncü ülke menşeli eşyada gümrük vergisi AB sütunundan (A.TR ibrazına bağlı), İGV ve ek mali yükümlülük menşe sütunundan değerlendirilir; AB/STA menşeli eşyada İGV/EMY tercihi tedarikçi beyanı veya menşe belgesi tevsikine bağlı olarak işaretlenir ve tevsik yoksa uygulanacak "Diğer Ülkeler" oranı gösterilir. Menşe belgesi kuralı fasıla bakar: 1-24. fasıl temel tarım ürünü ve AKÇT kömür-çelik ürünleri için A.TR yerine EUR.1; Birleşik Krallık, Güney Kore ve Singapur için menşe beyanı. Ülke adları `countries.py` kayıt defterinden (Türkçe/İngilizce) çözümlenir; tanınmayan ad uyarı üretir. Tarife ekranındaki **Menşe senaryoları** paneli aynı GTİP için menşe ülkesi başına resmî vergi sütununu, güvenli oranı ve A.TR/EUR.1/menşe şahadetnamesi belge kuralını yan yana karşılaştırır (`/api/tariff/scenarios`; kural tablosu `origin_documents.py`, resmî yürürlükteki STA listesine dayanır). Aynı paneldeki **Tasarruf önerisi** düğmesi (`/api/tariff/savings`; satır üretimi `scenarios.py`, saf sıralama mantığı `savings.py`) Tarife & Maliyet formundaki maliyet kalemlerini (fatura, navlun, sigorta, KDV, KKDF, ÖTV, damping, gözetim, EMY, TL kalemleri) her menşe için aynı maliyet motorundan geçirir, A.TR'ye uygun rotalarda (AB'den sevk edilen üçüncü ülke menşeli sanayi ürünü) ayrıca "A.TR ile" varyantını hesaplar ve senaryoları toplam ithalat maliyetine göre sıralayıp temel senaryoya (varsayılan: formdaki menşe) göre tasarrufu gösterir. Karşılaştırılabilirlik kuralları bilinçli olarak dardır: yalnız kesin eşleşen tarife satırı (`matched`) ve tanınan menşe sıralamaya girer; alt GTİP satırlarında değişen (belirsiz) oran, tanınmayan menşe veya doğrulanmamış maliyet kalemi olan senaryo "karşılaştırılamayan" listesine sebebiyle düşer; resmî listede bulunmayan kalem sessizce 0 sayılmaz (motor listede olmadığını açıkça söylüyorsa 0, aksi hâlde kullanıcının girdiği oran kullanılır ve not düşülür); resmî sütun oranı kullanıcı oranından farklıysa senaryoda resmî oran esas alınır ve fark belirtilir. Her satır koşullarıyla gelir: A.TR dolaşım belgesi ibrazı, EUR.1/menşe beyanı, İGV/EMY tercihi için tedarikçi beyanı veya menşe belgesi tevsiki; tevsik gerektiren satırlarda tevsik yoksa uygulanacak "Diğer Ülkeler" oranıyla kötümser toplam da gösterilir. Sıralama karar desteğidir, tavsiye veya bağlayıcı tarife/menşe bilgisi değildir; yasal not yanıt ve tablo altında yer alır. Özellik Uzman paketi kilidine (`scenario_compare`) bağlıdır; tablo CSV olarak indirilebilir. Ön değerlendirme dosyası menşe belgelerini de içerir ve "PDF olarak kaydet" ile yazdırılabilir. Ürün evsafı kullanıcı PDF'i, Word (.docx) belgesi veya HTTPS ürün sayfasından `/api/customs/ingest-source` ile sınırlı metin çıkarımıyla desteklenebilir; çıkarılan metin kullanıcı onayına sunulur. E-ticaret sayfalarında (Trendyol, Hepsiburada, marka siteleri) ürün verisi önce yapılandırılmış kaynaklardan okunur (`product_page.py`: JSON-LD `Product`, Trendyol `__PRODUCT_DETAIL_APP_INITIAL_STATE__`, `og:`/meta etiketleri), menü ve alt bilgi metni atılır; site otomatik okumayı engellerse açık bir hata mesajı döner ve `PRODUCT_PAGE_BROWSER_FALLBACK` (varsayılan açık) ile sayfa yalnızca kendi alan adına izin verilen başsız Chromium'da bir kez daha denenir. **Sevkiyat belgesi** bölümü konşimento (B/L), AWB, CMR, ticari/proforma fatura, çeki listesi veya menşe şahadetnamesini PDF, Word (.docx) ya da fotoğraf olarak alır (`/api/customs/ingest-shipping-document`, `shipping_documents.py`): metinli PDF ve .docx doğrudan, taranmış PDF ilk sayfası görüntüye çevrilerek (pymupdf), fotoğraf görsel modelle okunur; gönderici/alıcı, eşya tanımı, kap/ağırlık, liman, Incoterm, fatura tutarı ve konteyner alanları düzenlenebilir biçimde gösterilir ve yalnızca boş form alanlarına aktarılır. Belge metni modele gitmeden `sanitize_untrusted_context` ve `redact_text` süzgeçlerinden geçer; belgedeki HS kodu forma yazılmaz, yalnızca öneri olarak gösterilir.
 
+**Çok motorlu girdi genişletmesi (PRD Faz 3.4).** Ürün belgesi yüklemesinde metin katmanı olmayan ya da çok az metin taşıyan PDF'ler (taranmış katalog, teknik föy taraması, teknik çizim) artık sessizce reddedilmez: sayfa başına 200 karakterden az metin varsa ilk **en fazla 3 sayfa** `shipping_documents.rasterize_pdf_pages` ile görüntüye çevrilir ve ürün fotoğrafıyla **aynı** görsel evsaf yoluna (`customs_advisor.describe_images` → mevcut çift model + hakem zinciri, aynı istem ve şema) tek istekte birden çok görsel olarak gönderilir. Yanıt `source_kind: "pdf_pages"`, `pages_used`, `page_count` ve düzenlenebilir evsaf listesiyle döner; belge 10 MB sınırına tabidir, bu yol `vision` kotasını tüketir (OAuth açıkken giriş ister) ve metinli PDF'ler eskisi gibi kotasız metin yolundan geçer. Arayüzde sonuç "taranmış/çizim PDF'i sayfa görseli olarak analiz edildi" rozetiyle gösterilir ve "Evsafları forma aktar" düğmesi alanları fotoğraf analiziyle aynı inceleme satırlarına yazar. **GTİP hiçbir koşulda forma otomatik yazılmaz**; modelin ürettiği aday kod alanları sunucuda düşürülür.
+
+**Marka/model doğrulama (PRD Faz 3.4).** `POST /api/customs/brand-model` (giriş gerekli, dakikada 20 istek) gövdesi `{brand, model, url?}` alır. **Otomatik web araması yapılmaz**: `url` verilmezse yanıt yalnızca "kaynak URL verin" yönlendirmesi ve öneri listesidir (önce üreticinin resmî ürün sayfası). URL verildiğinde sayfa `ingest-source` ile aynı SSRF korumalarından (HTTPS zorunlu, kimlik bilgisi/localhost/özel ağ/metadata IP reddi, her yönlendirme adımında yeniden doğrulama) ve `product_page.py` anti-bot/yapılandırılmış çıkarım yolundan geçirilir; `product_page.brand_model_match` marka ve modelin sayfada geçip geçmediğine göre 0-100 arası puan, `match`/`partial`/`no_match` kararı ve Türkçe gerekçe listesi üretir (büyük-küçük harf duyarsız, Türkçe `I/İ` katlaması, `K-9000 XL` ≡ `K9000XL` sadeleştirmesi). Çıkarılan sayfa alanları kullanıcıya dönmeden `sanitize_untrusted_context` ve `redact_text` süzgeçlerinden geçer; puan yalnızca metin eşleşmesidir, ürünün doğruluğunu, menşeini veya GTİP'ini teyit etmez.
+
 **Belgeden maliyet alanı çıkarımı (PRD Faz 2.5).** Aynı okuma navlun ve sigorta tutarını (varsa belgedeki ayrı para birimiyle: `freight_currency`, `insurance_currency`), fatura tutarı/para birimini, Incoterm'i ve ödeme şeklini de çıkarır. Ödeme şekli belgedeki ham ifade (`payment_terms`) olarak okunur ve saf `payment_terms_to_method` yardımcısıyla KKDF değerlendirmesinde kullanılan normalize anahtara çevrilir (`cash_in_advance` peşin/advance/T/T in advance, `cash_against_goods` mal mukabili/open account, `cash_against_documents` vesaik mukabili/CAD/D/P, `letter_of_credit` akreditif/L/C, `acceptance_credit` kabul kredili/D/A; tanınmazsa `null`). Model yalnızca belgede açıkça yazan değeri döndürür; para birimi ISO-4217 üç harf, tutar sıfırdan küçük olamaz, aksi hâlde alan `null` kalır. Arayüzde "Ürün dosyasına aktar" yalnızca **boş** maliyet alanlarını (navlun, sigorta, ödeme şekli, Incoterm, fatura tutarı/para birimi) doldurur, dolu alanlara dokunmaz ve doldurduğu alanın yanına "belgeden alındı, doğrulayın" rozeti (`data-from-document`) koyar; kullanıcı alanı düzenleyince rozet kalkar. Navlun/sigorta belgede fatura para biriminden farklı bir para birimiyle yazılmışsa alan boş bırakılır ve bildirilir; KKDF oranı forma yazılmaz (maliyet motoru ödeme şeklinden öneri üretir, kullanıcı doğrular); HS/GTİP kodu hiçbir zaman forma yazılmaz.
 
 **Hesaplanan işlem akışı** (`customs_workflow.py`, PRD Faz 2.4): her ön değerlendirme sonucu, sonucun kendi alanlarından kural tabanlı olarak türetilen 24 adımlık bir işlem akışı (`workflow`) taşır: eşya tanımı, evsaf onayı, aday GTİP, ağaçta 12 hane, menşe/sevk ülkesi, A.TR, EUR.1/menşe beyanı, kıymet ve Incoterm, kur/tescil tarihi, GV, İGV, EMY, damping/sübvansiyon, korunma/kota, gözetim, ÖTV, KDV, KKDF, TAREKS/ÜGD kapsamı, yasak/izin listeleri, diğer kurum izinleri, belge kontrol listesi, beyanname öncesi ödemeler (damga, ardiye, GEKAP, TRT) ve uzman devri/BTB kararı. Her adım `done | pending | blocked | not_applicable` durumu, kısa özet, kaynak alan adları (`evidence_refs`), gerekiyorsa `next_action` ve yasal dayanak taşır; durumlar yalnızca tarife/kontrol/önlem sonuçları, menşe belgesi kuralı, eksik bilgi listesi ve uzman paketinden türetilir (yapay zekâ yorumu yok). Dallanma örnekleri: AB'den A.TR ile gelen sanayi ürününde EUR.1 adımı `not_applicable`; resmî damping/gözetim/korunma listesinde eşleşme yoksa ilgili adım `not_applicable`; fatura bedeli yoksa kıymet, kur ve TL kalemleri `blocked`; 12 hane onayı yoksa kontrol adımları `blocked`. `workflow_summary` adım sayılarını ve uygulanmayan adımlar hariç tamamlanma oranını verir. Arayüzde **İşlem Rehberi** sekmesi sonuç yokken statik rehberi, sonuç geldiğinde hesaplanan akışı durum rozetleriyle gösterir; eski kayıtlarda alan boş olabilir ve statik rehber kalır.
@@ -156,6 +160,25 @@ Uzak MCP adresi: `https://gumruksor.com/mcp`
 Tanıtım ve fiyatlandırma sayfası: `https://gumruksor.com/`
 
 Web araştırma uygulaması: `https://gumruksor.com/app`
+
+### Kalıcı hibrit arama indeksi (BM25 + embedding)
+
+Resmî korpuslar tek bir kalıcı indekste toplanır (`hybrid_index.py`, `MEVZUAT_DATA_DIR/hybrid_index.sqlite3`):
+ÜGD kontrol kapsam satırları (yalnız aktif/onaylı tebliğler), AB sınıflandırma tüzüğü sayfaları (1.200
+karakterlik parçalar), ticaret önlemi ürün tanımları (damping/korunma/gözetim/kota), `customs_sources.json`
+resmî sayfaları, ÖTV ve KDV liste satırları ve varsa tarife cetveli eşya tanımları. Sözlüksel katman SQLite
+FTS5'tir (`unicode61 remove_diacritics 2`, BM25); anlamsal katman belge gömmelerini `embeddings` tablosunda
+float32 olarak saklar ve RAM'de float16 matris üzerinde kosinüs benzerliğiyle arar (numpy yoksa saf Python'a
+düşer). İki sıralama **Reciprocal Rank Fusion** ile birleştirilir; sorguda GTİP ön eki verilmişse eşleşen
+belgeler ek puan alır. Sorgu gömmesi `embed_timeout` (varsayılan 0,45 sn) içinde dönmezse ya da sağlayıcı
+hata verirse sonuç yalnız sözlüksel döner ve yanıt `mode` alanında `lexical` yazar (aksi hâlde `hybrid`).
+
+Besleme idempotenttir: `source_sha256` değişmeyen belge yeniden yazılmaz ve yeniden gömülmez. Arka plan
+döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBRID_INDEX_REFRESH_SECONDS`
+(varsayılan 1800) aralığıyla yalnız değişen belgeleri tazeler. `GET /api/search/hybrid?q=&gtip=&limit=`
+(60/dk) hibrit sonuçları verir; `GET /api/admin/index-status` (editör/yönetici) belge, korpus ve embedding
+sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
+LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
 
 Arayüzde Ticaret Bakanlığının yedi bilgi katmanı canlı kayıt sayılarıyla ayrı gösterilir; kaynak, belge türü, yıl ve mülga durumu filtrelenebilir. Seçilen kaydın resmî kaynak zinciri, tam metni ve kopyalanabilir atfı aynı ekranda açılır. **Genel mevzuat** görünümü Bedesten resmî servisine bağlı ayrı arama alanıdır.
 
@@ -381,20 +404,29 @@ Bu bölüm, Mevzuat MCP aracını 5ire gibi Claude Desktop dışındaki MCP iste
 ---
 🔑 **API Anahtarları (Opsiyonel)**
 
-### Semantik Arama - OpenRouter API
+### Semantik Arama - Gemini veya OpenRouter
 
-Tüm `search_within_*` araçlarında `semantic=True` ile doğal dilde arama yapabilmek için:
+Tüm `search_within_*` araçlarında `semantic=True` ile doğal dilde arama yapabilmek için bir gömme
+(embedding) sağlayıcısı gerekir. Sağlayıcı `EMBEDDING_PROVIDER` ile seçilir (`gemini`, `openrouter`,
+`none`); boş bırakılırsa `GEMINI_API_KEY` varsa Gemini, yoksa `OPENROUTER_API_KEY` varsa OpenRouter
+kullanılır, hiçbiri yoksa gömme kapalıdır.
 
-1. [OpenRouter](https://openrouter.ai/) üzerinden API anahtarı alın
-2. Environment variable olarak ayarlayın:
+1. **Gemini (önerilen, doğrudan Google AI Studio):**
+   ```bash
+   GEMINI_API_KEY=your_api_key_here
+   EMBEDDING_MODEL=gemini-embedding-001   # varsayılan
+   EMBEDDING_DIM=768                      # outputDimensionality, varsayılan 768
+   ```
+   İstekler `generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents` ucuna
+   `x-goog-api-key` başlığıyla gider; sorgularda `RETRIEVAL_QUERY`, belgelerde `RETRIEVAL_DOCUMENT`
+   görev tipi kullanılır, 429/5xx yanıtlarında 1,5/3/6 sn aralıklarla yeniden denenir.
+2. **OpenRouter:**
    ```bash
    OPENROUTER_API_KEY=your_api_key_here
+   EMBEDDING_MODEL=google/gemini-embedding-001        # 3072 boyut (varsayılan)
+   # EMBEDDING_MODEL=intfloat/multilingual-e5-large   # 1024 boyut
    ```
-3. Varsayılan model: `google/gemini-embedding-001` (3072 boyut). Alternatif olarak:
-   ```bash
-   EMBEDDING_MODEL=intfloat/multilingual-e5-large  # 1024 boyut
-   ```
-4. API anahtarı olmadan da tüm araçlar çalışır, sadece `semantic=True` kullanılamaz
+3. Anahtar olmadan da tüm araçlar çalışır, sadece `semantic=True` kullanılamaz.
 
 ### Mistral OCR
 

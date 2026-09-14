@@ -50,6 +50,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    hybrid_index,
     review_service,
     tariff_engine,
     ticaret_client,
@@ -60,13 +61,13 @@ from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows a
 from countries import COUNTRIES, PENDING_AGREEMENTS
 from savings import evaluate_scenarios, rank_savings
 from scenarios import build_origin_scenarios
-from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, detect_bot_wall, extract_product_page
-from shipping_documents import decode_document_data_url, extract_shipping_document
+from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
+from shipping_documents import decode_document_data_url, extract_shipping_document, pdf_page_count, rasterize_pdf_pages
 from mevzuat_mcp_server import (
     BACKGROUND_LOOPS,
     app as mcp,
 )
-from security_firewall import AgentTokenVerifier, SecurityViolation, guard_data, redact_data
+from security_firewall import AgentTokenVerifier, SecurityViolation, guard_data, redact_data, redact_text, sanitize_untrusted_context
 from temporal import normalise_as_of, parse_iso_date, today_iso
 from exchange_rates import ExchangeRateError, parse_registration_date
 from eylemio_client import EylemioError, summarise_declaration
@@ -1699,9 +1700,59 @@ def _extract_pdf_text(payload: bytes) -> str:
     return _extract_office_text(payload, ".pdf")
 
 
+# Taranmış / teknik çizim PDF'i: sayfa başına bu kadar karakterden az metin varsa
+# ilk sayfalar görsele çevrilip görsel evsaf modeline verilir (PRD Faz 3.4).
+_PDF_MIN_TEXT_CHARS_PER_PAGE = 200
+_PDF_MAX_VISION_PAGES = 3
+
+
+def _pdf_needs_page_vision(text: str, page_count: int) -> bool:
+    return len(" ".join(text.split())) < _PDF_MIN_TEXT_CHARS_PER_PAGE * max(1, page_count)
+
+
+def _attributes_to_text(data: dict[str, Any]) -> str:
+    """Compose the review textarea text from the vision attributes (no tariff code)."""
+    lines: list[str] = []
+    labels = (
+        ("product_name", "Ürün adı"), ("product_category", "Kategori"), ("product_description", "Tanım"),
+        ("composition", "Malzeme / bileşim"), ("intended_use", "Kullanım amacı"), ("dimensions", "Ölçü / teknik değer"),
+        ("construction_form", "Yapı"), ("function_mechanism", "İşlev"), ("packaging", "Ambalaj"), ("label_text", "Belgede okunan metin"),
+    )
+    for key, label in labels:
+        value = str(data.get(key) or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    brand_model = " / ".join(filter(None, [str(data.get("visible_brand") or ""), str(data.get("visible_model") or "")]))
+    if brand_model:
+        lines.append(f"Marka / model: {brand_model}")
+    for key, label in (("visible_features", "Görülen özellikler"), ("components_accessories", "Parçalar / aksesuarlar"), ("inferred_features", "Doğrulanması gereken tahminler")):
+        items = [str(item).strip() for item in (data.get(key) or []) if str(item).strip()]
+        if items:
+            lines.append(f"{label}: " + "; ".join(items))
+    return "\n".join(lines)
+
+
+async def _describe_pdf_pages(payload: bytes) -> tuple[dict[str, Any], int]:
+    """Rasterise the first pages of a text-less PDF and run the shared vision path."""
+    pages = rasterize_pdf_pages(payload, max_pages=_PDF_MAX_VISION_PAGES)
+    result = await customs_advisor_service.describe_images([(page, "image/png") for page in pages])
+    data = result.model_dump(mode="json")
+    # Uygulama ilkesi: görsel/belge analizi hiçbir zaman GTİP üretmez; olası model
+    # fazlalıkları şema doğrulamasında düşer, burada da savunma amaçlı temizlenir.
+    for key in ("candidate_gtip", "gtip", "hs_code", "hs_codes", "tariff_code"):
+        data.pop(key, None)
+    return data, len(pages)
+
+
 @mcp.custom_route("/api/customs/ingest-source", methods=["POST"])
 async def web_customs_ingest_source(request: Request):
-    """Extract bounded text from a user-supplied product page or PDF for attribute review."""
+    """Extract bounded text from a user-supplied product page or PDF for attribute review.
+
+    PDF'lerde metin katmanı yoksa ya da sayfa başına 200 karakterden azsa (taranmış
+    katalog, teknik çizim) ilk üç sayfa görsele çevrilir ve ürün fotoğrafıyla aynı
+    görsel evsaf yolu (``describe_images``) kullanılır; bu yol ``vision`` kotasına
+    tabidir. Sonuç yalnızca evsaf listesidir; GTİP hiçbir zaman forma yazılmaz.
+    """
     limited = _rate_limit_response(request, "customs-ingest", limit=10, window_seconds=3600)
     if limited:
         return limited
@@ -1720,11 +1771,13 @@ async def web_customs_ingest_source(request: Request):
             raise ValueError("Tek bir kaynak belirtin: belge adresi veya PDF/Word dosyası.")
         structured: dict[str, Any] = {}
         extraction = "text"
+        source_kind = "text"
+        extra: dict[str, Any] = {}
         if url:
             fetched = await _fetch_user_document_text(url)
             text, title = fetched["text"], fetched["title"]
             structured, extraction = fetched.get("structured") or {}, fetched.get("extraction") or "text"
-            source_type, source_label = "url", url
+            source_type, source_label, source_kind = "url", url, "url"
         else:
             match = _USER_DOCUMENT_DATA_URL_RE.fullmatch(str(pdf_data_url or ""))
             if not match:
@@ -1734,34 +1787,172 @@ async def web_customs_ingest_source(request: Request):
                 raise ValueError("Belge 10 MB sınırını aşıyor.")
             if match.group(1) == _DOCX_MIME:
                 text, title = _extract_office_text(payload, ".docx"), "Yüklenen Word belgesi"
-                source_type, source_label = "docx", "Word belgesi"
+                source_type, source_label, source_kind = "docx", "Word belgesi", "docx_text"
             else:
-                text, title = _extract_pdf_text(payload), "Yüklenen PDF"
-                source_type, source_label = "pdf", "PDF belgesi"
+                source_type, source_label, source_kind = "pdf", "PDF belgesi", "pdf_text"
+                try:
+                    text = _extract_pdf_text(payload)
+                except Exception as exc:
+                    logger.warning("PDF text extraction failed: %s", type(exc).__name__)
+                    text = ""
+                title = "Yüklenen PDF"
+                page_count = pdf_page_count(payload)
+                if _pdf_needs_page_vision(text, page_count):
+                    quota_user = _enforce_quota(request, "vision")
+                    attributes, pages_used = await _describe_pdf_pages(payload)
+                    _record_usage(quota_user, "vision")
+                    text = _attributes_to_text(attributes)
+                    source_kind, extraction = "pdf_pages", "vision"
+                    extra = {
+                        "pages_used": pages_used,
+                        "page_count": page_count,
+                        "attributes": attributes,
+                        "badge": "Taranmış/çizim PDF'i sayfa görseli olarak analiz edildi",
+                    }
         if not text.strip():
             raise ValueError("Belgede kopyalanabilir metin bulunamadı; taranmış sayfa ise metin çıkarılamaz.")
         truncated = len(text) > _USER_DOCUMENT_MAX_CHARS
+        warning = (
+            "Belge metni yalnızca ürün evsaflarını hazırlamak için çıkarıldı. İçeriği gözden geçirip "
+            "onaylamadan sınıflandırma araştırması başlamaz."
+        )
+        if source_kind == "pdf_pages":
+            warning = (
+                f"PDF'de metin katmanı bulunmadığı için ilk {extra['pages_used']} sayfa görsel olarak analiz edildi. "
+                "Yalnızca sayfada görülebilen evsaflar çıkarıldı; alanları doğrulayıp onaylamadan sınıflandırma başlamaz. "
+                "Bu sonuç GTİP değildir."
+            )
         return JSONResponse(
-            {
-                "source_type": source_type,
-                "title": title[:200] or source_label,
-                "text": text[:_USER_DOCUMENT_MAX_CHARS],
-                "truncated": truncated,
-                "structured": structured,
-                "extraction": extraction,
-                "warning": (
-                    "Belge metni yalnızca ürün evsaflarını hazırlamak için çıkarıldı. İçeriği gözden geçirip "
-                    "onaylamadan sınıflandırma araştırması başlamaz."
-                ),
-            }
+            redact_data(
+                {
+                    "source_type": source_type,
+                    "source_kind": source_kind,
+                    "title": title[:200] or source_label,
+                    "text": text[:_USER_DOCUMENT_MAX_CHARS],
+                    "truncated": truncated,
+                    "structured": structured,
+                    "extraction": extraction,
+                    "warning": warning,
+                    **extra,
+                },
+                contact_data=True,
+            )
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except ValidationError:
+        return JSONResponse({"error": "Görsel evsafları doğrulanamadı; alanları elle doldurabilirsiniz."}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("User document ingestion failed")
+        return JSONResponse({"error": "Belge metni şu anda çıkarılamadı."}, status_code=502)
+
+
+_BRAND_MODEL_MAX_CHARS = 150
+
+
+def _sanitised_page_fields(page: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Run extracted page text/fields through the untrusted-context and redaction filters."""
+
+    def clean(value: Any, limit: int = 1_500) -> str:
+        safe, _ = sanitize_untrusted_context(str(value or "")[:limit], max_chars=limit)
+        return redact_text(safe, contact_data=True)
+
+    structured = page.get("structured") if isinstance(page.get("structured"), dict) else {}
+    cleaned = {
+        key: clean(structured.get(key)) for key in ("name", "brand", "category", "description", "price", "currency", "source")
+    }
+    cleaned["attributes"] = [
+        {"name": clean(item.get("name"), 200), "value": clean(item.get("value"), 500)}
+        for item in (structured.get("attributes") or [])[:40]
+        if isinstance(item, dict)
+    ]
+    return clean(page.get("text"), _USER_DOCUMENT_MAX_CHARS), cleaned
+
+
+@mcp.custom_route("/api/customs/brand-model", methods=["POST"])
+async def web_customs_brand_model(request: Request):
+    """Verify a typed brand + model against a user-supplied manufacturer / shop page.
+
+    Otomatik web araması yapılmaz: kullanıcı kaynak adresi vermezse yalnız yönlendirme
+    döner. Verilen adres ``ingest-source`` ile aynı SSRF korumalarından geçer; sayfa
+    içeriği veridir, ``sanitize_untrusted_context`` + ``redact_text`` sonrası döner.
+    """
+    limited = _rate_limit_response(request, "customs-brand-model", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        _agent_or_browser_identity(request)
+        # Girişli kullanım: OAuth yapılandırıldığında oturum zorunludur (self-hosted kurulumda açık kalır).
+        _session_user(request, required=google_auth.configured)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("İstek bir nesne olmalıdır.")
+        brand = " ".join(str(body.get("brand") or "").split())[:_BRAND_MODEL_MAX_CHARS]
+        model = " ".join(str(body.get("model") or "").split())[:_BRAND_MODEL_MAX_CHARS]
+        url = str(body.get("url") or "").strip()[:2000]
+        if not brand and not model:
+            raise ValueError("Doğrulanacak marka ve/veya model girin.")
+        if not url:
+            return JSONResponse(
+                {
+                    "status": "source_required",
+                    "brand": brand,
+                    "model": model,
+                    "message": (
+                        "Marka/model doğrulaması için kaynak URL verin. Otomatik web araması yapılmaz; "
+                        "üreticinin resmî ürün sayfası veya satıcı ürün sayfası adresini girin."
+                    ),
+                    "suggestions": [
+                        "Üreticinin resmî sitesindeki ürün/teknik föy sayfası (en güvenilir kaynak).",
+                        "Ürünün satıldığı e-ticaret sayfası (Trendyol, Hepsiburada, Amazon vb.).",
+                        "Sayfa erişime kapalıysa ürün sayfasını PDF olarak kaydedip belge alanından yükleyin.",
+                    ],
+                }
+            )
+        page = await _fetch_user_document_text(url)
+        match = brand_model_match(brand, model, page)
+        text, structured = _sanitised_page_fields(page)
+        return JSONResponse(
+            redact_data(
+                {
+                    "status": "checked",
+                    "brand": brand,
+                    "model": model,
+                    "url": url,
+                    "title": str(page.get("title") or "")[:200],
+                    "extraction": page.get("extraction") or "text",
+                    "match": match,
+                    "structured": structured,
+                    "text": text,
+                    "warning": (
+                        "Eşleşme puanı yalnızca girilen marka/model metninin sayfada geçip geçmediğini gösterir; "
+                        "ürünün doğruluğunu, menşeini veya GTİP'ini teyit etmez."
+                    ),
+                },
+                contact_data=True,
+            )
         )
     except SecurityViolation as exc:
         return _security_response(exc)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
-        logger.exception("User document ingestion failed")
-        return JSONResponse({"error": "Belge metni şu anda çıkarılamadı."}, status_code=502)
+        logger.exception("Brand/model verification failed")
+        return JSONResponse({"error": "Kaynak sayfa şu anda okunamadı."}, status_code=502)
 
 
 async def _read_json_body_limited(request: Request, max_bytes: int) -> dict[str, Any]:
@@ -2351,8 +2542,17 @@ async def web_tariff_autocomplete(request: Request):
         return limited
     query = str(request.query_params.get("q", "")).strip()[:100]
     limit_val = max(1, min(int(request.query_params.get("limit", "12") or 12), 30))
-    items = unified_search.autocomplete(query, limit=limit_val)
-    return JSONResponse({"items": items, "results": items, "count": len(items), "total": len(items)})
+    hybrid = await _hybrid_hits(query, limit=limit_val)
+    items = unified_search.autocomplete(query, limit=limit_val, hybrid=hybrid)
+    return JSONResponse(
+        {
+            "items": items,
+            "results": items,
+            "count": len(items),
+            "total": len(items),
+            "mode": str((hybrid or {}).get("mode") or "lexical"),
+        }
+    )
 
 
 @mcp.custom_route("/api/controls/communiques", methods=["GET"])
@@ -2383,6 +2583,62 @@ async def web_controls_search(request: Request):
     return JSONResponse({"query": query, "items": items, "results": items, "count": len(items), "total": len(items)})
 
 
+async def _hybrid_hits(query: str, *, limit: int = 10, gtip: str | None = None) -> dict[str, Any] | None:
+    """Kalıcı hibrit indeksten (BM25 + embedding) sonuç alır; hata/boş sorguda None."""
+    text = str(query or "").strip()
+    if not text:
+        return None
+    try:
+        return await hybrid_index.search(text, limit=limit, gtip_prefix=gtip)
+    except SecurityViolation:
+        raise
+    except Exception:  # noqa: BLE001 - hibrit indeks mevcut aramayı hiçbir zaman engellemez
+        logger.exception("Hibrit indeks araması başarısız")
+        return None
+
+
+@mcp.custom_route("/api/search/hybrid", methods=["GET"])
+async def web_hybrid_search(request: Request):
+    """Kalıcı hibrit indeks (BM25 + embedding, RRF) üzerinde arama (PRD Faz 3.1)."""
+    limited = _rate_limit_response(request, "hybrid-search", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    query = str(request.query_params.get("q", "")).strip()[:200]
+    gtip = re.sub(r"\D", "", str(request.query_params.get("gtip", "")))[:12]
+    try:
+        limit_val = max(1, min(int(request.query_params.get("limit", "10") or 10), 30))
+    except ValueError:
+        limit_val = 10
+    if not query:
+        return JSONResponse({"query": "", "mode": "lexical", "items": [], "count": 0})
+    try:
+        result = await hybrid_index.search(query, limit=limit_val, gtip_prefix=gtip or None)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except Exception:
+        logger.exception("Hibrit arama başarısız")
+        return JSONResponse({"error": "Hibrit arama şu anda kullanılamıyor."}, status_code=503)
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/api/admin/index-status", methods=["GET"])
+async def web_admin_index_status(request: Request):
+    """Hibrit indeks durumu (belge/embedding sayıları, son yenileme); editör veya yönetici."""
+    limited = _rate_limit_response(request, "admin-index-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_role(request, "editor")
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    try:
+        status = hybrid_index.status()
+    except Exception:
+        logger.exception("Hibrit indeks durumu alınamadı")
+        return JSONResponse({"error": "İndeks durumu okunamadı."}, status_code=500)
+    return JSONResponse(status, headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/search/unified", methods=["GET", "POST"])
 async def web_unified_search(request: Request):
     """Tarife, TAREKS/TSE denetimleri, ÖTV ve resmi mevzuat üzerinde birleşik arama."""
@@ -2399,7 +2655,8 @@ async def web_unified_search(request: Request):
     else:
         query = str(request.query_params.get("q", "")).strip()
         category = str(request.query_params.get("category", "all")).strip()
-    result = unified_search.search_all(query, category=category, limit=30)
+    hybrid = await _hybrid_hits(query, limit=10)
+    result = unified_search.search_all(query, category=category, limit=30, hybrid=hybrid)
     return JSONResponse(result)
 
 
