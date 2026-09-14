@@ -331,3 +331,95 @@ def extract_product_page(html_text: str, url: str, *, max_chars: int = 6_000) ->
         },
         "extraction": "structured" if structured else "text",
     }
+
+
+# --------------------------------------------------------------------------- marka / model doğrulama (PRD Faz 3.4)
+
+_TR_FOLD_TABLE = str.maketrans({"İ": "i", "I": "ı", "Ş": "ş", "Ğ": "ğ", "Ü": "ü", "Ö": "ö", "Ç": "ç"})
+_COMPACT_RE = re.compile(r"[^0-9a-zçğıöşü]+")
+
+
+def fold_turkish(value: Any) -> str:
+    """Case-insensitive normalisation that keeps Turkish dotted/dotless i apart correctly."""
+    text = _WS_RE.sub(" ", str(value or "")).strip()
+    return text.translate(_TR_FOLD_TABLE).casefold()
+
+
+def _compact(value: str) -> str:
+    """Drop spaces/punctuation so ``K-9000 XL`` matches ``K9000XL`` on the page."""
+    return _COMPACT_RE.sub("", fold_turkish(value))
+
+
+def _contains(needle: str, haystack: str) -> bool:
+    needle_folded, haystack_folded = fold_turkish(needle), fold_turkish(haystack)
+    if not needle_folded or not haystack_folded:
+        return False
+    if needle_folded in haystack_folded:
+        return True
+    compact_needle = _compact(needle)
+    return len(compact_needle) >= 3 and compact_needle in _compact(haystack)
+
+
+def brand_model_match(brand: str, model: str, page: dict[str, Any]) -> dict[str, Any]:
+    """Score how well a user-typed brand + model pair matches an extracted product page.
+
+    The page is untrusted data and is only searched, never interpreted. Score:
+    brand in the page's brand/name field 50, elsewhere in the text 35; model in
+    the product name 50, elsewhere (attributes/description/text) 35. The
+    verdict is ``match`` (>= 85), ``partial`` (>= 35) or ``no_match``. Nothing
+    here touches tariff classification.
+    """
+    structured = page.get("structured") if isinstance(page.get("structured"), dict) else {}
+    name = str(structured.get("name") or page.get("title") or "")
+    page_brand = str(structured.get("brand") or "")
+    attributes = " ; ".join(
+        f"{item.get('name', '')}: {item.get('value', '')}"
+        for item in (structured.get("attributes") or [])
+        if isinstance(item, dict)
+    )
+    body = " ".join(
+        filter(None, [name, page_brand, str(structured.get("description") or ""), attributes, str(page.get("text") or "")])
+    )
+
+    brand = _clean(brand, limit=150)
+    model = _clean(model, limit=150)
+    evidence: list[str] = []
+    score = 0
+    brand_found = model_found = False
+    if brand:
+        if _contains(brand, page_brand) or _contains(brand, name):
+            score += 50
+            brand_found = True
+            evidence.append(f"Marka '{brand}' sayfanın ürün adı/marka alanında geçiyor.")
+        elif _contains(brand, body):
+            score += 35
+            brand_found = True
+            evidence.append(f"Marka '{brand}' sayfa metninde geçiyor (ürün adı alanında değil).")
+        else:
+            evidence.append(f"Marka '{brand}' sayfada bulunamadı.")
+    if model:
+        if _contains(model, name):
+            score += 50
+            model_found = True
+            evidence.append(f"Model '{model}' sayfanın ürün adında geçiyor.")
+        elif _contains(model, body):
+            score += 35
+            model_found = True
+            evidence.append(f"Model '{model}' sayfanın özellik/açıklama metninde geçiyor.")
+        else:
+            evidence.append(f"Model '{model}' sayfada bulunamadı.")
+    if not brand and not model:
+        evidence.append("Karşılaştırılacak marka veya model girilmedi.")
+    verdict = "match" if score >= 85 else "partial" if score >= 35 else "no_match"
+    if brand and not model and brand_found:
+        verdict = "partial"
+        evidence.append("Model girilmediği için yalnızca marka doğrulandı.")
+    return {
+        "score": score,
+        "verdict": verdict,
+        "brand_found": brand_found,
+        "model_found": model_found,
+        "page_brand": page_brand[:150],
+        "page_name": name[:200],
+        "evidence": evidence,
+    }
