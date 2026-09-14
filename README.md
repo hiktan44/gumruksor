@@ -194,11 +194,16 @@ yayımlamadığı için ürün bu farkı gizlemez:
   `FOREIGN_TARIFF_CACHE_DAYS` (varsayılan 7 gün) boyunca önbelleğe alınır. Üçüncü ülke vergisi,
   menşeye özgü tercihli oran (coğrafi grup üyeliği ve istisna ülkeler dâhil), kota, damping ve
   yasaklar resmî ölçü satırlarından okunur.
-* **Avrupa Birliği (TARIC/EBTI)** ve **İsviçre (Tares)** — resmî açık uç nokta yayımlanmıyor: TARIC
-  danışma ekranı oturum/POST ile çalışıyor (kod içeren GET sorgusu sonucu değil arama formunu
-  döndürüyor), Tares ise koşul/giriş kontrolüne yönlendiriyor. Bu iki ülke için oran **çekilmez**;
-  `data/official/foreign_tariff_links.json` kataloğundan sorguyu resmî ekranda hazır açan
-  doğrulanmış derin bağlantılar üretilir ve arayüzde "otomatik oran alınamıyor" notu görünür.
+* **İsviçre** — BAZG, tarife numarası yapısını (`TN_STRUCTURE`, ~28 MB CSV) açık veri olarak
+  yayımlıyor: kod, Almanca/İngilizce/Fransızca eşya tanımı ve geçerlilik tarihleri. `ch_nomenclature`
+  veri seti olarak günlük eşitlenir (aynı inceleme kapısı ve değişiklik defteri) ve sorguda HS-6 ile
+  eşleşen İsviçre tarife numaraları tanımlarıyla döner. **Oran bu dosyada yayımlanmaz**; vergi için
+  Tares sorgu ekranının bağlantısı verilir ve arayüzde bu ayrım açıkça yazılır.
+* **Avrupa Birliği (TARIC)** — resmî açık uç nokta yayımlanmıyor: danışma ekranı oturum/POST ile
+  çalışıyor (kod içeren GET sorgusu sonucu değil arama formunu döndürüyor); TARIC ham verisi CIRCABC
+  üzerinden hesap gerektiriyor. Oran **çekilmez**; `data/official/foreign_tariff_links.json`
+  kataloğundan sorguyu resmî ekranda hazır açan doğrulanmış derin bağlantılar üretilir ve arayüzde
+  "otomatik oran alınamıyor" notu görünür. (AB'nin **EBTI karar verisi** ayrıdır ve alınır — bkz. altta.)
 
 **AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
 ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir

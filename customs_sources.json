@@ -176,6 +176,12 @@
       "title": "EBTI Daily Updates – AB Bağlayıcı Tarife Bilgisi günlük yayınları",
       "authority": "European Commission – DG TAXUD",
       "url": "https://ec.europa.eu/taxation_customs/dds2/ebti/daily_publications.jsp?Lang=en"
+    },
+    {
+      "id": "ch_opendata_tariff",
+      "title": "İsviçre tarife numaraları açık veri seti (TN_STRUCTURE)",
+      "authority": "Bundesamt für Zoll und Grenzsicherheit (BAZG)",
+      "url": "https://opendata.swiss/en/dataset?q=tariff+numbers"
     }
   ]
 }

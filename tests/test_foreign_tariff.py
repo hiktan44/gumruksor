@@ -238,10 +238,43 @@ class LinkCatalogTests(unittest.TestCase):
         self.assertEqual(ft.build_links(record, "851713", None, None), [])
 
 
-def _transport(calls: list[str], chapters: dict | None = None) -> httpx.MockTransport:
+CH_HEADER = (
+    "tn2;tn2_txt_d;tn2_txt_e;tn2_txt_f;tn2_validfrom;tn2_validto;tn2_trafficdirection;"
+    "tn4;tn4_txt_d;tn4_txt_e;tn4_txt_f;tn4_validfrom;tn4_validto;"
+    "tn6;tn6_txt_d;tn6_txt_e;tn6_txt_f;tn6_validfrom;tn6_validto;"
+    "tn8;tn8_istotalbusinesscycle;tn8_txt_d;tn8_txt_e;tn8_txt_f;tn8_validfrom;tn8_validto;Update"
+)
+
+
+def _ch_row(tn8: str, tn6: str, german: str, english: str) -> str:
+    return (
+        f"85;\"Elektrische Maschinen\";\"Electrical machinery\";\"Machines électriques\";"
+        "1988-01-01T00:00:00.000+01:00;2999-12-31T00:00:00.000+01:00;B;"
+        f"8517;\"Fernsprechapparate\";\"Telephone sets\";\"Postes téléphoniques\";"
+        "1996-01-01T00:00:00.000+01:00;2999-12-31T00:00:00.000+01:00;"
+        f"{tn6};\"{german}\";\"{english}\";\"Téléphones\";"
+        "2022-01-01T00:00:00.000+01:00;2999-12-31T00:00:00.000+01:00;"
+        f"{tn8};J;\"{german}\";\"{english}\";\"Téléphones\";"
+        "2022-01-01T00:00:00.000+01:00;2999-12-31T00:00:00.000+01:00;2026-08-12"
+    )
+
+
+def _ch_csv() -> str:
+    return "\n".join([
+        CH_HEADER,
+        _ch_row("8517.1300", "8517.13", "Smartphones für zellulare Netze", "Smartphones for cellular networks"),
+        _ch_row("8517.1400", "8517.14", "Andere Telefone", "Other telephones"),
+        _ch_row("8471.3000", "8471.30", "Tragbare Maschinen", "Portable data processing machines"),
+    ]) + "\n"
+
+
+def _transport(calls: list[str], chapters: dict | None = None, swiss: str | None = None) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         calls.append(path)
+        if "TN_STRUCTURE" in path:
+            body = _ch_csv() if swiss is None else swiss
+            return httpx.Response(200, content=body.encode("utf-8"), headers={"content-type": "text/csv"})
         if path.endswith("/chapters"):
             return httpx.Response(200, json=chapters if chapters is not None else _chapters())
         if "/headings/8517" in path:
@@ -253,14 +286,33 @@ def _transport(calls: list[str], chapters: dict | None = None) -> httpx.MockTran
     return httpx.MockTransport(handler)
 
 
+class SwissParserTests(unittest.TestCase):
+    def test_parse_swiss_nomenclature(self):
+        rows = ft.parse_swiss_nomenclature(_ch_csv())
+        self.assertEqual([row["code"] for row in rows], ["84713000", "85171300", "85171400"])
+        smartphone = next(row for row in rows if row["code"] == "85171300")
+        self.assertEqual(smartphone["description"], "Smartphones for cellular networks")
+        self.assertEqual(smartphone["description_alt"], "Smartphones für zellulare Netze")
+        self.assertEqual(smartphone["hs6"], "851713")
+        self.assertEqual(smartphone["valid_from"], "2022-01-01")
+
+    def test_parse_swiss_rejects_wrong_columns(self):
+        with self.assertRaises(ValueError):
+            ft.parse_swiss_nomenclature("a;b;c\n1;2;3\n")
+
+    def test_parse_swiss_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            ft.parse_swiss_nomenclature(CH_HEADER + "\n")
+
+
 class EngineTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.calls: list[str] = []
 
-    def _engine(self, *, chapters: dict | None = None, policy: ReviewPolicy | None = None) -> ft.ForeignTariffEngine:
-        client = httpx.AsyncClient(transport=_transport(self.calls, chapters), base_url="https://www.trade-tariff.service.gov.uk")
+    def _engine(self, *, chapters: dict | None = None, swiss: str | None = None, policy: ReviewPolicy | None = None) -> ft.ForeignTariffEngine:
+        client = httpx.AsyncClient(transport=_transport(self.calls, chapters, swiss), base_url="https://www.trade-tariff.service.gov.uk")
         engine = ft.ForeignTariffEngine(
             self._tmp.name,
             http=client,
@@ -340,29 +392,36 @@ class EngineTests(unittest.TestCase):
         engine = self._engine(policy=ReviewPolicy(mode="strict"))
         status = asyncio.run(engine.sync(force=True))
         self.assertFalse(status["ready"])
-        self.assertEqual(status["pending_review_count"], 1)
+        self.assertFalse(status["swiss_ready"])
+        # İki veri seti, iki bekleyen anlık görüntü.
+        self.assertEqual(status["pending_review_count"], 2)
         pending = engine.pending_reviews()
-        self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0]["kind"], "foreign_tariff")
-        reviewed = engine.review_snapshot(pending[0]["snapshot_id"], "approve", reviewed_by="editor@example.com")
+        self.assertEqual({item["kind"] for item in pending}, {"foreign_tariff"})
+        uk = next(item for item in pending if item["source_id"] == ft.UK_DATASET)
+        reviewed = engine.review_snapshot(uk["snapshot_id"], "approve", reviewed_by="editor@example.com")
         self.assertEqual(reviewed["status"], "approved")
         self.assertTrue(engine.status()["ready"])
+        # İsviçre hâlâ onay bekler; biri diğerini aktifleştirmez.
+        self.assertFalse(engine.status()["swiss_ready"])
 
     def test_rejected_snapshot_stays_inactive(self):
         engine = self._engine(policy=ReviewPolicy(mode="strict"))
         asyncio.run(engine.sync(force=True))
-        snapshot_id = engine.pending_reviews()[0]["snapshot_id"]
-        engine.review_snapshot(snapshot_id, "reject", reviewed_by="editor@example.com", note="hatalı")
-        self.assertFalse(engine.status()["ready"])
+        for item in engine.pending_reviews():
+            engine.review_snapshot(item["snapshot_id"], "reject", reviewed_by="editor@example.com", note="hatalı")
+        status = engine.status()
+        self.assertFalse(status["ready"])
+        self.assertFalse(status["swiss_ready"])
         self.assertEqual(engine.pending_reviews(), [])
 
     def test_corpus_rows_after_sync(self):
         engine = self._engine()
         asyncio.run(engine.sync(force=True))
         rows = engine.corpus_rows()
-        self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[0]["corpus"], "foreign_tariff")
-        self.assertTrue(rows[0]["source_url"].startswith("https://"))
+        # 3 UK faslı + 3 İsviçre tarife numarası.
+        self.assertEqual(len(rows), 6)
+        self.assertEqual({row["corpus"] for row in rows}, {"foreign_tariff"})
+        self.assertTrue(all(row["source_url"].startswith("https://") for row in rows))
 
     def test_sync_error_is_recorded_not_raised(self):
         engine = self._engine(chapters={"data": []})
@@ -390,6 +449,43 @@ class EngineTests(unittest.TestCase):
         result = asyncio.run(engine.lookup("851713000000", jurisdiction="uk"))
         self.assertEqual(result.results[0].match_quality, "unavailable")
 
+    def test_swiss_sync_returns_real_codes(self):
+        engine = self._engine()
+        status = asyncio.run(engine.sync(force=True))
+        self.assertTrue(status["swiss_ready"])
+        self.assertEqual(status["swiss_code_count"], 3)
+
+        result = asyncio.run(engine.lookup("851713000000", jurisdiction="ch"))
+        swiss = result.results[0]
+        self.assertEqual(swiss.data_kind, "nomenclature")
+        self.assertEqual(swiss.match_quality, "exact_hs6")
+        self.assertEqual(swiss.matched_code, "85171300")
+        self.assertEqual(swiss.description, "Smartphones for cellular networks")
+        self.assertTrue(swiss.links, "resmî Tares bağlantısı yine verilmeli")
+        self.assertTrue(any("vergi oranı yayımlanmaz" in note for note in swiss.notes))
+
+    def test_swiss_unknown_code_keeps_links(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        swiss = asyncio.run(engine.lookup("999999000000", jurisdiction="ch")).results[0]
+        self.assertEqual(swiss.match_quality, "unavailable")
+        self.assertIsNone(swiss.matched_code)
+        self.assertTrue(swiss.links)
+
+    def test_swiss_corpus_rows_included(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        corpora = {row["id"].split("-")[0] for row in engine.corpus_rows()}
+        self.assertIn("uk_chapters", corpora)
+        self.assertIn("ch_nomenclature", corpora)
+
+    def test_uk_failure_does_not_block_swiss(self):
+        engine = self._engine(chapters={"data": []})
+        status = asyncio.run(engine.sync(force=True))
+        self.assertFalse(status["ready"])
+        self.assertTrue(status["swiss_ready"], "UK hatası İsviçre eşitlemesini engellememeli")
+        self.assertTrue(any(item.startswith("UK:") for item in status["errors"]))
+
     def test_ledger_batch_recorded(self):
         recorded: list[dict] = []
 
@@ -404,9 +500,10 @@ class EngineTests(unittest.TestCase):
         engine = self._engine()
         engine.ledger = FakeLedger()
         asyncio.run(engine.sync(force=True))
-        self.assertEqual(len(recorded), 1)
-        self.assertEqual(recorded[0]["kind"], "foreign_tariff")
-        self.assertEqual(recorded[0]["review_status"], "approved")
+        # Her veri seti kendi defter kaydını yazar.
+        self.assertEqual({item["source_id"] for item in recorded}, {ft.UK_DATASET, ft.CH_DATASET})
+        self.assertTrue(all(item["kind"] == "foreign_tariff" for item in recorded))
+        self.assertTrue(all(item["review_status"] == "approved" for item in recorded))
 
 
 if __name__ == "__main__":

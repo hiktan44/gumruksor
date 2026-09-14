@@ -23,7 +23,9 @@ armonize sistemiyle ortaktır, sonraki haneler ulusaldır ve eşleştirilmez.
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
+import io
 import json
 import logging
 import os
@@ -60,7 +62,16 @@ USER_AGENT = "Mozilla/5.0 (compatible; MevzuatMCP/1.5; +https://gumruksor.com/)"
 UK_BASE_URL = (os.environ.get("UK_TARIFF_BASE_URL") or "https://www.trade-tariff.service.gov.uk/api/v2").rstrip("/")
 UK_SITE_URL = "https://www.trade-tariff.service.gov.uk"
 _OFFICIAL_HOSTS = frozenset({"trade-tariff.service.gov.uk"})
+# İsviçre BAZG açık veri dosyası: tarife numarası yapısı (kod + DE/EN/FR tanım + geçerlilik).
+CH_NOMENCLATURE_URL = (
+    os.environ.get("CH_TARIFF_DATA_URL")
+    or "https://ocean.bazg.admin.ch/open-data-reports/TN_STRUCTURE_v1/TN_STRUCTURE_v1.csv"
+)
+CH_SOURCE_PAGE = "https://www.bazg.admin.ch/en"
+_CH_HOSTS = frozenset({"admin.ch"})
+CH_SYNC_ENABLED = (os.environ.get("CH_TARIFF_SYNC_ENABLED") or "1").strip().lower() not in {"0", "false", "no", "off"}
 _MAX_BYTES = 8 * 1024 * 1024
+_MAX_FILE_BYTES = 64 * 1024 * 1024
 _MAX_REDIRECTS = 5
 
 DEFAULT_SYNC_INTERVAL = max(3600, int(os.environ.get("FOREIGN_TARIFF_SYNC_SECONDS") or 86400))
@@ -70,6 +81,7 @@ SYNC_ENABLED = (os.environ.get("FOREIGN_TARIFF_SYNC_ENABLED") or "1").strip().lo
 JURISDICTIONS: tuple[str, ...] = ("uk", "eu", "ch")
 JURISDICTION_LABELS = {"uk": "Birleşik Krallık", "eu": "Avrupa Birliği", "ch": "İsviçre"}
 UK_DATASET = "uk_chapters"
+CH_DATASET = "ch_nomenclature"
 
 COMPARABILITY_NOTE = (
     "Birleşik Krallık 10 haneli tarife kodu Türk 12 haneli GTİP'ine birebir denk değildir; "
@@ -330,6 +342,46 @@ def summarise_commodity(parsed: dict[str, Any], iso2: str | None) -> dict[str, A
     }
 
 
+def parse_swiss_nomenclature(text: str, *, limit: int = 40_000) -> list[dict[str, Any]]:
+    """BAZG ``TN_STRUCTURE`` dosyasından İsviçre tarife numaralarını (8 hane) çıkarır.
+
+    Dosya noktalı virgülle ayrılmıştır ve her satır fasıl → pozisyon → HS6 → ulusal 8 hane
+    zincirini tanımlarıyla birlikte taşır. Tanımlar Almanca, İngilizce ve Fransızcadır;
+    ürün İngilizceyi esas alır, yoksa Almancaya düşer.
+    """
+    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    names = {str(name or "").strip() for name in (reader.fieldnames or [])}
+    if "tn8" not in names or "tn6" not in names:
+        raise ValueError("İsviçre tarife dosyası beklenen sütunları taşımıyor.")
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in reader:
+        code = digits_only(raw.get("tn8"))
+        if len(code) != 8 or code in seen:
+            continue
+        seen.add(code)
+        description = _plain(raw.get("tn8_txt_e") or raw.get("tn8_txt_d"))
+        if not description:
+            continue
+        rows.append(
+            {
+                "code": code,
+                "hs6": digits_only(raw.get("tn6"))[:6] or code[:6],
+                "description": description[:600],
+                "description_alt": _plain(raw.get("tn8_txt_d"))[:600],
+                "heading_description": _plain(raw.get("tn4_txt_e") or raw.get("tn4_txt_d"))[:600],
+                "valid_from": str(raw.get("tn8_validfrom") or "")[:10] or None,
+                "valid_to": str(raw.get("tn8_validto") or "")[:10] or None,
+            }
+        )
+        if len(rows) >= limit:
+            break
+    if not rows:
+        raise ValueError("İsviçre tarife dosyasında satır bulunamadı.")
+    rows.sort(key=lambda item: item["code"])
+    return rows
+
+
 # --------------------------------------------------------------------------- resmî bağlantı kataloğu
 
 _LINK_FIELDS = ("code12", "code10", "code8", "hs6", "heading", "chapter", "area", "date_compact", "date_iso")
@@ -448,6 +500,9 @@ class ForeignTariffStore:
                     code TEXT NOT NULL,
                     description TEXT NOT NULL DEFAULT '',
                     source_url TEXT NOT NULL DEFAULT '',
+                    description_alt TEXT NOT NULL DEFAULT '',
+                    valid_from TEXT,
+                    valid_to TEXT,
                     PRIMARY KEY (snapshot_id, kind, code)
                 );
                 CREATE INDEX IF NOT EXISTS idx_foreign_nomenclature ON nomenclature(jurisdiction, kind, code);
@@ -682,6 +737,36 @@ class ForeignTariffEngine:
             return payload, current
         raise ValueError("Yurt dışı tarife kaynağı çok fazla yönlendirme yaptı.")
 
+    async def _get_bytes(self, url: str, *, allowed_hosts: Iterable[str]) -> tuple[bytes, str]:
+        """Büyük resmî veri dosyalarını indirir; her yönlendirme adımı yeniden doğrulanır."""
+        current = url
+        for _ in range(_MAX_REDIRECTS):
+            validate_outbound_url(current, allowed_hosts=allowed_hosts)
+            response: httpx.Response | None = None
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    response = await self._http.get(current, timeout=httpx.Timeout(180.0, connect=15.0))
+                    break
+                except (httpx.RemoteProtocolError, httpx.ReadError, httpx.TimeoutException) as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        await asyncio.sleep(1 + attempt)
+            if response is None:
+                raise last_error or RuntimeError("Resmî veri dosyası alınamadı.")
+            if response.is_redirect:
+                location = response.headers.get("location", "")
+                if not location:
+                    raise ValueError("Resmî veri kaynağı hedefsiz yönlendirme döndürdü.")
+                current = urljoin(str(response.url), location)
+                continue
+            response.raise_for_status()
+            content = response.content
+            if len(content) > _MAX_FILE_BYTES:
+                raise ValueError("Resmî veri dosyası beklenenden büyük.")
+            return content, current
+        raise ValueError("Resmî veri kaynağı çok fazla yönlendirme yaptı.")
+
     async def _cached_json(self, path: str, cache_key: str, *, refresh: bool = False) -> dict[str, Any]:
         if not refresh:
             cached = self.store.cached(cache_key, max_age_days=self.cache_days)
@@ -707,78 +792,109 @@ class ForeignTariffEngine:
                             return self.status()
                     except ValueError:
                         pass
-                payload, url = await self._get_json("/chapters")
-                rows = parse_chapters(payload)
-                if not rows:
-                    raise ValueError("UK fasıl listesi boş döndü.")
-                digest = _sha256(rows)
                 retrieved_at = _now()
                 self.store.set_metadata("last_checked_at", retrieved_at)
-                existing = self.store.snapshot_by_sha(UK_DATASET, digest)
-                if existing is not None:
-                    if row_review_fields(existing)["status"] == "approved":
-                        with self.store.connect() as connection:
-                            connection.execute("UPDATE snapshots SET active=(id=?) WHERE dataset=?", (existing["id"], UK_DATASET))
-                    self._errors.clear()
-                    return self.status()
-
-                snapshot_id = f"uk-chapters-{digest[:16]}"
-                previous = self.store.latest_approved(UK_DATASET, exclude=snapshot_id)
-                with self.store.connect() as connection:
-                    connection.execute(
-                        "INSERT OR REPLACE INTO snapshots(id,jurisdiction,dataset,source_url,sha256,retrieved_at,item_count,"
-                        "active,valid_from,status) VALUES(?,?,?,?,?,?,?,0,?, 'pending_review')",
-                        (snapshot_id, "uk", UK_DATASET, url, digest, retrieved_at, len(rows), retrieved_at[:10]),
-                    )
-                    connection.executemany(
-                        "INSERT OR REPLACE INTO nomenclature(snapshot_id,jurisdiction,kind,code,description,source_url) "
-                        "VALUES(?,?,?,?,?,?)",
-                        [(snapshot_id, "uk", "chapter", row["code"], row["description"], url) for row in rows],
-                    )
-                current_rows = {row["code"]: row for row in rows}
-                previous_rows = self.store.rows_of(previous["id"], "chapter") if previous else {}
-                changes = (
-                    diff_rows(current_rows, previous_rows, fields=("description",), gtip_of=lambda row: row.get("code"))
-                    if previous
-                    else []
-                )
-                summary = DiffSummary(
-                    total_rows=len(current_rows),
-                    previous_rows=len(previous_rows),
-                    added=sum(1 for item in changes if item["change_type"] == "added"),
-                    removed=sum(1 for item in changes if item["change_type"] == "removed"),
-                    modified=sum(1 for item in changes if item["change_type"] == "modified"),
-                )
-                decision = decide(self.review_policy, summary, first_snapshot=previous is None)
-                warnings_json, diff_json = review_metadata(summary, decision, [])
-                with self.store.connect() as connection:
-                    connection.execute(
-                        "UPDATE snapshots SET status=?, parse_warnings_json=?, diff_summary_json=? WHERE id=?",
-                        (decision.status, warnings_json, diff_json, snapshot_id),
-                    )
-                    if not decision.pending:
-                        connection.execute("UPDATE snapshots SET active=0 WHERE dataset=?", (UK_DATASET,))
-                        connection.execute("UPDATE snapshots SET active=1 WHERE id=?", (snapshot_id,))
-                self._record_ledger_batch(
-                    snapshot_id,
-                    previous["id"] if previous else None,
-                    changes=changes,
-                    source_url=url,
-                    sha256=digest,
-                    total_rows=len(current_rows),
-                    detected_at=retrieved_at,
-                    review_status=decision.status,
-                )
-                if decision.pending:
-                    logger.info("UK tarife anlık görüntüsü %s editör onayı bekliyor: %s", snapshot_id, "; ".join(decision.reasons))
-                self.store.purge_cache(max_age_days=self.cache_days)
                 self._errors.clear()
+                # Her kaynak ayrı ayrı denenir; birinin hatası diğerini engellemez.
+                for label, coroutine in (
+                    ("UK", self._sync_uk_chapters(retrieved_at)),
+                    *((("CH", self._sync_swiss_nomenclature(retrieved_at)),) if CH_SYNC_ENABLED else ()),
+                ):
+                    try:
+                        await coroutine
+                    except Exception as exc:  # noqa: BLE001
+                        self._errors.append(f"{label}: {type(exc).__name__}: {str(exc)[:250]}")
+                        logger.warning("Yurt dışı tarife eşitlemesi başarısız (%s): %s", label, exc)
+                self.store.purge_cache(max_age_days=self.cache_days)
             except Exception as exc:  # noqa: BLE001 – eşitleme hatası sunucuyu durdurmaz
                 self._errors.append(f"{type(exc).__name__}: {str(exc)[:300]}")
                 logger.warning("Yurt dışı tarife eşitlemesi başarısız: %s", exc)
             finally:
                 self._syncing = False
         return self.status()
+
+    async def _sync_uk_chapters(self, retrieved_at: str) -> None:
+        payload, url = await self._get_json("/chapters")
+        rows = parse_chapters(payload)
+        if not rows:
+            raise ValueError("UK fasıl listesi boş döndü.")
+        self._commit_snapshot(
+            dataset=UK_DATASET, jurisdiction="uk", kind="chapter", prefix="uk-chapters",
+            rows=rows, source_url=url, retrieved_at=retrieved_at,
+            title="Birleşik Krallık tarife nomenklatürü (fasıl listesi)",
+        )
+
+    async def _sync_swiss_nomenclature(self, retrieved_at: str) -> None:
+        content, url = await self._get_bytes(CH_NOMENCLATURE_URL, allowed_hosts=_CH_HOSTS)
+        rows = await asyncio.to_thread(parse_swiss_nomenclature, content.decode("utf-8-sig", errors="replace"))
+        self._commit_snapshot(
+            dataset=CH_DATASET, jurisdiction="ch", kind="ch_tariff", prefix="ch-nomenclature",
+            rows=rows, source_url=url, retrieved_at=retrieved_at,
+            title="İsviçre gümrük tarifesi nomenklatürü (BAZG açık verisi)",
+        )
+
+    def _commit_snapshot(
+        self, *, dataset: str, jurisdiction: str, kind: str, prefix: str, rows: list[dict[str, Any]],
+        source_url: str, retrieved_at: str, title: str,
+    ) -> None:
+        """Yeni bir anlık görüntüyü kaydeder, farkı inceleme kapısından geçirir ve deftere yazar."""
+        digest = _sha256(rows)
+        existing = self.store.snapshot_by_sha(dataset, digest)
+        if existing is not None:
+            if row_review_fields(existing)["status"] == "approved":
+                with self.store.connect() as connection:
+                    connection.execute("UPDATE snapshots SET active=(id=?) WHERE dataset=?", (existing["id"], dataset))
+            return
+        snapshot_id = f"{prefix}-{digest[:16]}"
+        previous = self.store.latest_approved(dataset, exclude=snapshot_id)
+        with self.store.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO snapshots(id,jurisdiction,dataset,source_url,sha256,retrieved_at,item_count,"
+                "active,valid_from,status) VALUES(?,?,?,?,?,?,?,0,?, 'pending_review')",
+                (snapshot_id, jurisdiction, dataset, source_url, digest, retrieved_at, len(rows), retrieved_at[:10]),
+            )
+            connection.executemany(
+                "INSERT OR REPLACE INTO nomenclature(snapshot_id,jurisdiction,kind,code,description,source_url,"
+                "description_alt,valid_from,valid_to) VALUES(?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        snapshot_id, jurisdiction, kind, row["code"], row["description"], source_url,
+                        row.get("description_alt") or "", row.get("valid_from"), row.get("valid_to"),
+                    )
+                    for row in rows
+                ],
+            )
+        current_rows = {row["code"]: row for row in rows}
+        previous_rows = self.store.rows_of(previous["id"], kind) if previous else {}
+        changes = (
+            diff_rows(current_rows, previous_rows, fields=("description",), gtip_of=lambda row: row.get("code"))
+            if previous
+            else []
+        )
+        summary = DiffSummary(
+            total_rows=len(current_rows),
+            previous_rows=len(previous_rows),
+            added=sum(1 for item in changes if item["change_type"] == "added"),
+            removed=sum(1 for item in changes if item["change_type"] == "removed"),
+            modified=sum(1 for item in changes if item["change_type"] == "modified"),
+        )
+        decision = decide(self.review_policy, summary, first_snapshot=previous is None)
+        warnings_json, diff_json = review_metadata(summary, decision, [])
+        with self.store.connect() as connection:
+            connection.execute(
+                "UPDATE snapshots SET status=?, parse_warnings_json=?, diff_summary_json=? WHERE id=?",
+                (decision.status, warnings_json, diff_json, snapshot_id),
+            )
+            if not decision.pending:
+                connection.execute("UPDATE snapshots SET active=0 WHERE dataset=?", (dataset,))
+                connection.execute("UPDATE snapshots SET active=1 WHERE id=?", (snapshot_id,))
+        self._record_ledger_batch(
+            snapshot_id, previous["id"] if previous else None, changes=changes, source_url=source_url,
+            sha256=digest, total_rows=len(current_rows), detected_at=retrieved_at,
+            review_status=decision.status, dataset=dataset, title=title,
+        )
+        if decision.pending:
+            logger.info("%s anlık görüntüsü %s editör onayı bekliyor: %s", title, snapshot_id, "; ".join(decision.reasons))
 
     async def periodic_sync_loop(self, *, initial_delay: float = 120.0) -> None:
         await asyncio.sleep(initial_delay)
@@ -813,6 +929,8 @@ class ForeignTariffEngine:
         for item in selected:
             if item == "uk":
                 result.results.append(await self._uk_result(code, iso2, as_of))
+            elif item == "ch":
+                result.results.append(self._swiss_result(code, iso2, as_of))
             else:
                 result.results.append(self._link_result(item, code, iso2, as_of))
         return result
@@ -875,6 +993,39 @@ class ForeignTariffEngine:
             outcome.notes.append(f"{iso2} menşeli eşya için UK tarifesinde tercihli oran satırı bulunmadı.")
         return outcome
 
+    def _swiss_result(self, code: str, iso2: str | None, as_of: str | None) -> JurisdictionResult:
+        """İsviçre: resmî açık veriden kod ve tanım; oran yayımlanmadığı için sorgu bağlantısı da verilir."""
+        outcome = self._link_result("ch", code, iso2, as_of)
+        active = self.store.active_snapshot(CH_DATASET)
+        if active is None:
+            outcome.notes.append("İsviçre tarife nomenklatürü henüz eşitlenmedi; yalnız resmî sorgu bağlantıları gösteriliyor.")
+            return outcome
+        hs6 = code[:6]
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT code, description, description_alt, valid_from, valid_to FROM nomenclature "
+                "WHERE snapshot_id=? AND code LIKE ? ORDER BY code LIMIT 12",
+                (active["id"], f"{hs6}%"),
+            ).fetchall()
+        outcome.data_kind = "nomenclature"
+        outcome.source_url = str(active["source_url"])
+        outcome.sha256 = str(active["sha256"])
+        outcome.retrieved_at = str(active["retrieved_at"])
+        if not rows:
+            outcome.notes.append(f"İsviçre tarifesinde {hs6} ile başlayan numara bulunamadı.")
+            return outcome
+        outcome.match_quality = "exact_hs6"
+        outcome.matched_code = str(rows[0]["code"])
+        outcome.description = str(rows[0]["description"])
+        outcome.candidates = [
+            {"code": str(row["code"]), "description": str(row["description"])} for row in rows
+        ]
+        outcome.notes.append(
+            "İsviçre resmî açık verisi tarife numarası ve eşya tanımını içerir; **vergi oranı yayımlanmaz**, "
+            "oran için Tares sorgu ekranı kullanılır."
+        )
+        return outcome
+
     def _link_result(self, jurisdiction: str, code: str, iso2: str | None, as_of: str | None) -> JurisdictionResult:
         record = self.link_catalog.get(jurisdiction, {})
         notes = [str(record.get("note") or "")] if record.get("note") else []
@@ -893,6 +1044,7 @@ class ForeignTariffEngine:
     # ---- durum ve inceleme
     def status(self) -> dict[str, Any]:
         active = self.store.active_snapshot(UK_DATASET)
+        swiss = self.store.active_snapshot(CH_DATASET)
         with self.store.connect() as connection:
             pending = connection.execute(
                 "SELECT COUNT(*) FROM snapshots WHERE status='pending_review'"
@@ -904,6 +1056,8 @@ class ForeignTariffEngine:
             "review_mode": self.review_policy.mode,
             "pending_review_count": int(pending),
             "chapter_count": int(active["item_count"]) if active else 0,
+            "swiss_ready": bool(swiss),
+            "swiss_code_count": int(swiss["item_count"]) if swiss else 0,
             "active_snapshot": str(active["id"]) if active else None,
             "active_sha256": str(active["sha256"]) if active else None,
             "last_checked_at": self.store.get_metadata("last_checked_at"),
@@ -912,7 +1066,7 @@ class ForeignTariffEngine:
                 {
                     "code": item,
                     "label": JURISDICTION_LABELS[item],
-                    "data_kind": "api" if item == "uk" else "links",
+                    "data_kind": "api" if item == "uk" else ("nomenclature" if item == "ch" and swiss else "links"),
                     "authority": str((self.link_catalog.get(item) or {}).get("authority") or ""),
                 }
                 for item in JURISDICTIONS
@@ -986,6 +1140,8 @@ class ForeignTariffEngine:
         total_rows: int,
         detected_at: str,
         review_status: str,
+        dataset: str = UK_DATASET,
+        title: str = "Birleşik Krallık tarife nomenklatürü (fasıl listesi)",
         backfilled: bool = False,
     ) -> str | None:
         if self.ledger is None:
@@ -993,8 +1149,8 @@ class ForeignTariffEngine:
         try:
             return self.ledger.record_batch(
                 kind="foreign_tariff",
-                source_id=UK_DATASET,
-                title="Birleşik Krallık tarife nomenklatürü (fasıl listesi)",
+                source_id=dataset,
+                title=title,
                 new_snapshot_id=snapshot_id,
                 old_snapshot_id=previous_id,
                 source_url=source_url,
@@ -1013,61 +1169,66 @@ class ForeignTariffEngine:
         if self.ledger is None:
             return 0
         written = 0
-        with self.store.connect() as connection:
-            snapshots = connection.execute(
-                "SELECT * FROM snapshots WHERE dataset=? ORDER BY retrieved_at ASC", (UK_DATASET,)
-            ).fetchall()
-        previous_id: str | None = None
-        for row in snapshots:
-            if not self.ledger.has_batch(batch_id_for("foreign_tariff", UK_DATASET, row["id"])):
-                changes = (
-                    diff_rows(
-                        self.store.rows_of(row["id"], "chapter"),
-                        self.store.rows_of(previous_id, "chapter") if previous_id else {},
-                        fields=("description",),
-                        gtip_of=lambda item: item.get("code"),
+        for dataset, kind in ((UK_DATASET, "chapter"), (CH_DATASET, "ch_tariff")):
+            with self.store.connect() as connection:
+                snapshots = connection.execute(
+                    "SELECT * FROM snapshots WHERE dataset=? ORDER BY retrieved_at ASC", (dataset,)
+                ).fetchall()
+            previous_id: str | None = None
+            for row in snapshots:
+                if not self.ledger.has_batch(batch_id_for("foreign_tariff", dataset, row["id"])):
+                    changes = (
+                        diff_rows(
+                            self.store.rows_of(row["id"], kind),
+                            self.store.rows_of(previous_id, kind) if previous_id else {},
+                            fields=("description",),
+                            gtip_of=lambda item: item.get("code"),
+                        )
+                        if previous_id
+                        else []
                     )
-                    if previous_id
-                    else []
-                )
-                if self._record_ledger_batch(
-                    row["id"], previous_id, changes=changes, source_url=row["source_url"], sha256=row["sha256"],
-                    total_rows=int(row["item_count"] or 0), detected_at=row["retrieved_at"],
-                    review_status=row_review_fields(row)["status"], backfilled=True,
-                ):
-                    written += 1
-            previous_id = row["id"]
+                    if self._record_ledger_batch(
+                        row["id"], previous_id, changes=changes, source_url=row["source_url"], sha256=row["sha256"],
+                        total_rows=int(row["item_count"] or 0), detected_at=row["retrieved_at"],
+                        review_status=row_review_fields(row)["status"], dataset=dataset, backfilled=True,
+                    ):
+                        written += 1
+                previous_id = row["id"]
         return written
 
     # ---- hibrit indeks beslemesi
     def corpus_rows(self, limit: int = 4000) -> list[dict[str, Any]]:
         """Onaylı UK nomenklatür satırlarını hibrit indeks belgesi biçiminde döndürür."""
-        active = self.store.active_snapshot(UK_DATASET)
-        if active is None:
-            return []
-        with self.store.connect() as connection:
-            rows = connection.execute(
-                "SELECT code, description, source_url FROM nomenclature WHERE snapshot_id=? ORDER BY code LIMIT ?",
-                (active["id"], int(limit)),
-            ).fetchall()
         documents: list[dict[str, Any]] = []
-        for row in rows:
-            documents.append(
-                {
-                    "id": f"uk-chapter-{row['code']}",
-                    "corpus": "foreign_tariff",
-                    "title": f"UK Fasıl {row['code']}",
-                    "text": row["description"],
-                    "gtip_codes": [row["code"]],
-                    "source_url": row["source_url"] or UK_SITE_URL,
-                    "source_sha256": str(active["sha256"]),
-                    "snapshot_id": str(active["id"]),
-                }
-            )
+        for dataset, label, site in ((UK_DATASET, "UK Fasıl", UK_SITE_URL), (CH_DATASET, "İsviçre tarife no.", CH_SOURCE_PAGE)):
+            active = self.store.active_snapshot(dataset)
+            if active is None:
+                continue
+            with self.store.connect() as connection:
+                rows = connection.execute(
+                    "SELECT code, description, source_url FROM nomenclature WHERE snapshot_id=? ORDER BY code LIMIT ?",
+                    (active["id"], int(limit)),
+                ).fetchall()
+            for row in rows:
+                if not str(row["description"] or "").strip():
+                    continue
+                documents.append(
+                    {
+                        "id": f"{dataset}-{row['code']}",
+                        "corpus": "foreign_tariff",
+                        "title": f"{label} {row['code']}",
+                        "text": row["description"],
+                        "gtip_codes": [row["code"]],
+                        "source_url": row["source_url"] or site,
+                        "source_sha256": str(active["sha256"]),
+                        "snapshot_id": str(active["id"]),
+                    }
+                )
         return documents
 
 
 __all__ = [
+    "CH_DATASET",
     "COMPARABILITY_NOTE",
     "SYNC_ENABLED",
     "ForeignTariffEngine",
@@ -1088,5 +1249,6 @@ __all__ = [
     "parse_chapters",
     "parse_commodity",
     "parse_heading",
+    "parse_swiss_nomenclature",
     "summarise_commodity",
 ]
