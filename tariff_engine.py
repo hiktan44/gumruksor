@@ -36,7 +36,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from countries import PENDING_AGREEMENTS, by_regime, column_1_keys, explicit_labels, find_country
 from origin_documents import atr_eligible
-from change_ledger import diff_rows
+from change_ledger import batch_id_for, diff_rows
+from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
 from security_firewall import validate_outbound_url
 
 _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
@@ -226,6 +227,8 @@ class TariffSyncStatus(BaseModel):
     measure_count: int = 0
     errors: list[str] = Field(default_factory=list)
     sync_interval_seconds: int
+    pending_review_count: int = 0
+    review_mode: str = "off"
 
 
 class LandedCostInput(BaseModel):
@@ -360,6 +363,8 @@ class TariffEngine:
         self._errors: list[str] = []
         # Optional unified change ledger (change_ledger.ChangeLedger); set by the server.
         self.ledger: Any = None
+        # Editorial review gate; the server replaces it with policy_from_env().
+        self.review_policy: ReviewPolicy = ReviewPolicy()
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -393,6 +398,7 @@ class TariffEngine:
                 CREATE INDEX IF NOT EXISTS idx_tariff_measures_snapshot ON tariff_measures(snapshot_id);
                 """
             )
+            ensure_review_columns(db, "tariff_snapshots")
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -660,26 +666,32 @@ class TariffEngine:
         with self._connect() as db:
             existing = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
             if existing:
-                db.execute("UPDATE tariff_snapshots SET checked_at=?, active=1 WHERE id=?", (checked_at, snapshot_id))
-                db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=? AND id<>?", (source["id"], snapshot_id))
+                status = row_review_fields(existing)["status"]
+                db.execute("UPDATE tariff_snapshots SET checked_at=? WHERE id=?", (checked_at, snapshot_id))
+                if status == "approved":
+                    # Same archive as before: keep it live. Rejected or pending
+                    # versions only get their checked_at refreshed.
+                    db.execute("UPDATE tariff_snapshots SET active=1 WHERE id=?", (snapshot_id,))
+                    db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=? AND id<>?", (source["id"], snapshot_id))
                 db.commit()
-                return self._snapshot(existing, checked_at=checked_at, active=True)
+                return self._snapshot(existing, checked_at=checked_at, active=status == "approved")
 
         retrieved_at = checked_at
         parsed = await asyncio.to_thread(self._parse_archive, data, source, archive_url, checksum, retrieved_at)
         with self._connect() as db:
             previous = db.execute(
-                "SELECT * FROM tariff_snapshots WHERE source_id=? ORDER BY retrieved_at DESC LIMIT 1", (source["id"],)
+                "SELECT * FROM tariff_snapshots WHERE source_id=? AND status='approved' ORDER BY active DESC, retrieved_at DESC LIMIT 1",
+                (source["id"],),
             ).fetchone()
             if previous is not None and previous["measure_count"] and len(parsed.measures) < 0.8 * int(previous["measure_count"]):
                 parsed.warnings.append(
                     f"satır sayısı önceki sürüme göre %20'den fazla düştü ({previous['measure_count']} → {len(parsed.measures)})"
                 )
-            db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (source["id"],))
+            # Inserted inactive; activation happens after the review decision below.
             db.execute(
                 """INSERT INTO tariff_snapshots
-                (id,source_id,source_title,landing_url,archive_url,archive_sha256,retrieved_at,checked_at,valid_from,measure_count,active,metadata_json)
-                VALUES (?,?,?,?,?,?,?,?,?,?,1,?)""",
+                (id,source_id,source_title,landing_url,archive_url,archive_sha256,retrieved_at,checked_at,valid_from,measure_count,active,metadata_json,status)
+                VALUES (?,?,?,?,?,?,?,?,?,?,0,?,'pending_review')""",
                 (
                     snapshot_id, source["id"], source["title"], source["landing_url"], archive_url, checksum,
                     retrieved_at, checked_at, source["valid_from"], len(parsed.measures),
@@ -703,9 +715,80 @@ class TariffEngine:
                     ),
                 )
             db.commit()
+            current_rows = self._measure_rows_by_key(db, snapshot_id)
+            previous_rows = self._measure_rows_by_key(db, previous["id"]) if previous is not None else {}
+        changes = self.diff_measure_rows(current_rows, previous_rows) if previous is not None else []
+        summary = DiffSummary(
+            total_rows=len(current_rows), previous_rows=len(previous_rows),
+            added=sum(1 for c in changes if c["change_type"] == "added"),
+            removed=sum(1 for c in changes if c["change_type"] == "removed"),
+            modified=sum(1 for c in changes if c["change_type"] == "modified"),
+        )
+        decision = decide(self.review_policy, summary, parse_warnings=parsed.warnings, first_snapshot=previous is None)
+        warnings_json, diff_json = review_metadata(summary, decision, parsed.warnings)
+        with self._connect() as db:
+            db.execute(
+                "UPDATE tariff_snapshots SET status=?, parse_warnings_json=?, diff_summary_json=? WHERE id=?",
+                (decision.status, warnings_json, diff_json, snapshot_id),
+            )
+            if not decision.pending:
+                db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (source["id"],))
+                db.execute("UPDATE tariff_snapshots SET active=1 WHERE id=?", (snapshot_id,))
+            db.commit()
             row = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
-        self._record_ledger_batch(row, previous, parse_warnings=parsed.warnings)
+        self._record_ledger_batch(row, previous, parse_warnings=parsed.warnings, changes=changes, review_status=decision.status)
+        if decision.pending:
+            logger.info("Tariff snapshot %s waits for editorial review: %s", snapshot_id, "; ".join(decision.reasons))
         return self._snapshot(row)
+
+    # ---------------------------------------------------------- editorial review
+    def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = {
+            "kind": "tariff", "snapshot_id": row["id"], "source_id": row["source_id"], "title": row["source_title"],
+            "source_url": row["archive_url"], "sha256": row["archive_sha256"], "retrieved_at": row["retrieved_at"],
+            "valid_from": row["valid_from"], "total_rows": int(row["measure_count"] or 0), "active": bool(row["active"]),
+            "ledger_batch": batch_id_for("tariff", row["source_id"], row["id"]) if self.ledger is not None else None,
+        }
+        item.update(row_review_fields(row))
+        return item
+
+    def pending_reviews(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM tariff_snapshots WHERE status='pending_review' ORDER BY retrieved_at DESC"
+            ).fetchall()
+        return [self._review_item(row) for row in rows]
+
+    def review_snapshot(self, snapshot_id: str, action: str, *, reviewed_by: str, note: str = "") -> dict[str, Any]:
+        """Approve (activate, retire siblings) or reject (never activates again) a snapshot."""
+        if action not in {"approve", "reject"}:
+            raise ValueError("Karar 'approve' veya 'reject' olmalıdır.")
+        now = _now()
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+            if row is None:
+                raise KeyError(snapshot_id)
+            if action == "approve":
+                db.execute("UPDATE tariff_snapshots SET active=0 WHERE source_id=?", (row["source_id"],))
+                db.execute(
+                    "UPDATE tariff_snapshots SET active=1, status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE tariff_snapshots SET active=0, status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=?",
+                    (reviewed_by, now, note, snapshot_id),
+                )
+                if row["active"]:
+                    fallback = db.execute(
+                        "SELECT id FROM tariff_snapshots WHERE source_id=? AND status='approved' AND id<>? ORDER BY retrieved_at DESC LIMIT 1",
+                        (row["source_id"], snapshot_id),
+                    ).fetchone()
+                    if fallback:
+                        db.execute("UPDATE tariff_snapshots SET active=1 WHERE id=?", (fallback["id"],))
+            db.commit()
+            updated = db.execute("SELECT * FROM tariff_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        return self._review_item(updated)
 
     # ---------------------------------------------------------- change ledger
     def _measure_rows_by_key(self, db: sqlite3.Connection, snapshot_id: str) -> dict[str, dict[str, Any]]:
@@ -721,15 +804,23 @@ class TariffEngine:
         return diff_rows(current, previous, fields=("rate_text", "footnote"))
 
     def _record_ledger_batch(
-        self, snapshot: sqlite3.Row, previous: sqlite3.Row | None, *, parse_warnings: Iterable[str] = (), backfilled: bool = False
+        self,
+        snapshot: sqlite3.Row,
+        previous: sqlite3.Row | None,
+        *,
+        parse_warnings: Iterable[str] = (),
+        backfilled: bool = False,
+        changes: list[dict[str, Any]] | None = None,
+        review_status: str | None = None,
     ) -> str | None:
         """Write the transition previous → snapshot to the unified ledger (idempotent)."""
         if self.ledger is None or snapshot is None:
             return None
         with self._connect() as db:
             current_rows = self._measure_rows_by_key(db, snapshot["id"])
-            previous_rows = self._measure_rows_by_key(db, previous["id"]) if previous is not None else {}
-        changes = self.diff_measure_rows(current_rows, previous_rows) if previous is not None else []
+            if changes is None:
+                previous_rows = self._measure_rows_by_key(db, previous["id"]) if previous is not None else {}
+                changes = self.diff_measure_rows(current_rows, previous_rows) if previous is not None else []
         try:
             return self.ledger.record_batch(
                 kind="tariff",
@@ -743,6 +834,7 @@ class TariffEngine:
                 total_rows=len(current_rows),
                 parse_warnings=parse_warnings,
                 detected_at=snapshot["retrieved_at"],
+                review_status=review_status or row_review_fields(snapshot)["status"],
                 valid_from=snapshot["valid_from"],
                 backfilled=backfilled,
             )
@@ -763,8 +855,6 @@ class TariffEngine:
         for versions in by_source.values():
             previous = None
             for snapshot in versions:
-                from change_ledger import batch_id_for
-
                 if not self.ledger.has_batch(batch_id_for("tariff", snapshot["source_id"], snapshot["id"])):
                     if self._record_ledger_batch(snapshot, previous, backfilled=True):
                         written += 1
@@ -816,8 +906,11 @@ class TariffEngine:
             count = db.execute(
                 "SELECT COUNT(*) FROM tariff_measures m JOIN tariff_snapshots s ON s.id=m.snapshot_id WHERE s.active=1"
             ).fetchone()[0]
+            pending = db.execute("SELECT COUNT(*) FROM tariff_snapshots WHERE status='pending_review'").fetchone()[0]
         snapshots = [self._snapshot(row) for row in rows]
         return TariffSyncStatus(
+            pending_review_count=int(pending),
+            review_mode=self.review_policy.mode,
             ready=bool(snapshots) and all(item.measure_count > 0 for item in snapshots),
             syncing=self._syncing,
             last_checked_at=max((item.checked_at for item in snapshots), default=None),

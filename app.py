@@ -35,7 +35,7 @@ from customs_advisor import (
     decode_image_data_url,
     register_llm_usage_hook,
 )
-from email_service import MailError, ResendEmailSender, render_consultation_email, render_precheck_email, render_watch_email
+from email_service import MailError, ResendEmailSender, render_consultation_email, render_precheck_email, render_review_email, render_watch_email
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
     bedesten_client,
@@ -46,6 +46,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    review_service,
     tariff_engine,
     ticaret_client,
     trade_measure_engine,
@@ -2653,6 +2654,8 @@ async def web_changes(request: Request):
             "ledger": change_ledger.changes(kind=kind, gtip_prefix=gtip, since=since, limit=limit),
             "batches": change_ledger.batches(kind=kind, limit=30),
             "ledger_summary": change_ledger.summary(),
+            # Editorial review gate state for the in-app "new version under review" strip.
+            "review": {"mode": review_service.policy.mode, "pending_count": review_service.pending_count()},
             "generated_at": time.time(),
         }
     )
@@ -2696,6 +2699,97 @@ async def web_admin_changes(request: Request):
         headers={"Cache-Control": "no-store"},
     )
 
+@mcp.custom_route("/api/admin/reviews", methods=["GET"])
+async def web_admin_reviews(request: Request):
+    """Editorial review queue: snapshots waiting for approval (admin or editor)."""
+    limited = _rate_limit_response(request, "admin-reviews", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_role(request, "editor")
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    return JSONResponse(review_service.overview(), headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/admin/reviews/{kind}/{snapshot_id}", methods=["POST"])
+async def web_admin_review_decision(request: Request):
+    """Approve or reject one pending snapshot (admin or editor; audited)."""
+    limited = _rate_limit_response(request, "admin-review-decision", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        actor = _require_role(request, "editor")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise AccountError("İnceleme kararı geçersiz.")
+        kind = str(request.path_params.get("kind", "")).strip().lower()
+        snapshot_id = str(request.path_params.get("snapshot_id", "")).strip()[:200]
+        action = str(body.get("action", "")).strip().lower()
+        if kind not in review_service.engines:
+            return JSONResponse({"error": "Bilinmeyen veri türü."}, status_code=422)
+        if action not in {"approve", "reject"}:
+            return JSONResponse({"error": "Karar 'approve' veya 'reject' olmalıdır."}, status_code=422)
+        try:
+            result = review_service.review(kind, snapshot_id, action, actor=actor, note=str(body.get("note", ""))[:1000])
+        except KeyError:
+            return JSONResponse({"error": "Snapshot bulunamadı."}, status_code=404)
+        return JSONResponse({"reviewed": True, "result": result, "pending_count": review_service.pending_count()})
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+
+def _review_audit(actor: dict[str, Any], action: str, target_type: str, target_id: str, details: dict[str, Any]) -> None:
+    account_service.record_audit(actor, action, target_type, target_id, details)
+
+
+review_service.audit = _review_audit
+_REVIEW_NOTIFIED: set[str] = set()
+
+
+async def notify_pending_reviews() -> dict[str, int]:
+    """E-mail the admin allow-list once per pending snapshot (best effort, no secrets)."""
+    stats = {"pending": 0, "sent": 0}
+    pending = [item for item in review_service.pending() if item["snapshot_id"] not in _REVIEW_NOTIFIED]
+    stats["pending"] = len(pending)
+    if not pending or not email_sender.configured:
+        return stats
+    recipients = sorted(address for address in account_service.admin_emails if "@" in address)
+    for address in recipients:
+        try:
+            await email_sender.send(
+                to=address,
+                subject=f"{len(pending)} resmî veri sürümü editör onayı bekliyor",
+                html_body=render_review_email(pending, PUBLIC_BASE_URL),
+            )
+            stats["sent"] += 1
+        except MailError as exc:
+            logger.warning("Review notification to %s failed: %s", address, exc)
+    _REVIEW_NOTIFIED.update(item["snapshot_id"] for item in pending)
+    return stats
+
+
+async def review_notification_loop() -> None:
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if review_service.policy.enabled:
+                await notify_pending_reviews()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Review notification loop failed")
+        await asyncio.sleep(1800)
+
+
+BACKGROUND_LOOPS.append(("review-notifications", review_notification_loop))
+
+
 # Add health check endpoint to the MCP server
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
@@ -2716,6 +2810,10 @@ async def health_check(request):
         "control_scope_rows": control_status.scope_count,
         "classification_evidence_ready": classification_status.ready,
         "classification_evidence_pages": classification_status.page_count,
+        "review_mode": review_service.policy.mode,
+        "pending_reviews": (
+            tariff_status.pending_review_count + control_status.pending_review_count + classification_status.pending_review_count
+        ),
     })
 
 class McpRateLimitMiddleware:

@@ -39,6 +39,7 @@
       <button type="button" class="admin-tab-btn" data-tab="logs">📜 Kullanıcı Logları</button>
       <button type="button" class="admin-tab-btn" data-tab="consultants">👨‍💼 Danışmanlar</button>
       <button type="button" class="admin-tab-btn" data-tab="changes">🗂️ Veri Değişiklikleri</button>
+      <button type="button" class="admin-tab-btn" data-tab="reviews">🛡️ İnceleme Kuyruğu <span class="tab-badge" id="reviewBadge" hidden>0</span></button>
     </nav>
 
     <!-- TAB 1: OVERVIEW -->
@@ -301,6 +302,35 @@
           </table>
         </div>
         <div id="changeDetail"></div>
+      </section>
+    </section>
+
+    <section class="admin-tab-content" id="tab-reviews">
+      <section class="results admin-section">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Editoryal İnceleme Kuyruğu</h2>
+            <p>Resmî kaynaktan indirilen yeni sürümler burada bekler; onaylanana kadar sorgular önceki onaylı sürümle yanıtlanır. Reddedilen sürüm aynı içerikle bir daha aktifleşmez. Politika modu: <code id="reviewPolicyMode">—</code></p>
+          </div>
+          <button type="button" class="secondary-btn" id="reviewReload">Yenile</button>
+        </header>
+        <div id="reviewSummary" class="empty-note"></div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>İndirme</th>
+                <th>Kaynak</th>
+                <th>Satır</th>
+                <th>Değişim</th>
+                <th>Gerekçe / uyarı</th>
+                <th>Karar</th>
+              </tr>
+            </thead>
+            <tbody id="reviewRows"><tr><td colspan="6">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="reviewDetail"></div>
       </section>
     </section>
 
