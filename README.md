@@ -210,6 +210,31 @@ yayımlamadığı için ürün bu farkı gizlemez:
   kataloğundan sorguyu resmî ekranda hazır açan doğrulanmış derin bağlantılar üretilir ve arayüzde
   "otomatik oran alınamıyor" notu görünür. (AB'nin **EBTI karar verisi** ayrıdır ve alınır — bkz. altta.)
 
+**AB vergi oranları (TARIC)** (`eu_taric.py`): Komisyon TARIC'i yalnız danışma ekranı olarak
+yayımlıyor — o ekran robots politikasıyla otomatik erişime kapalı ve kod içeren GET sorgusuna
+sonuç değil arama formu döndürüyor (canlı sınandı). Ham veri ise *TARIC & Quota Data and
+Information* CIRCABC grubunda aylık XLSX çıkarımları hâlinde yayımlanıyor, fakat grup
+listelemesi hesap istiyor. Bu boşluk, aynı **resmî aylık çıkarımı** işleyen Apify aktörü
+(`nordicdataforge/eu-taric-customs-measures-monitor`) üzerinden kapatılır.
+
+Kaynak **sorgu başına ücretli** olduğu için tasarım buna göredir: varsayılan **kapalı**
+(`EU_TARIC_ENABLED=0`), arka planda kendiliğinden hiç çalışmaz, yalnız kullanıcı sorguladığında
+çağrılır ve her sonuç `eu_taric.sqlite3` içindeki kalıcı arşive yazılır — aynı kod × ülke × ay
+için bir daha ücret ödenmez (kaynak zaten aylık anlık görüntü olduğundan bu doğru davranıştır).
+Kaynak hata verirse arşivdeki son bilinen özet "son alınma" notuyla sunulur. `APIFY_TOKEN`
+yalnız ortam değişkeninden okunur, `Authorization` başlığıyla gönderilir (URL'ye yazılmaz) ve
+hiçbir hata metnine veya günlüğe sızmaz; başlıkta taşınamayacak bir jeton sessizce çökmek yerine
+temiz bir "kapalı" durumu üretir.
+
+`resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
+OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
+telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
+"nihai vergi" sayısı iddia edilmez** — TARIC'te oran ek koda, kotaya, belgeye ve nihai kullanıma
+bağlıdır — ve hiçbir değer `calculate_landed_cost` girdisine aktarılmaz. Rotalar:
+`GET /api/foreign/eu-taric?gtip=&origin=` ve `/status`; MCP'de `lookup_eu_taric_measures`.
+Toplu kullanıma geçmeden önce `scripts/eu_taric_validation.py` 10 kodu çözümleyip her biri için
+resmî TARIC ekran bağlantısını yazar; karşılaştırma elle yapılır.
+
 **AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
 ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir
 ZIP/CSV dosyası olarak **herkese açık** yayımlar (giriş gerekmez). `ebti-sync` döngüsü listeyi okur,

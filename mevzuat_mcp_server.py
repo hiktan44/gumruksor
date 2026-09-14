@@ -57,6 +57,7 @@ from foreign_tariff import (
     ForeignTariffEngine,
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
+from eu_taric import EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
 from classification_evidence import (
@@ -102,6 +103,8 @@ classification_engine = ClassificationEvidenceEngine()
 foreign_tariff_engine = ForeignTariffEngine()
 # AB Bağlayıcı Tarife Bilgisi kararları (resmî günlük yayın akışı).
 ebti_engine = EbtiDecisionEngine()
+# AB TARIC oranları: sorgu başına ücretli dış kaynak; yalnız talep üzerine çağrılır.
+eu_taric_engine = EuTaricEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -2871,6 +2874,33 @@ async def search_eu_bti_decisions(
     """
     try:
         result = ebti_engine.search(query or "", code_prefix=gtip, limit=limit)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "AB TARIC önlemlerini sorgula",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_eu_taric_measures(
+    gtip: str = Field(..., min_length=6, max_length=20, description="En az 6 haneli kod; 10 haneye tamamlanır."),
+    origin_country: str = Field("TR", max_length=4, description="Menşe ülke ISO kodu (varsayılan TR)."),
+) -> dict:
+    """Look up EU TARIC import measures for a goods code and partner country.
+
+    Veri, Komisyonun resmî aylık TARIC ham veri çıkarımından gelir. Özet koşulludur:
+    TARIC'te tek bir nihai vergi sayısı yoktur; oran ek koda, kotaya, belgeye ve nihai
+    kullanıma bağlıdır. Hiçbir değer Türkiye maliyet hesabına aktarılmaz.
+    """
+    try:
+        result = await eu_taric_engine.lookup(gtip, origin=origin_country)
     except ValueError as exc:
         return {"error": str(exc)}
     return result.as_dict()

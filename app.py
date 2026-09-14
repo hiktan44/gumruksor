@@ -53,6 +53,7 @@ from mevzuat_mcp_server import (
     exchange_rate_service,
     eylemio_client,
     ebti_engine,
+    eu_taric_engine,
     foreign_tariff_engine,
     hybrid_index,
     review_service,
@@ -2624,6 +2625,38 @@ async def web_ebti_decisions(request: Request):
     return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
 
 
+@mcp.custom_route("/api/foreign/eu-taric", methods=["GET"])
+async def web_eu_taric(request: Request):
+    """AB TARIC önlemleri: üçüncü ülke vergisi, menşeye özgü oran, ek vergiler ve gereken belgeler."""
+    limited = _rate_limit_response(request, "eu-taric", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "foreign_tariff")
+        result = await eu_taric_engine.lookup(
+            str(request.query_params.get("gtip", "")),
+            origin=str(request.query_params.get("origin") or "TR"),
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("EU TARIC lookup failed")
+        return JSONResponse({"error": "AB TARIC verisi şu anda alınamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=600"})
+
+
+@mcp.custom_route("/api/foreign/eu-taric/status", methods=["GET"])
+async def web_eu_taric_status(request: Request):
+    limited = _rate_limit_response(request, "eu-taric-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(eu_taric_engine.status())
+
+
 @mcp.custom_route("/api/foreign/ebti/status", methods=["GET"])
 async def web_ebti_status(request: Request):
     limited = _rate_limit_response(request, "ebti-status", limit=30, window_seconds=60)
@@ -3479,6 +3512,7 @@ async def health_check(request):
     classification_status = classification_engine.status()
     foreign_status = foreign_tariff_engine.status()
     ebti_status = ebti_engine.status()
+    eu_taric_status = eu_taric_engine.status()
     return JSONResponse({
         "status": "healthy",
         "service": "Mevzuat MCP Server",
@@ -3499,6 +3533,8 @@ async def health_check(request):
         "swiss_codes": foreign_status.get("swiss_code_count", 0),
         "ebti_ready": ebti_status.get("ready", False),
         "ebti_decisions": ebti_status.get("decision_count", 0),
+        "eu_taric_enabled": eu_taric_status.get("enabled", False),
+        "eu_taric_archived": eu_taric_status.get("archived_lookups", 0),
         "review_mode": review_service.policy.mode,
         "pending_reviews": (
             tariff_status.pending_review_count
