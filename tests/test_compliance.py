@@ -313,7 +313,10 @@ class ComplianceRouteTests(unittest.TestCase):
         self.assertTrue(self._get(USER).json()["email_alerts"])
 
     def test_route_is_rate_limited(self) -> None:
-        statuses = [self._get(USER).status_code for _ in range(31)]
+        # Sayaç sabit pencerelidir (now // 60); saat dakika sınırını geçerse sıfırlanır.
+        # Test bu sınıra denk gelip kırılmasın diye saat dondurulur.
+        with mock.patch("time.time", return_value=1_770_000_000.0):
+            statuses = [self._get(USER).status_code for _ in range(31)]
         self.assertEqual(statuses[:30], [200] * 30)
         self.assertEqual(statuses[30], 429)
 

@@ -2825,6 +2825,40 @@ async def web_admin_index_status(request: Request):
     return JSONResponse(status, headers={"Cache-Control": "no-store"})
 
 
+@mcp.custom_route("/api/admin/eu-taric/fill", methods=["GET", "POST"])
+async def web_admin_eu_taric_fill(request: Request):
+    """AB TARIC toplu dolumu: GET plan ve harcama durumu, POST bir turluk dolum (yönetici)."""
+    limited = _rate_limit_response(request, "admin-eu-taric-fill", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    if request.method == "GET":
+        try:
+            plan = await asyncio.to_thread(eu_taric_engine.fill_plan)
+        except Exception:
+            logger.exception("AB TARIC dolum planı okunamadı")
+            return JSONResponse({"error": "Dolum planı okunamadı."}, status_code=500)
+        return JSONResponse(plan, headers={"Cache-Control": "no-store"})
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    limit = payload.get("limit") if isinstance(payload, dict) else None
+    try:
+        limit_value = max(1, min(int(limit), 500)) if limit is not None else None
+    except (TypeError, ValueError):
+        limit_value = None
+    try:
+        report = await eu_taric_engine.fill_once(limit=limit_value)
+    except Exception:
+        logger.exception("AB TARIC toplu dolumu başarısız")
+        return JSONResponse({"error": "Toplu dolum çalıştırılamadı."}, status_code=502)
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/search/unified", methods=["GET", "POST"])
 async def web_unified_search(request: Request):
     """Tarife, TAREKS/TSE denetimleri, ÖTV ve resmi mevzuat üzerinde birleşik arama."""
@@ -3535,6 +3569,9 @@ async def health_check(request):
         "ebti_decisions": ebti_status.get("decision_count", 0),
         "eu_taric_enabled": eu_taric_status.get("enabled", False),
         "eu_taric_archived": eu_taric_status.get("archived_lookups", 0),
+        "eu_taric_fill_enabled": (eu_taric_status.get("fill") or {}).get("enabled", False),
+        "eu_taric_fill_pending": (eu_taric_status.get("fill") or {}).get("pending_pairs", 0),
+        "eu_taric_fill_total": (eu_taric_status.get("fill") or {}).get("total_pairs", 0),
         "review_mode": review_service.policy.mode,
         "pending_reviews": (
             tariff_status.pending_review_count

@@ -219,12 +219,42 @@ listelemesi hesap istiyor. Bu boşluk, aynı **resmî aylık çıkarımı** işl
 
 Kaynak **sorgu başına ücretli** olduğu için tasarım buna göredir: varsayılan **kapalı**
 (`EU_TARIC_ENABLED=0`), arka planda kendiliğinden hiç çalışmaz, yalnız kullanıcı sorguladığında
-çağrılır ve her sonuç `eu_taric.sqlite3` içindeki kalıcı arşive yazılır — aynı kod × ülke × ay
-için bir daha ücret ödenmez (kaynak zaten aylık anlık görüntü olduğundan bu doğru davranıştır).
+çağrılır ve her sonuç `eu_taric.sqlite3` içindeki kalıcı arşive yazılır — alınan bir kod × ülke
+çifti `EU_TARIC_REFRESH_DAYS` boyunca taze sayılır ve o süre dolmadan, hangi takvim ayında
+olursa olsun, yeniden ücretlendirilmez.
 Kaynak hata verirse arşivdeki son bilinen özet "son alınma" notuyla sunulur. `APIFY_TOKEN`
 yalnız ortam değişkeninden okunur, `Authorization` başlığıyla gönderilir (URL'ye yazılmaz) ve
 hiçbir hata metnine veya günlüğe sızmaz; başlıkta taşınamayacak bir jeton sessizce çökmek yerine
 temiz bir "kapalı" durumu üretir.
+
+**Tüm fasılları kapsayan toplu dolum** (`EU_TARIC_FILL_ENABLED=1`) aday kodları Türk tarife
+cetvelinden türetir: GTİP'in ilk 8 hanesi AB Kombine Nomanklatürü, 9-10. haneleri AB'nin TARIC
+alt açılımı, 11-12. haneleri ulusaldır — bu yüzden `hs10` düzeyinde ilk 10 hane doğrudan AB'de
+sorgulanacak koddur (`hs6` düzeyi daha kaba ve daha ucuzdur). Dolum üç kapıdan geçer: döngü
+açık olmalı, **aylık harcama tavanı** (`EU_TARIC_MONTHLY_BUDGET_USD`, varsayılan `0` = hiç
+sorgu yok) aşılmamış olmalı ve kod × ülke çifti arşivde **taze** olmamalıdır. Her tur
+`EU_TARIC_FILL_BATCH` kadar çift işler, aktöre tek çağrıda en fazla `EU_TARIC_MAX_CODES` kod
+gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. AB'de beyana elverişli
+olmayan kod `not_declarable` olarak işaretlenir (aktör bunları ücretlendirmez) ve
+`EU_TARIC_NOT_DECLARABLE_RETRY_DAYS` (varsayılan 180 gün) geçmeden tekrar denenmez;
+başarısız tur hiç kaydedilmez, bir sonraki turda yeniden denenir.
+
+**Tazelik takvim ayına değil kaydın yaşına bakar.** Bir kez indirilen kod × ülke çifti
+kalıcıdır; yalnız `EU_TARIC_REFRESH_DAYS` (varsayılan **90 gün**) geçtikten sonra yeniden
+sorgulanır — hangi ayda alınmış olduğu fark etmez. Takvim ayına bakan bir kural, ayın 1'inde
+tüm katalogu yeniden satın almak demekti: kaynak o ay yeni çıkarım yayımlamamışsa aynı satır
+aynı anahtara yeniden yazılır, para gider ve tek bir yeni bilgi gelmezdi. Kuyruk
+`foreign_tariff` arşivindeki desenle sıralanır: **önce hiç alınmamış kodlar, sonra tazelemesi
+gelenler** — böylece bütçe önce kapsama harcanır, hiçbir kod açlığa düşmez. Harcama tavanı
+aylık kalır (bütçe aylıktır), ama **iş kuyruğu ayla sıfırlanmaz**: $100'lük bir tavanla ilk
+dolum birkaç ayda tamamlanır ve orada durur. Kullanıcı sorgusu bayat bir arşiv kaydına
+düşerse sonuç yine **ücretsiz** arşivden döner, `stale: true` ve `age_days` ile hangi tarihte
+alındığı bildirilir. Yönetici
+`GET /api/admin/eu-taric/fill` ile aday sayısını, kalan işi ve tahmini maliyeti **ücret
+doğurmadan** görebilir, `POST` ile tek turluk dolum çalıştırabilir; `/health` içinde
+`eu_taric_fill_pending` ve `eu_taric_fill_total` alanları ilerlemeyi gösterir; plan çıktısı
+`pending_pairs` (hiç alınmamış), `refresh_due_pairs` (tazelemesi gelen) ve
+`estimated_monthly_usd` (kataloğun tazeleme payı) olarak ayrışır.
 
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,

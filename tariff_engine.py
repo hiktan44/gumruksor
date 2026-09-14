@@ -1000,6 +1000,17 @@ class TariffEngine:
             valid_to_basis=row["valid_to_basis"] if "valid_to_basis" in row.keys() else None,
         )
 
+    def distinct_gtip_codes(self, *, width: int = 12) -> list[str]:
+        """Yürürlükteki tarife cetvelinde geçen tekil GTİP kodları (yurt dışı karşılaştırma dolumu için)."""
+        width = max(4, min(int(width or 12), 12))
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT substr(m.gtip,1,?) AS code FROM tariff_measures m "
+                "JOIN tariff_snapshots s ON s.id=m.snapshot_id WHERE s.active=1 ORDER BY code",
+                (width,),
+            ).fetchall()
+        return [row["code"] for row in rows if row["code"]]
+
     def status(self) -> TariffSyncStatus:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
