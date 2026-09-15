@@ -219,8 +219,37 @@ async function fetchJson(url, options = {}) {
     if (timer) clearTimeout(timer);
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "İstek tamamlanamadı.");
+  if (!response.ok) {
+    // Sunucunun sebep kodu ve HTTP durumu hatayla birlikte tasinir: kota dolmasi ile
+    // model arizasi arayuzde ayni gorunmemeli.
+    const error = new Error(data.error || "İstek tamamlanamadı.");
+    error.status = response.status;
+    if (data.code) error.code = data.code;
+    if (data.retry_after) error.retryAfter = Number(data.retry_after) || null;
+    throw error;
+  }
   return data;
+}
+
+function describeRequestError(error, fallback = "İşlem tamamlanamadı.") {
+  // Kullaniciya NE olduguna gore eyleme donuk tek cumle: kota, hiz siniri, oturum ya da
+  // gercek bir ariza. Sunucunun kendi metni her zaman esas alinir.
+  const message = (error && error.message) || fallback;
+  if (!error || !error.status) return message;
+  if (error.code === "quota_exceeded") {
+    return `${message} Yönetici iseniz yönetim panelinden ek kota tanımlayabilirsiniz.`;
+  }
+  if (error.status === 429) {
+    const wait = error.retryAfter ? `${error.retryAfter} saniye` : "kısa bir süre";
+    return `${message} ${wait} sonra tekrar deneyebilirsiniz.`;
+  }
+  if (error.status === 401 || error.code === "authentication_required") {
+    return `${message} Sağ üstteki Google ile giriş düğmesini kullanın.`;
+  }
+  if (error.status === 413) {
+    return `${message} Daha küçük bir dosya deneyin.`;
+  }
+  return message;
 }
 
 function confidenceLabel(value) {
@@ -1801,12 +1830,12 @@ async function analyseProductImage() {
     $("#productFileStatus").scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
     state.customsVisionResult = null;
+    // Gercek sebep ust satirda gorunmeli: "kotaniz doldu" ile "model yanit vermedi"
+    // birbirinden ayirt edilemezse kullanici da, hata arayan da yanlis yere bakar.
+    const reason = describeRequestError(error, "Görsel analizi tamamlanamadı.");
     $("#productFileStatus").dataset.state = "error";
-    $("#productFileStatus").textContent = "Görsel analizi ürün dosyasına işlenemedi. Analizi tekrar deneyin veya alanları elle doldurun.";
-    setVisionState(
-      "error",
-      `${error.message || "Görsel analizi tamamlanamadı."} Ürün evsaflarını elle doldurup yine de açıkça onaylayabilirsiniz.`,
-    );
+    $("#productFileStatus").textContent = reason;
+    setVisionState("error", `${reason} Ürün evsaflarını elle doldurup yine de açıkça onaylayabilirsiniz.`);
   }
 }
 
@@ -3435,7 +3464,7 @@ $("#ingestSource")?.addEventListener("click", async () => {
       $("#attributeReview")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   } catch (error) {
-    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "Belge okunamadı."))}</p></div>`;
   }
 });
 
@@ -3675,7 +3704,7 @@ $("#shippingRead")?.addEventListener("click", async () => {
     });
     renderShippingReview(data);
   } catch (error) {
-    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message)}</p></div>`;
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "Sevkiyat belgesi okunamadı."))}</p></div>`;
   } finally {
     button.disabled = false;
   }
