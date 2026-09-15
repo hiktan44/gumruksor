@@ -13,12 +13,36 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
 
 import eu_vat
 from eu_vat import EU27, EuVatRates, match_chapter_rule, normalise_iso2
+
+
+def _seeded_payload() -> dict:
+    return json.loads((Path(eu_vat.__file__).parent / "data" / "official"
+                       / eu_vat.DATA_FILE).read_text(encoding="utf-8"))
+
+
+def _seed_with_confirmation_stamp(case: unittest.TestCase, stamp: object) -> EuVatRates:
+    """Tohumun aynısını, teyit damgası değiştirilmiş hâliyle geçici bir dizinden okur."""
+    payload = _seeded_payload()
+    payload["expert_confirmed_at"] = stamp
+    for row in payload["rows"]:
+        row["expert_confirmed_at"] = stamp
+    tmp = tempfile.TemporaryDirectory()
+    case.addCleanup(tmp.cleanup)
+    (Path(tmp.name) / eu_vat.DATA_FILE).write_text(json.dumps(payload), encoding="utf-8")
+    empty = tempfile.TemporaryDirectory()
+    case.addCleanup(empty.cleanup)
+    return EuVatRates(data_dir=tmp.name, cache_dir=empty.name)
+
+
+def _seed_with_confirmation_age(case: unittest.TestCase, days: int) -> EuVatRates:
+    return _seed_with_confirmation_stamp(case, (date.today() - timedelta(days=days)).isoformat())
 
 
 def _workbook(rows: list[tuple[str, str, str, str]]) -> bytes:
@@ -101,13 +125,50 @@ class SeedLookupTests(unittest.TestCase):
         self.assertEqual(set(self.index._rows), set(EU27))
 
     def test_every_seed_row_is_marked_unverified(self) -> None:
-        # Tohum elle derlenmiştir; hiçbir satır doğrulanmış sayılamaz.
+        # ``verified`` YALNIZ "resmî anlık görüntüden makine tarafından okundu" demektir.
+        # Uzman teyidi ayrı bir düzeydir ve bu bayrağı çevirmez; TEDB çalıştığı gün çevirir.
         self.assertEqual(sorted(self.index.status()["unverified"]), sorted(EU27))
 
-    def test_recently_changed_rates_are_flagged_for_verification_first(self) -> None:
-        verify_first = set(self.index.status()["verify_first"])
-        self.assertTrue(verify_first)
-        self.assertLess(len(verify_first), 27, "hepsi işaretliyse işaret anlamını yitirir")
+    def test_every_seed_row_carries_a_dated_expert_confirmation(self) -> None:
+        status = self.index.status()
+        self.assertEqual(sorted(status["expert_confirmed"]), sorted(EU27))
+        stamp = date.fromisoformat(status["expert_confirmed_at"])
+        self.assertLessEqual(stamp, date.today(), "teyit tarihi geleceğe ait olamaz")
+        self.assertFalse(status["confirmation_stale"])
+
+    def test_a_fresh_confirmation_clears_the_verify_first_warning(self) -> None:
+        # Kullanıcı ("bu oranlar güncel") altı oynak ülkeyi de teyit etti.
+        self.assertEqual(self.index.status()["verify_first"], [])
+        note = self.index.lookup("CZ")["note"]
+        self.assertNotIn("doğrulanmamış", note)
+        self.assertIn("uzman teyidiyle", note)
+
+    def test_a_stale_confirmation_brings_the_warning_back(self) -> None:
+        index = _seed_with_confirmation_age(self, 181)
+        status = index.status()
+        self.assertTrue(status["confirmation_stale"])
+        self.assertEqual(sorted(status["verify_first"]), ["CZ", "EE", "FI", "MT", "RO", "SK"])
+        note = index.lookup("CZ")["note"]
+        self.assertIn("doğrulanmamış", note)
+        self.assertIn("tazelenmeli", note)
+
+    def test_a_confirmation_just_inside_the_window_still_counts(self) -> None:
+        index = _seed_with_confirmation_age(self, 179)
+        self.assertFalse(index.status()["confirmation_stale"])
+        self.assertEqual(index.status()["verify_first"], [])
+
+    def test_an_unparsable_confirmation_date_is_treated_as_no_confirmation(self) -> None:
+        index = _seed_with_confirmation_stamp(self, "yakın zamanda")
+        status = index.status()
+        self.assertEqual(status["expert_confirmed"], [])
+        self.assertIsNone(status["expert_confirmed_at"])
+        self.assertIn("doğrulanmamış", index.lookup("CZ")["note"])
+        self.assertNotIn("tazelenmeli", index.lookup("CZ")["note"])
+
+    def test_a_future_confirmation_date_is_not_trusted(self) -> None:
+        index = _seed_with_confirmation_age(self, -5)
+        self.assertTrue(index.status()["confirmation_stale"])
+        self.assertIn("doğrulanmamış", index.lookup("CZ")["note"])
 
     def test_without_a_gtip_the_standard_rate_applies(self) -> None:
         report = self.index.lookup("DE")
@@ -131,8 +192,9 @@ class SeedLookupTests(unittest.TestCase):
 
     def test_note_names_the_authority_to_check(self) -> None:
         report = self.index.lookup("DE", gtip="0401100000")
-        self.assertIn("doğrulanmamış", report["note"])
         self.assertIn(report["authority_url"], report["note"])
+        # Teyit taze olsa da fasıl kuralı hâlâ bir öneridir ve notta öyle yazar.
+        self.assertIn("mevzuatı belirler", report["note"])
 
     def test_non_member_state_gets_no_rate(self) -> None:
         report = self.index.lookup("CN")
