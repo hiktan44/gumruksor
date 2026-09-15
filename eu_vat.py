@@ -11,10 +11,19 @@ canlı olarak ölçüldü:
   anonim istekte boş şablon dönüyor. Kategori, CN kodu ve geçmiş tarih denemeleri de
   boş döndü.
 
-Bu yüzden veri elle derlenmiş bir tohumdan gelir ve **hiçbir satır doğrulanmış sayılmaz**
-(``verified: false``). ``sync()`` her çalıştığında TEDB'yi yoklar; TEDB veri döndürmeye
-başladığı gün tohum kendiliğinden resmî veriyle değişir. Bu, ``vat_lists.py``'nin Türk
-KDV listesinde kullandığı desenin aynısıdır.
+Bu yüzden veri elle derlenmiş bir tohumdan gelir. ``sync()`` her çalıştığında TEDB'yi
+yoklar; TEDB veri döndürmeye başladığı gün tohum kendiliğinden resmî veriyle değişir. Bu,
+``vat_lists.py``'nin Türk KDV listesinde kullandığı desenin aynısıdır.
+
+**İki ayrı kanıt düzeyi vardır ve birbirinin yerine geçmezler:**
+
+* ``verified`` — satır bir resmî anlık görüntüden **makine tarafından okundu** (kaynak URL +
+  tarih + sha256). TEDB başsız çalışmadığı için bugün hiçbir satır bu düzeyde değil.
+* ``expert_confirmed`` — tabloyu uygulamanın sahibi olan gümrük müşaviri **teyit etti**.
+  İnsan teyidi makine okumasının yerine geçmez, ama "doğrulanmamış tohum" uyarısını da
+  gerçeğe aykırı kılar. Teyit süresiz değildir: ``EU_VAT_CONFIRMATION_MAX_AGE_DAYS``
+  (varsayılan 180 gün) geçince düşer, uyarı geri gelir ve oranı sık değişen ülkeler
+  (``volatile``) yeniden öncelikli doğrulama listesine girer.
 
 **İndirimli oran bir öneridir, tespit değildir.** Kullanıcı indirimli oranın GTİP faslından
 otomatik seçilmesini istedi; uygulanıyor, ama AB Ek-III kategorileri ile GTİP faslı birebir
@@ -31,7 +40,7 @@ import io
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -68,6 +77,45 @@ SUGGESTION_NOTE = (
     "Hedef ülkenin KDV oranı bilgilendirme amaçlıdır; beyannameyi açacak tarafın kendi "
     "mevzuatına göre doğrulaması gerekir."
 )
+
+# Uzman teyidi kaç gün geçerli sayılır? Oranlar değişir; süresiz "teyitli" demek bir süre
+# sonra yalan olur. Bu yaştan sonra teyit düşer ve uyarı metni geri gelir.
+CONFIRMATION_MAX_AGE_DAYS = int(os.environ.get("EU_VAT_CONFIRMATION_MAX_AGE_DAYS", "180"))
+
+
+def _parse_day(value: Any) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+def confirmation_state(
+    payload: dict[str, Any],
+    row: dict[str, Any] | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Uzman teyidinin durumu: var mı, ne zaman verildi, kaç günlük, bayat mı.
+
+    Tarih yoksa veya ayrıştırılamıyorsa teyit **yok** sayılır (güvenli taraf); ileri tarihli
+    damga da bayat sayılır, çünkü güvenilmez.
+    """
+    source = row if row is not None else {}
+    confirmed = bool(source.get("expert_confirmed", payload.get("expert_confirmed")))
+    stamp = _parse_day(source.get("expert_confirmed_at") or payload.get("expert_confirmed_at"))
+    if not confirmed or stamp is None:
+        return {"confirmed": False, "confirmed_at": None, "age_days": None, "stale": False, "by": None}
+    age = ((today or datetime.now(timezone.utc).date()) - stamp).days
+    return {
+        "confirmed": True,
+        "confirmed_at": stamp.isoformat(),
+        "age_days": age,
+        "stale": age < 0 or age > CONFIRMATION_MAX_AGE_DAYS,
+        "by": payload.get("expert_confirmed_by") or None,
+    }
 
 
 def _now() -> str:
@@ -198,9 +246,27 @@ class EuVatRates:
     def ready(self) -> bool:
         return bool(self._rows)
 
+    def confirmation(self, row: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Bu satır (veya tablonun tamamı) için uzman teyidinin durumu."""
+        return confirmation_state(self._payload, row)
+
+    def _confirmed_fresh(self, row: dict[str, Any] | None = None) -> bool:
+        state = self.confirmation(row)
+        return bool(state["confirmed"]) and not state["stale"]
+
     def status(self) -> dict[str, Any]:
+        # ``unverified`` anlamını korur: makine okuması yok demektir, teyit yok demek değil.
         unverified = [row["iso2"] for row in self._rows.values() if not row.get("verified")]
-        volatile = [row["iso2"] for row in self._rows.values() if row.get("volatile")]
+        confirmed = [
+            row["iso2"] for row in self._rows.values() if self.confirmation(row)["confirmed"]
+        ]
+        # Oranı sık değişen ülke ancak teyit yoksa veya bayatsa uyarıya dönüşür.
+        volatile = [
+            row["iso2"]
+            for row in self._rows.values()
+            if row.get("volatile") and not self._confirmed_fresh(row)
+        ]
+        table = self.confirmation()
         return {
             "ready": self.ready,
             "row_count": len(self._rows),
@@ -212,6 +278,11 @@ class EuVatRates:
             "origin": self._origin,
             "checked_at": self._payload.get("checked_at"),
             "unverified": sorted(unverified),
+            "expert_confirmed": sorted(confirmed),
+            "expert_confirmed_at": table["confirmed_at"],
+            "expert_confirmed_by": table["by"],
+            "confirmation_age_days": table["age_days"],
+            "confirmation_stale": table["stale"],
             "verify_first": sorted(volatile),
             "last_error": self._last_error,
             "cache_path": str(self._cache_path),
@@ -243,6 +314,9 @@ class EuVatRates:
             "legal_basis": None,
             "verified": False,
             "verify_first": False,
+            "expert_confirmed": False,
+            "expert_confirmed_at": None,
+            "confirmation_stale": False,
             "source": self._payload.get("source") or SOURCE_LABEL,
             "source_url": self._payload.get("source_url") or TEDB_UI_URL,
             "authority_url": None,
@@ -258,6 +332,7 @@ class EuVatRates:
             )
             return base
 
+        state = self.confirmation(row)
         standard = row.get("standard")
         reduced = [float(item) for item in row.get("reduced") or []]
         base.update(
@@ -271,7 +346,10 @@ class EuVatRates:
                 "applicable_basis": "standard",
                 "candidates": [standard] if standard is not None else [],
                 "verified": bool(row.get("verified")),
-                "verify_first": bool(row.get("volatile")),
+                "verify_first": bool(row.get("volatile")) and not self._confirmed_fresh(row),
+                "expert_confirmed": state["confirmed"],
+                "expert_confirmed_at": state["confirmed_at"],
+                "confirmation_stale": state["stale"],
                 "authority_url": row.get("authority_url"),
             }
         )
@@ -301,11 +379,26 @@ class EuVatRates:
                 f"{row.get('country')} indirimli oran uygulamıyor; {rule.get('label')} kaleminde de "
                 f"standart oran geçerlidir. " + SUGGESTION_NOTE
             )
-        if not base["verified"]:
+        authority = row.get("authority_url") or "resmî vergi idaresi"
+        if base["verified"]:
+            pass  # TEDB'den makine okuması; ek köken uyarısı gerekmez.
+        elif state["confirmed"] and not state["stale"]:
+            base["note"] = (
+                f"Bu oran {state['confirmed_at']} tarihinde uzman teyidiyle güncel kabul edildi"
+                + (f" ({state['by']})" if state["by"] else "")
+                + f"; {authority} üzerinden doğrulayabilirsiniz. "
+                + base["note"]
+            )
+        else:
             base["note"] = (
                 "Bu oran doğrulanmamış tohum veriden geliyor"
-                + (" ve bu ülkenin oranı son iki yılda değişti" if base["verify_first"] else "")
-                + f"; {row.get('authority_url') or 'resmî vergi idaresi'} üzerinden teyit edin. "
+                + (" ve bu ülkenin oranı son iki yılda değişti" if row.get("volatile") else "")
+                + (
+                    f"; uzman teyidi {state['age_days']} gün önce yapıldı, tazelenmeli"
+                    if state["confirmed"]
+                    else ""
+                )
+                + f"; {authority} üzerinden teyit edin. "
                 + base["note"]
             )
         return base
