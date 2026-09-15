@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 StepStatus = Literal["done", "pending", "blocked", "not_applicable"]
 
 WORKFLOW_VERSION = "tr-import-workflow-v1"
+EXPORT_WORKFLOW_VERSION = "tr-export-workflow-v1"
 
 # Categories of control communiqués that run through TAREKS / product-safety
 # (ÜGD) rather than a sector ministry permit.  Used only as a fallback when the
@@ -239,9 +240,13 @@ class _Builder:
 
     # -- steps -------------------------------------------------------------
 
-    def build(self) -> list[WorkflowStep]:
+    def _opening_steps(self) -> None:
+        """Yön-nötr ilk dört adım: eşya tanımı, evsaf onayı, aday GTİP, 12 hane.
+
+        Sınıflandırma akışı ithalatta da ihracatta da aynıdır; ihracat kurucusu bu
+        adımları aynen devralır ve tek kod yolu korunur.
+        """
         inq = self.inquiry
-        missing = [_text(item) for item in self.result.get("missing_information") or []]
 
         # 1. Eşya tanımı
         description = _text(inq.get("product_description"))
@@ -328,6 +333,12 @@ class _Builder:
                      f"{len(self.gtip)} haneli kod var; 12 haneli alt satır onayı yok.{detail}", evidence=evidence,
                      next_action="Karar ağacında 12 haneli satırı seçip 'kesin alt GTİP' onayı verin.",
                      legal_basis="Türk Gümrük Tarife Cetveli")
+
+
+    def build(self) -> list[WorkflowStep]:
+        inq = self.inquiry
+        missing = [_text(item) for item in self.result.get("missing_information") or []]
+        self._opening_steps()
 
         # 5. Menşe / sevk ülkesi
         dispatch = _text(inq.get("dispatch_country"))
@@ -667,7 +678,17 @@ class _Builder:
                      next_action="Damga vergisi, ardiye/liman, GEKAP ve varsa TRT bandrol kalemlerini girin.",
                      legal_basis="488 sayılı Damga Vergisi Kanunu; 3093 sayılı TRT Kanunu; GEKAP Yönetmeliği")
 
-        # 24. Uzman devri / BTB kararı
+        self._expert_handoff_step()
+
+        # Missing-information list feeds next_action of pending steps that lack one.
+        if missing:
+            for step in self.steps:
+                if step.status == "pending" and not step.next_action:
+                    step.next_action = f"Eksik bilgiyi tamamlayın: {missing[0]}"
+        return self.steps
+
+    def _expert_handoff_step(self) -> None:
+        """Uzman devri / BTB adımı — iki yönde de aynı paketten türetilir."""
         escalation = bool(self.packet.get("escalation_required"))
         risk = _text(self.packet.get("risk_level"))
         review_types = [_text(item) for item in self.packet.get("review_types") or []]
@@ -690,12 +711,6 @@ class _Builder:
                      "Zorunlu uzman devri gerekçesi bulunmadı; sonuç yine bağlayıcı karar değildir.", evidence=evidence,
                      legal_basis="Gümrük Kanunu md. 9 (Bağlayıcı Tarife Bilgisi)")
 
-        # Missing-information list feeds next_action of pending steps that lack one.
-        if missing:
-            for step in self.steps:
-                if step.status == "pending" and not step.next_action:
-                    step.next_action = f"Eksik bilgiyi tamamlayın: {missing[0]}"
-        return self.steps
 
     def _trade_step(
         self,
@@ -744,16 +759,222 @@ class _Builder:
                  next_action=confirm_action, legal_basis=legal_basis)
 
 
+class _ExportBuilder(_Builder):
+    """İhracat akışı: Türkiye'den çıkış + hedef ülke ithalat beyannamesi hazırlığı.
+
+    İlk dört adım (eşya tanımı, evsaf onayı, aday GTİP, 12 hane) ``_Builder``'dan
+    aynen devralınır. Kalan adımlar Türk ithalat vergilerinin yerine hedef ülke
+    şartlarını ve Türkiye tarafı ihracat işlemlerini alır.
+
+    Dört adım (``exporter_registration``, ``export_prohibitions``, ``dual_use_control``,
+    ``vat_exemption_refund``) her dosyada ``pending`` kalır: bu listeler indekslenmemiştir
+    ve "kapsam dışıdır" demek yanlış olurdu. Gözlemleyemediğimiz şeyi tamamlanmış saymak,
+    hedef ülkede yanlış beyannameye yol açabilecek en sessiz hatadır.
+    """
+
+    @property
+    def export_req(self) -> dict[str, Any]:
+        return _as_dict(self.result.get("export_requirements"))
+
+    @property
+    def destination(self) -> dict[str, Any]:
+        return _as_dict(self.export_req.get("destination"))
+
+    def build(self) -> list[WorkflowStep]:
+        inq = self.inquiry
+        self._opening_steps()
+
+        req = self.export_req
+        dest = self.destination
+        dest_name = _text(dest.get("country_name")) or _text(inq.get("destination_country"))
+        tier = _text(dest.get("tier"))
+        badge = _text(dest.get("badge_text"))
+
+        # 5. Hedef ülke
+        evidence = ["inquiry.destination_country", "export_requirements.destination.tier"]
+        if not dest_name:
+            self.add("destination_country", "Hedef ülke", "blocked", "Eşyanın gideceği ülke girilmedi.",
+                     evidence=evidence, next_action="Hedef ülkeyi seçin; beyanname şartları ülkeye göre belirlenir.")
+        elif not dest.get("recognised"):
+            self.add("destination_country", "Hedef ülke", "pending",
+                     f'"{dest_name}" kayıtlı ülke listemizde bulunamadı.', evidence=evidence,
+                     next_action="Ülke adını kontrol edin; tanınmayan ülkede anlaşma ve belge kuralı üretilemez.")
+        else:
+            agreement = _text(dest.get("agreement")) or _text(dest.get("regime_name"))
+            self.add("destination_country", "Hedef ülke", "done",
+                     f"Hedef: {dest_name}{f' · {agreement}' if agreement else ''}.", evidence=evidence)
+
+        # 6. Hedef ülke gümrük vergisi
+        evidence = ["export_requirements.destination_duty", "export_requirements.destination.tier"]
+        if not self.gtip:
+            self.add("destination_tariff", "Hedef ülke gümrük vergisi", "blocked",
+                     "Tarife kodu olmadan hedef ülke oranı sorgulanamaz.", evidence=evidence,
+                     next_action="Önce aday GTİP'i belirleyin.")
+        elif not dest_name:
+            self.add("destination_tariff", "Hedef ülke gümrük vergisi", "blocked",
+                     "Hedef ülke seçilmeden oran belirlenemez.", evidence=evidence,
+                     next_action="Hedef ülkeyi seçin.")
+        elif req.get("destination_duty"):
+            source = _as_dict(req.get("duty_source"))
+            stamp = _text(source.get("retrieved_at")) or _text(source.get("fetched_at"))
+            self.add("destination_tariff", "Hedef ülke gümrük vergisi", "done",
+                     f"Oran resmî kaynaktan okundu{f' ({stamp})' if stamp else ''}.", evidence=evidence,
+                     legal_basis="Hedef ülkenin yürürlükteki tarife cetveli")
+        else:
+            action = {
+                "nomenclature": "Tares ekranından oranı sorgulayın; İsviçre oran yayımlamaz.",
+                "none": "Ülke adını düzeltin veya hedef ülkenin resmî tarife ekranını kullanın.",
+            }.get(tier, "Hedef ülkenin resmî tarife ekranından oranı doğrulayın.")
+            self.add("destination_tariff", "Hedef ülke gümrük vergisi", "pending",
+                     badge or "Hedef ülke için oran verimiz yok.", evidence=evidence, next_action=action)
+
+        # 7. Menşe / dolaşım belgesi düzenleme
+        documents = [_as_dict(item) for item in req.get("proof_documents") or []]
+        evidence = ["export_requirements.proof_documents", "inquiry.origin_country"]
+        if not dest_name:
+            self.add("preferential_origin_proof_export", "Menşe / dolaşım belgesi düzenleme", "blocked",
+                     "Hedef ülke belli olmadan belge türü belirlenemez.", evidence=evidence,
+                     next_action="Hedef ülkeyi seçin.")
+        elif documents:
+            names = ", ".join(_text(doc.get("name")) for doc in documents[:2] if _text(doc.get("name")))
+            self.add("preferential_origin_proof_export", "Menşe / dolaşım belgesi düzenleme", "pending",
+                     f"Düzenlenecek belge: {names}.", evidence=evidence,
+                     next_action="Belgeyi ihracatçı olarak düzenleyip oda vizesi ve gümrük onayını alın.",
+                     legal_basis=_text(dest.get("agreement")) or None)
+        else:
+            self.add("preferential_origin_proof_export", "Menşe / dolaşım belgesi düzenleme", "pending",
+                     "Bu hedef için tercihli menşe belgesi kuralı üretilemedi.", evidence=evidence,
+                     next_action="Alıcınızın hangi menşe belgesini istediğini teyit edin.")
+
+        # 8-11. Gözlemleyemediğimiz Türkiye tarafı adımlar: asla "not_applicable" olmaz.
+        self.add("exporter_registration", "İhracatçı birliği üyeliği ve İBGS kaydı", "pending",
+                 "Birlik üyelik verisi sistemimizde yok; gümrük çıkış beyannamesi öncesi gereklidir.",
+                 evidence=["export_requirements.turkish_procedure"],
+                 next_action="İlgili ihracatçı birliğine üyeliğinizi ve İBGS kaydınızı teyit edin.")
+
+        self.add("export_prohibitions", "İhracı yasak veya ön izne bağlı mallar", "pending",
+                 "İhracı yasak ve ön izne bağlı mal listeleri indekslenmemiştir; kapsam dışı olduğu söylenemez.",
+                 evidence=["export_requirements.turkish_procedure"],
+                 next_action="Eşyanızı resmî yasak/ön izin listesiyle karşılaştırın.",
+                 legal_basis="İhracat Yönetmeliği ve ekli listeler")
+
+        evidence = ["inquiry.candidate_gtip", "export_requirements.turkish_procedure"]
+        if not self.gtip:
+            self.add("export_product_control", "İhracatta ürün güvenliği / TAREKS denetimi", "blocked",
+                     "Tarife kodu olmadan denetim kapsamı belirlenemez.", evidence=evidence,
+                     next_action="Önce aday GTİP'i belirleyin.")
+        else:
+            self.add("export_product_control", "İhracatta ürün güvenliği / TAREKS denetimi", "pending",
+                     "İhracat tarafı ürün denetim indeksimiz yok; ürün grubunuz denetime tabi olabilir.",
+                     evidence=evidence, next_action="Ürün grubunuz için ihracat denetim tebliğlerini kontrol edin.")
+
+        if not self.gtip:
+            self.add("dual_use_control", "İkili kullanım ve ihracat kontrol listeleri", "blocked",
+                     "Tarife kodu olmadan kontrol listesi karşılaştırması yapılamaz.", evidence=evidence,
+                     next_action="Önce aday GTİP'i belirleyin.")
+        else:
+            self.add("dual_use_control", "İkili kullanım ve ihracat kontrol listeleri", "pending",
+                     "İkili kullanım ve yaptırım listeleri sistemimizde yok.", evidence=evidence,
+                     next_action="Teknik özellikleri resmî ikili kullanım listesiyle karşılaştırın.")
+
+        # 12. Hedef pazar uygunluk işareti
+        hints = [_as_dict(item) for item in req.get("market_hints") or []]
+        evidence = ["export_requirements.market_hints"]
+        if not dest_name:
+            self.add("destination_market_requirements", "Hedef pazar uygunluk işareti", "blocked",
+                     "Hedef ülke belli olmadan uygunluk şartı belirlenemez.", evidence=evidence,
+                     next_action="Hedef ülkeyi seçin.")
+        elif hints:
+            titles = ", ".join(_text(hint.get("title")) for hint in hints[:3] if _text(hint.get("title")))
+            self.add("destination_market_requirements", "Hedef pazar uygunluk işareti", "pending",
+                     f"Onayladığınız evsaftan çıkan başlıklar: {titles}.", evidence=evidence,
+                     next_action="Her başlık için hedef pazarın uygunluk ve etiketleme şartını doğrulayın.")
+        else:
+            self.add("destination_market_requirements", "Hedef pazar uygunluk işareti", "pending",
+                     "Onaylanmış evsaftan uygunluk ipucu çıkmadı; bu kapsam dışı olduğu anlamına gelmez.",
+                     evidence=evidence, next_action="Ürün grubunuz için hedef pazar uygunluk şartını kontrol edin.")
+
+        # 13. Ticari ve taşıma belgeleri
+        self.add("commercial_documents", "Ticari ve taşıma belgeleri", "pending",
+                 "Fatura, taşıma belgesi, çeki listesi ve gerekiyorsa sigorta poliçesi hazırlanır.",
+                 evidence=["export_requirements.commercial_documents"],
+                 next_action="Belgelerdeki eşya tanımı, miktar ve kıymetin beyanname ile birebir uyduğunu doğrulayın.")
+
+        # 14. Teslim ve ödeme şekli
+        incoterm = _text(inq.get("incoterm"))
+        payment = _text(inq.get("payment_method"))
+        evidence = ["inquiry.incoterm", "inquiry.payment_method"]
+        if incoterm and payment:
+            self.add("incoterm_payment", "Teslim ve ödeme şekli", "done",
+                     f"Teslim {incoterm}, ödeme {payment}.", evidence=evidence)
+        else:
+            eksik = " ve ".join(filter(None, ["teslim şekli" if not incoterm else "", "ödeme şekli" if not payment else ""]))
+            self.add("incoterm_payment", "Teslim ve ödeme şekli", "pending", f"Eksik: {eksik}.", evidence=evidence,
+                     next_action="Sözleşmedeki teslim ve ödeme şeklini girin; beyanname ile uyumlu olmalıdır.")
+
+        # 15. Navlun ve sigorta sorumluluğu
+        freight = inq.get("freight")
+        insurance = inq.get("insurance")
+        evidence = ["inquiry.freight", "inquiry.insurance", "inquiry.incoterm"]
+        if freight is not None and insurance is not None:
+            self.add("freight_insurance", "Navlun ve sigorta sorumluluğu", "done",
+                     "Navlun ve sigorta tutarları girildi.", evidence=evidence)
+        else:
+            self.add("freight_insurance", "Navlun ve sigorta sorumluluğu", "pending",
+                     "Navlun veya sigorta tutarı girilmedi.", evidence=evidence,
+                     next_action=f"Teslim şekli{f' ({incoterm})' if incoterm else ''} hangi tarafa yüklüyorsa ona göre girin.")
+
+        # 16. Gümrük çıkış beyannamesi
+        evidence = ["inquiry.exact_gtip_confirmed", "tariff_lookup.status"]
+        if not self.gtip12_confirmed:
+            self.add("export_declaration", "Gümrük çıkış beyannamesi (GÇB) tescili", "blocked",
+                     "GÇB 12 haneli GTİP ister; kesin alt kod onaylanmadı.", evidence=evidence,
+                     next_action="Karar ağacında 12 haneli satırı seçip onaylayın.",
+                     legal_basis="Gümrük Yönetmeliği (beyannamenin tescili)")
+        else:
+            self.add("export_declaration", "Gümrük çıkış beyannamesi (GÇB) tescili", "pending",
+                     f"12 haneli kod hazır: {self.gtip}.", evidence=evidence,
+                     next_action="Beyannameyi müşaviriniz aracılığıyla tescil ettirin.",
+                     legal_basis="Gümrük Yönetmeliği (beyannamenin tescili)")
+
+        # 17. KDV istisnası ve iade
+        self.add("vat_exemption_refund", "İhracat KDV istisnası ve iade", "pending",
+                 "İhracat teslimleri KDV'den istisnadır; iade süreci sistemimizde izlenmez.",
+                 evidence=["export_requirements.turkish_procedure"],
+                 next_action="Beyannamenin kapanmasını ve iade belge şartlarını mali müşavirinizle takip edin.",
+                 legal_basis="3065 sayılı KDV Kanunu md. 11/1-a ve md. 12")
+
+        # 18. Uzman devri
+        self._expert_handoff_step()
+        return self.steps
+
+
+def _direction_of(data: dict[str, Any]) -> str:
+    """Yön üst düzeyde ya da inquiry içinde olabilir; göç öncesi dosyalarda hiç yoktur."""
+    direction = _text(data.get("direction"))
+    if not direction:
+        direction = _text(_as_dict(data.get("inquiry")).get("direction"))
+    return direction or "import"
+
+
+def workflow_version_for(direction: Any) -> str:
+    return EXPORT_WORKFLOW_VERSION if _text(direction) == "export" else WORKFLOW_VERSION
+
+
 def build_workflow(result: Any) -> list[WorkflowStep]:
     """Derive the ordered workflow from a ``CustomsPrecheckResult`` or its dict form.
 
     Deterministic: same input → same steps.  Never calls a model or the network.
+    Yön ``export`` ise ihracat kurucusu çalışır; varsayılan ve eski kayıtlar ithalattır.
     """
     data = _as_dict(result)
-    return _Builder(data).build()
+    builder = _ExportBuilder if _direction_of(data) == "export" else _Builder
+    return builder(data).build()
 
 
-def workflow_summary(steps: list[WorkflowStep] | list[dict[str, Any]]) -> dict[str, Any]:
+def workflow_summary(
+    steps: list[WorkflowStep] | list[dict[str, Any]], *, direction: Any = "import"
+) -> dict[str, Any]:
     counts = {"done": 0, "pending": 0, "blocked": 0, "not_applicable": 0}
     for step in steps:
         status = _text(_as_dict(step).get("status"))
@@ -761,7 +982,19 @@ def workflow_summary(steps: list[WorkflowStep] | list[dict[str, Any]]) -> dict[s
             counts[status] += 1
     applicable = len(steps) - counts["not_applicable"]
     ratio = round(counts["done"] / applicable, 3) if applicable > 0 else 1.0
-    return {**counts, "total": len(steps), "completion_ratio": ratio, "version": WORKFLOW_VERSION}
+    return {
+        **counts,
+        "total": len(steps),
+        "completion_ratio": ratio,
+        "version": workflow_version_for(direction),
+    }
 
 
-__all__ = ["WORKFLOW_VERSION", "WorkflowStep", "build_workflow", "workflow_summary"]
+__all__ = [
+    "EXPORT_WORKFLOW_VERSION",
+    "WORKFLOW_VERSION",
+    "WorkflowStep",
+    "build_workflow",
+    "workflow_summary",
+    "workflow_version_for",
+]

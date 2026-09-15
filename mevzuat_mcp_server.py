@@ -201,6 +201,10 @@ hybrid_index = HybridIndex(embedder=_embedder)
 customs_advisor_service.hybrid_index = hybrid_index
 # PRD Faz 4: AB BTB kararları sınıflandırma kanıtına girer.
 customs_advisor_service.ebti_engine = ebti_engine
+# İhracat yönü: hedef ülke oranı yalnız bu iki resmî motordan okunur. AB tarafı
+# ön değerlendirmede archive_only ile çağrılır, yani ücretli aktör tetiklenmez.
+customs_advisor_service.eu_taric_engine = eu_taric_engine
+customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
 
 
 async def hybrid_index_refresh_loop() -> None:

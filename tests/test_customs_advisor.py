@@ -113,6 +113,119 @@ class InquiryDirectionTests(unittest.TestCase):
         self.assertIsNone(result.export_requirements)
 
 
+class ExportEvidencePackTests(unittest.IsolatedAsyncioTestCase):
+    """İhracat dalı: Türk ithalat vergisi sızmamalı, ücretli aktör tetiklenmemeli."""
+
+    def _inquiry(self, **overrides) -> customs_advisor.CustomsInquiry:
+        data = {
+            "question": "Almanya'ya çocuk pijaması ihraç edeceğim, neler gerekli?",
+            "direction": "export",
+            "destination_country": "Almanya",
+            "origin_country": "Türkiye",
+            "product_description": "Örme pamuklu çocuk pijama takımı",
+            "candidate_gtip": "610910000011",
+            "tariff_selection_confirmed": True,
+            "exact_gtip_confirmed": True,
+        }
+        data.update(overrides)
+        return customs_advisor.CustomsInquiry(**data)
+
+    async def _pack(self, service: "customs_advisor.CustomsAdvisor", inquiry) -> customs_advisor.CustomsEvidencePack:
+        with patch.object(service.registry, "gather", AsyncMock(return_value=[])):
+            return await service.evidence_pack(inquiry)
+
+    async def test_export_pack_drops_every_import_only_block(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+        pack = await self._pack(service, self._inquiry())
+        self.assertIsNone(pack.deterministic_cost, "ihracatta Türk maliyet hesabı yapılmaz")
+        self.assertIsNone(pack.control_lookup, "ihracat ÜGD indeksimiz yok")
+        self.assertIsNone(pack.origin_documents, "Türkiye kayıt defterinde yok; ithalat kuralı çağrılmamalı")
+        self.assertEqual(pack.decision_questions, [], "karar sorularının hepsi ithalat vergisi sorusudur")
+        self.assertIsNotNone(pack.export_requirements)
+
+    async def test_import_pack_is_untouched(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+        pack = await self._pack(
+            service,
+            customs_advisor.CustomsInquiry(question="Çin'den ithalat sorusu", origin_country="Çin"),
+        )
+        self.assertIsNone(pack.export_requirements)
+        self.assertIsNotNone(pack.origin_documents)
+
+    async def test_export_prompt_names_the_direction_and_the_data_tier(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+        pack = await self._pack(service, self._inquiry())
+        prompt = customs_advisor._evidence_prompt(pack)
+        self.assertIn("İHRACAT ÖN DEĞERLENDİRME TALEBİ", prompt)
+        self.assertIn("HEDEF ÜLKE VERİ DÜZEYİ", prompt)
+        self.assertNotIn("İTHALAT ÖN DEĞERLENDİRME", prompt)
+
+    async def test_export_requirements_never_call_the_paid_actor(self) -> None:
+        # Ön değerlendirme rotası dakikada 20 istekle açık; aktörü buradan tetiklemek
+        # TARIC bütçesini sınırsız hâle getirirdi.
+        service = customs_advisor.CustomsAdvisor()
+        calls: list[dict] = []
+
+        class _Engine:
+            async def lookup(self, gtip, *, origin="TR", refresh=False, archive_only=False):
+                calls.append({"gtip": gtip, "origin": origin, "archive_only": archive_only})
+                if not archive_only:
+                    raise AssertionError("ön değerlendirme yolundan ücretli sorgu çalıştırılamaz")
+                return SimpleNamespace(status="archive_miss", summary=None, fetched_at=None, warnings=[])
+
+        service.eu_taric_engine = _Engine()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(calls[0]["archive_only"], True)
+        self.assertEqual(calls[0]["origin"], "TR", "AB tarafında partner ülke Türkiye olmalı")
+        self.assertIsNone(requirements.destination_duty)
+        self.assertEqual(requirements.destination.tier, "agreement_only")
+        self.assertEqual(requirements.destination.downgraded_from, "rates")
+        self.assertEqual(requirements.on_demand_lookup["endpoint"], "/api/foreign/eu-taric")
+
+    async def test_archived_eu_row_is_carried_as_verified_duty(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Engine:
+            async def lookup(self, gtip, *, origin="TR", refresh=False, archive_only=False):
+                return SimpleNamespace(
+                    status="ok", summary={"mfn_rate": "12.00 %"}, fetched_at="2026-09-10T00:00:00+00:00", warnings=[]
+                )
+
+        service.eu_taric_engine = _Engine()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(requirements.destination.tier, "rates")
+        self.assertEqual(requirements.destination_duty["mfn_rate"], "12.00 %")
+        duty = next(f for f in requirements.declaration_fields if f.key == "third_country_duty")
+        self.assertEqual(duty.certainty, "verified")
+
+    async def test_engine_failure_degrades_honestly_instead_of_guessing(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Engine:
+            async def lookup(self, *args, **kwargs):
+                raise RuntimeError("ağ yok")
+
+        service.eu_taric_engine = _Engine()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertIsNone(requirements.destination_duty)
+        self.assertIn("ulaşılamadı", requirements.destination.badge_text)
+
+    async def test_export_missing_information_is_direction_aware(self) -> None:
+        missing = customs_advisor._missing_information(self._inquiry())
+        joined = " ".join(missing)
+        self.assertNotIn("KKDF", joined)
+        self.assertIn("Teslim şekli", joined)
+
+    async def test_export_tariff_view_strips_every_turkish_rate(self) -> None:
+        lookup = TariffLookupResult(gtip="610910000011", status="matched", as_of="2026-09-15")
+        view = customs_advisor._export_tariff_view(lookup)
+        self.assertEqual(view.measures, [])
+        self.assertEqual(view.unambiguous_rates, {})
+        self.assertIsNone(view.trade_measures)
+        self.assertIsNone(view.excise_tax)
+        self.assertTrue(any("ithalat vergisi satırları gösterilmez" in note for note in view.warnings))
+
+
 class CustomsAdvisorSafetyTests(unittest.TestCase):
     def test_user_answers_and_textile_context_are_preserved_for_classification(self) -> None:
         answer = ClassificationAnswer(

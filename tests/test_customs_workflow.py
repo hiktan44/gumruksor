@@ -310,3 +310,110 @@ class WorkflowIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExportWorkflowTests(unittest.TestCase):
+    """İhracat akışı: 18 adım, Türk ithalat vergisi adımı yok, gözlemlenemeyen adım 'pending' kalır."""
+
+    def _result(self, **overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "direction": "export",
+            "inquiry": {
+                "direction": "export",
+                "product_description": "Örme pamuklu çocuk pijama takımı",
+                "composition": "%100 pamuk",
+                "candidate_gtip": "610910000011",
+                "tariff_selection_confirmed": True,
+                "exact_gtip_confirmed": True,
+                "destination_country": "Almanya",
+                "origin_country": "Türkiye",
+                "incoterm": "FOB",
+                "payment_method": "Peşin",
+            },
+            "tariff_lookup": {"status": "matched", "matched_gtip_count": 1},
+            "export_requirements": {
+                "destination": {
+                    "country_name": "Almanya",
+                    "recognised": True,
+                    "tier": "rates",
+                    "badge_text": "Hedef ülke vergi verisi: AB TARIC arşivinden okunur.",
+                    "agreement": "Türkiye – AB Gümrük Birliği",
+                },
+                "proof_documents": [{"name": "A.TR Dolaşım Belgesi"}],
+                "market_hints": [{"title": "Tekstil elyaf etiketleme"}],
+            },
+            "expert_review_packet": {"risk_level": "moderate", "escalation_required": False},
+        }
+        base.update(overrides)
+        return base
+
+    def test_export_produces_its_own_step_list(self) -> None:
+        steps = build_workflow(self._result())
+        ids = [step.id for step in steps]
+        self.assertEqual(len(ids), 18)
+        self.assertEqual([step.order for step in steps], list(range(1, 19)))
+        self.assertEqual(ids[:4], ["product_definition", "attribute_confirmation", "candidate_gtip", "gtip12_selection"])
+        self.assertEqual(ids[-1], "expert_handoff")
+
+    def test_no_turkish_import_levy_step_appears(self) -> None:
+        # İthalat vergisi adımlarının ihracat dosyasına sızması hem yanlış hem tehlikelidir.
+        ids = {step.id for step in build_workflow(self._result())}
+        for levy in ("customs_duty", "additional_duty", "financial_liability", "vat", "kkdf", "sct",
+                     "anti_dumping", "safeguard_quota", "surveillance", "tareks", "pre_declaration_payments"):
+            self.assertNotIn(levy, ids)
+
+    def test_steps_we_cannot_observe_stay_pending_and_never_not_applicable(self) -> None:
+        steps = {step.id: step for step in build_workflow(self._result())}
+        for step_id in ("exporter_registration", "export_prohibitions", "dual_use_control", "vat_exemption_refund"):
+            self.assertEqual(steps[step_id].status, "pending", step_id)
+            self.assertNotEqual(steps[step_id].status, "not_applicable", step_id)
+
+    def test_missing_destination_blocks_the_dependent_steps(self) -> None:
+        result = self._result()
+        result["inquiry"]["destination_country"] = ""
+        result["export_requirements"] = {"destination": {"recognised": False, "tier": "none", "badge_text": "yok"}}
+        steps = {step.id: step for step in build_workflow(result)}
+        self.assertEqual(steps["destination_country"].status, "blocked")
+        self.assertEqual(steps["destination_tariff"].status, "blocked")
+        self.assertEqual(steps["preferential_origin_proof_export"].status, "blocked")
+
+    def test_tier_without_rate_data_carries_the_sentence_and_no_digit(self) -> None:
+        result = self._result()
+        result["export_requirements"]["destination"].update(
+            {"tier": "agreement_only", "badge_text": "Bu ülke için vergi oranı verimiz yok."}
+        )
+        step = next(s for s in build_workflow(result) if s.id == "destination_tariff")
+        self.assertEqual(step.status, "pending")
+        self.assertEqual(step.summary, "Bu ülke için vergi oranı verimiz yok.")
+        self.assertFalse(any(ch.isdigit() for ch in step.summary), "oran verisi yokken özette rakam olmamalı")
+
+    def test_verified_duty_marks_the_tariff_step_done(self) -> None:
+        result = self._result()
+        result["export_requirements"]["destination_duty"] = {"mfn_rate": "12.00 %"}
+        result["export_requirements"]["duty_source"] = {"retrieved_at": "2026-09-01"}
+        step = next(s for s in build_workflow(result) if s.id == "destination_tariff")
+        self.assertEqual(step.status, "done")
+        self.assertIn("2026-09-01", step.summary)
+
+    def test_declaration_step_is_blocked_without_twelve_digits(self) -> None:
+        result = self._result()
+        result["inquiry"]["exact_gtip_confirmed"] = False
+        step = next(s for s in build_workflow(result) if s.id == "export_declaration")
+        self.assertEqual(step.status, "blocked")
+        self.assertIn("12 haneli", step.summary)
+
+    def test_summary_reports_the_export_version(self) -> None:
+        steps = build_workflow(self._result())
+        self.assertEqual(workflow_summary(steps, direction="export")["version"], "tr-export-workflow-v1")
+        self.assertEqual(workflow_summary(steps)["version"], WORKFLOW_VERSION)
+
+    def test_import_workflow_is_unchanged_by_the_export_dispatch(self) -> None:
+        # Gerileme kilidi: yön verilmeyen sonuç aynı ithalat akışını üretmeye devam eder.
+        result = self._result()
+        result.pop("direction")
+        result["inquiry"]["direction"] = "import"
+        result["inquiry"]["destination_country"] = None
+        steps = build_workflow(result)
+        self.assertEqual(len(steps), 24)
+        self.assertEqual(steps[0].id, "product_definition")
+        self.assertEqual(steps[-1].id, "expert_handoff")
