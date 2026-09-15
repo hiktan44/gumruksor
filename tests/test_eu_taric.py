@@ -298,7 +298,8 @@ class FillTests(unittest.TestCase):
 
     def _engine(self, *, codes=("610910001000", "851713000000"), origins="TR,CN", budget=10.0,
                 batch=10, items=None, status=200, fill_enabled=True,
-                max_chunk_size=et.EU_TARIC_MAX_CODES, chunk_recover_rounds=5) -> et.EuTaricEngine:
+                max_chunk_size=et.EU_TARIC_MAX_CODES, chunk_recover_rounds=5,
+                concurrency=et.EU_TARIC_CONCURRENCY) -> et.EuTaricEngine:
         client = httpx.AsyncClient(transport=_transport(self.calls, status=status, items=items))
         engine = et.EuTaricEngine(
             self._tmp.name,
@@ -316,6 +317,7 @@ class FillTests(unittest.TestCase):
             failed_retry_days=7,
             max_chunk_size=max_chunk_size,
             chunk_recover_rounds=chunk_recover_rounds,
+            concurrency=concurrency,
         )
         self.addCleanup(lambda: asyncio.run(engine.close()))
         return engine
@@ -353,7 +355,9 @@ class FillTests(unittest.TestCase):
 
     def test_budget_cap_stops_the_fill(self):
         # Tavan tek sorguya yeter: ikinci çift bu ay hiç denenmez.
-        engine = self._engine(codes=("610910001000", "851713000000"), origins="TR", budget=0.015, batch=10)
+        # İki çift AYNI koddan (iki menşe) üretiliyor: sahte aktör yalnız bu koda veri
+        # döndürdüğü için her iki çift de ücretlenir ve test kuyruk sırasından bağımsız olur.
+        engine = self._engine(codes=("610910001000",), origins="TR,CN", budget=0.015, batch=10)
         first = asyncio.run(engine.fill_once())
         self.assertEqual(first["requested"], 1)
         second = asyncio.run(engine.fill_once())
@@ -573,6 +577,76 @@ class FillTests(unittest.TestCase):
         self._age_rows(engine, 6)  # 7 günlük pencere dolmadı
         self.assertEqual(asyncio.run(engine.fill_once())["status"], "complete")
         self.assertEqual(len(self.calls), calls)
+
+    def _slow_picky_transport(self, bad: set[str], state: dict) -> httpx.MockTransport:
+        """Aktör taklidi: eş zamanlı kaç çağrının havada olduğunu sayar."""
+        async def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            codes = body["goodsCodes"]
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+            await asyncio.sleep(0.02)
+            state["active"] -= 1
+            self.calls.append({"body": body})
+            if any(code in bad for code in codes):
+                return httpx.Response(400, json={"error": {"message": "Unknown goods code"}})
+            return httpx.Response(200, json=[_item(code) for code in codes])
+
+        return httpx.MockTransport(handler)
+
+    def test_rescue_runs_concurrently_so_one_bad_chunk_cannot_stall_the_fill(self):
+        """Canlıda görülen takılmanın gerileme testi.
+
+        Gruptaki tek bir kötü kod tüm grubu 400'e düşürüyor ve kodlar tek tek yeniden
+        deneniyor. Bu SIRALI yapıldığında 20 kodluk bir grup 20-30 dakika sürüyor, tur
+        bitene kadar hiçbir şey kaydedilmiyor ve kuyruk bir fasıla takılınca dolum
+        tamamen duruyordu. Kurtarma artık eş zamanlı çalışmalı.
+        """
+        codes = [f"61091000{index:02d}00" for index in range(8)]
+        state = {"active": 0, "peak": 0}
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=8)
+        engine._http = httpx.AsyncClient(transport=self._slow_picky_transport({"6109100003"}, state))
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["fetched"], 7, "kötü kod dışındaki her kod kurtarılmalı")
+        self.assertEqual(report["failed"], 1)
+        self.assertGreater(state["peak"], 1, "kurtarma sırayla değil, eş zamanlı çalışmalı")
+        self.assertLessEqual(state["peak"], engine.concurrency)
+
+    def test_concurrency_one_restores_the_strictly_sequential_behaviour(self):
+        codes = [f"61091000{index:02d}00" for index in range(5)]
+        state = {"active": 0, "peak": 0}
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=5, concurrency=1)
+        engine._http = httpx.AsyncClient(transport=self._slow_picky_transport({"6109100002"}, state))
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["fetched"], 4)
+        self.assertEqual(state["peak"], 1, "es zamanlilik 1 iken cagrilar sirali kalmali")
+
+    def test_queue_is_spread_across_chapters_so_one_bad_block_cannot_monopolise_it(self):
+        """Katalog sırasında gezilirse tek bir bozuk fasıl arkasındaki her şeyi kilitler."""
+        codes = [f"{chapter:02d}0910{index:02d}0000"
+                 for chapter in (4, 61, 85) for index in range(10)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=6)
+        queue, _, _, _ = engine._queue(engine.candidates(), 6)
+        chapters = {code[:2] for code, _ in queue}
+        self.assertGreater(len(chapters), 1, "ilk parti tek bir fasıldan gelmemeli")
+
+    def test_queue_order_is_stable_across_runs(self):
+        # Dağıtım kararlı bir özete dayanır; rastgelelik yok, aynı katalog aynı sırayı verir.
+        engine = self._engine(codes=tuple(f"61091000{i:02d}00" for i in range(12)), origins="TR")
+        first = engine._queue(engine.candidates())[0]
+        second = engine._queue(engine.candidates())[0]
+        self.assertEqual(first, second)
+
+    def test_attempt_counts_report_the_status_breakdown(self):
+        codes = [f"61091000{index:02d}00" for index in range(3)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=3)
+        engine._http = httpx.AsyncClient(transport=self._picky_transport({"6109100001"}))
+        asyncio.run(engine.fill_once())
+        counts = engine.attempt_counts()
+        self.assertEqual(counts.get("ok"), 2)
+        self.assertEqual(counts.get("actor_failed"), 1)
+        self.assertEqual(engine.fill_plan()["attempts"], counts)
+        self.assertEqual(engine.fill_plan()["concurrency"], engine.concurrency)
 
     def _timeout_transport(self, fail_when_larger_than: int) -> httpx.MockTransport:
         """Aktör taklidi: gruptaki kod sayısı eşiği aşarsa yanıt gelmez (zaman aşımı)."""

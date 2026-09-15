@@ -27,6 +27,7 @@ nihai kullanıma bağlıdır. Bu yüzden sonuç ayrı bir karşılaştırma blo�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -103,6 +104,12 @@ EU_TARIC_CHUNK_RECOVER_ROUNDS = max(1, _env_int("EU_TARIC_CHUNK_RECOVER_ROUNDS",
 # Ardışık aktör çağrıları arasında bekleme (``UK_MEASURES_DELAY_SECONDS`` deseni): kaynağın
 # eşzamanlılık/kaynak sınırlarına toptan 400 ile takılmamak için.
 EU_TARIC_FILL_DELAY_SECONDS = max(0.0, _env_float("EU_TARIC_FILL_DELAY_SECONDS", 3.0))
+# Es zamanli aktor cagrisi sayisi. Bugune kadar TEK bir kilit butun cagrilari siraya
+# diziyordu; bir grup 400 alip kod kod yeniden denendiginde 20 kod ardi ardina calisiyor
+# ve tur 20-30 dakika suruyordu (sayaclar tur bitene kadar hic kipirdamiyor). Aktor sonuc
+# basina ucretlendirildigi icin es zamanlilik MALIYETI DEGISTIRMEZ, yalnizca duvar saatini
+# kisaltir. 1 yazilirsa bugunku birebir sirali davranisa donulur.
+EU_TARIC_CONCURRENCY = max(1, min(_env_int("EU_TARIC_CONCURRENCY", 3), 8))
 
 _FILL_LEVELS: dict[str, int] = {"hs6": 6, "hs8": 8, "cn8": 8, "hs10": 10, "taric10": 10}
 
@@ -404,6 +411,7 @@ class EuTaricEngine:
         fill_delay_seconds: float = EU_TARIC_FILL_DELAY_SECONDS,
         max_chunk_size: int = EU_TARIC_MAX_CODES,
         chunk_recover_rounds: int = EU_TARIC_CHUNK_RECOVER_ROUNDS,
+        concurrency: int = EU_TARIC_CONCURRENCY,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
         root.mkdir(parents=True, exist_ok=True)
@@ -419,7 +427,9 @@ class EuTaricEngine:
             logger.warning("APIFY_TOKEN başlık olarak gönderilemeyecek karakterler içeriyor; devre dışı bırakıldı.")
         self.enabled = EU_TARIC_ENABLED if enabled is None else enabled
         self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(EU_TARIC_TIMEOUT, connect=15.0))
-        self._lock = asyncio.Lock()
+        # Semafor (eski asyncio.Lock yerine): kapasite 1 iken davranis birebir aynidir.
+        self.concurrency = max(1, min(int(concurrency or 1), 8))
+        self._lock = asyncio.Semaphore(self.concurrency)
         self._errors: list[str] = []
         self.code_source = code_source
         self.fill_enabled = EU_TARIC_FILL_ENABLED if fill_enabled is None else bool(fill_enabled)
@@ -741,6 +751,22 @@ class EuTaricEngine:
                 pairs.add((row["goods_code"], row["partner_country"]))
         return pairs
 
+    def attempt_counts(self) -> dict[str, int]:
+        """Cift basina SON denemenin durum dokumu (ucret dogurmaz).
+
+        ``ok`` alindi · ``not_declarable`` AB'de karsiligi yok · ``actor_failed`` aktor
+        o kodda coktu. Grup halinde sorgulamanin hâlâ ise yarayip yaramadigi bu orana
+        bakilarak karara baglanir; tahmin edilmez.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS total FROM ("
+                "  SELECT goods_code, partner_country, status, MAX(attempted_at)"
+                "  FROM fill_attempts GROUP BY goods_code, partner_country"
+                ") GROUP BY status",
+            ).fetchall()
+        return {str(row["status"]): int(row["total"]) for row in rows}
+
     def _fresh_pairs(self) -> set[tuple[str, str]]:
         """Arşivde tazeliği sürenler: hangi ay alınmış olursa olsun yeniden ücret ödenmez."""
         cutoff = self._cutoff(self.refresh_days)
@@ -777,6 +803,11 @@ class EuTaricEngine:
                     skipped += 1
                     continue
                 (due if pair in stored else never).append(pair)
+        # Kuyruk katalog sirasinda gezilirse tek bir kotu fasil (orn. 04 peynir kodlari)
+        # arkasindaki her seyi kilitler. Kodun kararli ozetine gore siralamak isi butun
+        # kataloğa yayar: bozuk bir bolge yalniz kendi payi kadar yavaslatir ve arsiv
+        # bastan itibaren genis kapsamli olur. Rastgelelik yok, tohum sabit.
+        never.sort(key=lambda pair: hashlib.blake2s(pair[0].encode("ascii"), digest_size=8).digest())
         queue = never + due
         if limit is not None:
             queue = queue[: max(0, int(limit))]
@@ -834,22 +865,46 @@ class EuTaricEngine:
         except (SecurityViolation, RuntimeError, ValueError) as exc:
             self._fill_errors.append(f"{_now()}: {str(exc)[:200]}")
             return [], {}, set(chunk)
+        # Kod kod kurtarma ES ZAMANLI calisir. Sirali hâlinde 20 kodluk bir grup
+        # 20-30 dakika suruyordu ve tur bitene kadar hicbir sey kaydedilmiyordu; kuyruk
+        # bir fasila takilinca butun dolum duruyordu. Es zamanlilik ucreti degistirmez.
+        results = await asyncio.gather(
+            *(self._rescue_one(code, origin) for code in chunk), return_exceptions=False
+        )
         items: list[dict[str, Any]] = []
         broken: dict[str, str] = {}
         transient: set[str] = set()
-        for code in chunk:
-            await asyncio.sleep(self.fill_delay_seconds)
-            try:
-                async with self._lock:
-                    items.extend(await self._run_actor([code], origin))
-            except (SecurityViolation, RuntimeError, ValueError) as exc:
-                message = str(exc)[:160]
-                self._fill_errors.append(f"{_now()}: {code}: {message}")
-                if isinstance(exc, ActorRequestError) and exc.status_code == 400:
-                    broken[code] = message
-                else:
-                    transient.add(code)
+        for code, found, reason, is_broken in results:
+            items.extend(found)
+            if reason is None:
+                continue
+            if is_broken:
+                broken[code] = reason
+            else:
+                transient.add(code)
         return items, broken, transient
+
+    async def _rescue_one(
+        self, code: str, origin: str
+    ) -> tuple[str, list[dict[str, Any]], str | None, bool]:
+        """Tek kodu kendi basina dener. Döner: (kod, sonuçlar, hata sebebi | None, kalıcı mı).
+
+        ``400`` kodun kendisinin sorunlu oldugunu gosterir ve kayda gecer; digerleri
+        gecicidir ve hic kaydedilmez, bir sonraki turda yeniden denenir.
+        """
+        try:
+            # Gecikme SEMAFORUN ICINDE: disarida olsaydi butun kurtarma coroutine'leri
+            # ayni anda uyanip sirayla kilitsiz ard arda cagri yapardi ve kaynagi koruyan
+            # 3 saniyelik aralik tamamen kaybolurdu. Burada her slot kendi cagrisindan
+            # once bekler, es zamanlilik yine semaforun kapasitesiyle sinirli kalir.
+            async with self._lock:
+                await asyncio.sleep(self.fill_delay_seconds)
+                return code, await self._run_actor([code], origin), None, False
+        except (SecurityViolation, RuntimeError, ValueError) as exc:
+            message = str(exc)[:160]
+            self._fill_errors.append(f"{_now()}: {code}: {message}")
+            permanent = isinstance(exc, ActorRequestError) and exc.status_code == 400
+            return code, [], message, permanent
 
     def fill_plan(self) -> dict[str, Any]:
         """Dolumun mevcut durumu: aday sayısı, kalan iş ve tahmini maliyet (ücret doğurmaz)."""
@@ -873,6 +928,8 @@ class EuTaricEngine:
             "not_declarable_retry_days": self.not_declarable_retry_days,
             "failed_retry_days": self.failed_retry_days,
             "batch": self.fill_batch,
+            "concurrency": self.concurrency,
+            "attempts": self.attempt_counts(),
             "chunk_size": self._chunk_size,
             "max_chunk_size": self.max_chunk_size,
             "estimated_total_usd": round(total * self.unit_cost_usd, 2),
