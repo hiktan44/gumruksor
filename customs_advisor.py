@@ -22,7 +22,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -676,9 +676,20 @@ _GEMINI_RETRY_DELAYS_SECONDS = (1.5, 3.0, 6.0)
 # Gemini Flash cok kipli (gorsel + metin); ayni zincir her gorevde kullanilir.
 # "gemini-flash-latest" takma adi Google tarafinda hep en guncel Flash surumune cozulur.
 _GEMINI_DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-flash-latest"]
-# Birincil saglayici secim sirasi (LLM_PRIMARY_PROVIDER yoksa): once dogrudan
-# Google Gemini, sonra Z.ai, en son OpenRouter.
-_LLM_PROVIDERS = ("gemini", "zai", "openrouter")
+# kie.ai: tek catida cok saglayicili, OpenAI uyumlu API. Onemli fark: ortak bir
+# /chat/completions yolu YOKTUR; her model kendi yolunda sunulur:
+#   https://api.kie.ai/{model}/v1/chat/completions
+# Bu yuzden URL model basina uretilir (Gemini dalindaki gibi), govde OpenAI biciminde kalir.
+_KIE_BASE_URL = "https://api.kie.ai"
+_KIE_HOST = "api.kie.ai"
+_KIE_DEFAULT_MODELS = {
+    # Gorsel: kie tarafinda OpenAI uyumlu Gemini Flash surumleri cok kipli ve ucuzdur.
+    "OPENROUTER_VISION_MODELS": ["gemini-3-8-flash-openai", "gpt-5-2"],
+    "OPENROUTER_CUSTOMS_MODELS": ["gemini-3-8-flash-openai", "gpt-5-2"],
+}
+# Birincil saglayici secim sirasi (LLM_PRIMARY_PROVIDER yoksa): once dogrudan Google
+# Gemini, sonra kie.ai, sonra Z.ai, en son OpenRouter.
+_LLM_PROVIDERS = ("gemini", "kie", "zai", "openrouter")
 # GLM-5.x always thinks; reasoning tokens count against max_tokens.
 _ZAI_THINKING_TOKEN_ALLOWANCE = 4000
 _ZAI_RETRY_DELAYS_SECONDS = (3.0, 6.0)
@@ -702,7 +713,12 @@ _ZAI_VISION_MODEL_RE = re.compile(r"^glm-\d+(?:\.\d+)?v(?:[-_.]|$)")
 
 
 def _provider_api_key(provider: str) -> str:
-    names = {"zai": "ZAI_API_KEY", "gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+    names = {
+        "zai": "ZAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "kie": "KIE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
     return os.environ.get(names.get(provider, ""), "").strip() if provider in names else ""
 
 
@@ -721,7 +737,12 @@ def _llm_base_url() -> str:
     configured = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
     if configured:
         return configured
-    urls = {"zai": _ZAI_BASE_URL, "gemini": _GEMINI_BASE_URL, "openrouter": _OPENROUTER_BASE_URL}
+    urls = {
+        "zai": _ZAI_BASE_URL,
+        "gemini": _GEMINI_BASE_URL,
+        "kie": _KIE_BASE_URL,
+        "openrouter": _OPENROUTER_BASE_URL,
+    }
     override = _primary_provider_override()
     if override:
         return urls[override]
@@ -731,12 +752,14 @@ def _llm_base_url() -> str:
     return _OPENROUTER_BASE_URL
 
 
-def _llm_provider(base_url: str | None = None) -> Literal["openrouter", "zai", "gemini"]:
+def _llm_provider(base_url: str | None = None) -> Literal["openrouter", "zai", "gemini", "kie"]:
     host = (urlsplit(base_url or _llm_base_url()).hostname or "").lower().rstrip(".")
     if any(host == suffix or host.endswith(f".{suffix}") for suffix in _ZAI_HOST_SUFFIXES):
         return "zai"
     if host == _GEMINI_HOST:
         return "gemini"
+    if host == _KIE_HOST:
+        return "kie"
     return "openrouter"
 
 
@@ -826,7 +849,22 @@ def _openrouter_models(environment_name: str) -> list[str]:
         raise ValueError("OpenRouter model zinciri 1 ile 8 model içermelidir.")
     if _llm_provider() == "zai":
         return _zai_models(environment_name, models if configured else None)
+    if _llm_provider() == "kie":
+        return _kie_models(environment_name, models if configured else None)
     return models
+
+
+def _kie_models(environment_name: str, configured_models: list[str] | None = None) -> list[str]:
+    """kie.ai model zinciri: yapılandırılmamışsa bu sağlayıcıya özgü varsayılanlar.
+
+    OpenRouter'ın ``vendor/model`` kimlikleri kie.ai'de geçerli değildir; kie kendi
+    düz kimliklerini kullanır (``gemini-3-8-flash-openai``). Bu yüzden yapılandırma
+    yoksa ortak OpenRouter varsayılanları değil, buradaki liste kullanılır.
+    """
+    if configured_models:
+        return configured_models
+    defaults = _KIE_DEFAULT_MODELS.get(environment_name) or _KIE_DEFAULT_MODELS["OPENROUTER_CUSTOMS_MODELS"]
+    return list(defaults)
 
 
 def _zai_models(environment_name: str, configured_models: list[str] | None = None) -> list[str]:
@@ -911,17 +949,19 @@ def _openrouter_payload(
     # Strip credentials and personal contact data before any provider sees it.
     safe_messages = redact_data(messages, contact_data=True)
     strict_schema = _strict_json_schema(response_schema)
-    if provider == "zai":
-        # Z.ai takes JSON-object mode; the schema is also stated in the system
-        # message and the reply is validated with Pydantic. Thinking tokens count
-        # against max_tokens. (Gemini uses its native API: see _gemini_native_payload.)
+    if provider in {"zai", "kie"}:
+        # Z.ai ve kie.ai JSON-nesne kipini alir; sema ayrica sistem mesajinda belirtilir
+        # ve yanit Pydantic ile dogrulanir. Bu saglayicilarda "json_schema" kipi ve
+        # OpenRouter'a ozgu "provider" blogu desteklenmez.
+        # (Gemini kendi yerel API'sini kullanir: bkz. _gemini_native_payload.)
+        allowance = _ZAI_THINKING_TOKEN_ALLOWANCE if provider == "zai" else 0
         return {
             "models": models,
             "messages": _with_schema_instruction(
                 safe_messages, _schema_instruction(schema_name, strict_schema)
             ),
             "response_format": {"type": "json_object"},
-            "max_tokens": max_tokens + _ZAI_THINKING_TOKEN_ALLOWANCE,
+            "max_tokens": max_tokens + allowance,
             "stream": False,
         }
     return {
@@ -1012,6 +1052,7 @@ def _llm_primary_budget(total: float) -> float:
 def _fallback_enabled(provider: str) -> bool:
     name = {
         "gemini": "LLM_FALLBACK_TO_GEMINI",
+        "kie": "LLM_FALLBACK_TO_KIE",
         "zai": "LLM_FALLBACK_TO_ZAI",
         "openrouter": "LLM_FALLBACK_TO_OPENROUTER",
     }.get(provider, "")
@@ -1029,11 +1070,11 @@ def _openrouter_fallback_enabled() -> bool:
 def _fallback_providers(primary: str, *, vision: bool = False) -> list[tuple[str, str, str, list[str]]]:
     """(provider, base_url, api_key, models) chains tried after the primary provider fails.
 
-    Order: Gemini, Z.ai, OpenRouter (minus the primary). Each needs its key and
-    can be switched off with LLM_FALLBACK_TO_<PROVIDER>=0.
+    Order: Gemini, kie.ai, Z.ai, OpenRouter (minus the primary). Each needs its key
+    and can be switched off with LLM_FALLBACK_TO_<PROVIDER>=0.
     """
     chains: list[tuple[str, str, str, list[str]]] = []
-    for provider in ("gemini", "zai", "openrouter"):
+    for provider in ("gemini", "kie", "zai", "openrouter"):
         if provider == primary or not _fallback_enabled(provider):
             continue
         key = _provider_api_key(provider)
@@ -1041,6 +1082,9 @@ def _fallback_providers(primary: str, *, vision: bool = False) -> list[tuple[str
             continue
         if provider == "gemini":
             chains.append((provider, _GEMINI_BASE_URL, key, _gemini_models()))
+        elif provider == "kie":
+            env_name = "OPENROUTER_VISION_MODELS" if vision else "OPENROUTER_CUSTOMS_MODELS"
+            chains.append((provider, _KIE_BASE_URL, key, _kie_models(env_name)))
         elif provider == "zai":
             env_name = "OPENROUTER_VISION_MODELS" if vision else "OPENROUTER_CUSTOMS_MODELS"
             chains.append((provider, _ZAI_BASE_URL, key, _zai_models(env_name)))
@@ -1184,6 +1228,15 @@ def _llm_semaphore() -> asyncio.Semaphore:
 
 async def _retry_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
+def _kie_completions_url(base_url: str, model: str) -> str:
+    """``https://api.kie.ai/{model}/v1/chat/completions`` — kie.ai model başına yol kullanır."""
+    root = (base_url or _KIE_BASE_URL).rstrip("/")
+    for suffix in ("/v1/chat/completions", "/chat/completions", "/v1"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)].rstrip("/")
+    return f"{root}/{quote(model, safe='')}/v1/chat/completions"
 
 
 def _gemini_generate_url(base_url: str, model: str) -> str:
@@ -1416,7 +1469,9 @@ async def _run_model_chain(
 ) -> tuple[str, str]:
     """Try each model in order until one returns usable content or the deadline passes."""
     gemini = provider == "gemini"
-    url = f"{base_url}/chat/completions"
+    kie = provider == "kie"
+    # kie.ai'de ortak bir /chat/completions yolu yoktur; URL model başına üretilir.
+    url = f"{base_url}/chat/completions" if not kie else base_url
     validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
     if gemini:
         gemini_payload = _gemini_native_payload(
@@ -1449,7 +1504,15 @@ async def _run_model_chain(
                 request = _post_gemini_generate(client, url=model_url, api_key=api_key, payload=sent_payload)
             else:
                 sent_payload = _model_payload(base_payload, model, provider)
-                request = _post_chat_completion(client, url=url, headers=headers, payload=sent_payload, provider=provider)
+                model_endpoint = _kie_completions_url(base_url, model) if kie else url
+                if kie:
+                    validate_outbound_url(
+                        model_endpoint,
+                        allowed_hosts={(urlsplit(model_endpoint).hostname or "").lower()},
+                    )
+                request = _post_chat_completion(
+                    client, url=model_endpoint, headers=headers, payload=sent_payload, provider=provider
+                )
             try:
                 response = await asyncio.wait_for(request, timeout=remaining)
             except asyncio.TimeoutError:
@@ -1630,6 +1693,10 @@ async def _diagnose_one(
         {"role": "user", "content": user_content},
     ]
     gemini = provider == "gemini"
+    if provider == "kie":
+        # kie.ai'de ortak /chat/completions yolu yok; canli cagrilarla ayni URL uretilir.
+        url = _kie_completions_url(base_url, model)
+        validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
     if gemini:
         url = _gemini_generate_url(base_url, model)
         validate_outbound_url(url, allowed_hosts={(urlsplit(url).hostname or "").lower()})
