@@ -1133,6 +1133,59 @@ class ZaiChatTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["glm-5.3", "glm-5.3-flash"])
         sleep_mock.assert_not_awaited()
 
+    async def test_zai_subscription_refusal_is_not_retried(self) -> None:
+        """Canlida gorulen hata: 429 + "aboneliginiz bu modeli icermiyor".
+
+        Kod kara liste kullanirken (1113 degilse dene) bu kalici red gecici saniliyor
+        ve 3 + 6 saniye bosuna bekleniyordu. Beyaz listeyle dogrudan sonraki modele
+        dusmeli: Gemini coktugunde yedege gecis 9 saniye erken baslar.
+        """
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            model = json.loads(request.content)["model"]
+            calls.append(model)
+            if model == "glm-5v-turbo":
+                return httpx.Response(
+                    429,
+                    json={"error": {"code": "1211", "message":
+                                    "Your current subscription plan does not yet include access to GLM-5V-Turbo"}},
+                )
+            return httpx.Response(200, json=_chat_response('{"a": 4}', model))
+
+        sleep_mock = AsyncMock()
+        text, model = await self._chat(
+            handler, ["glm-5v-turbo", "glm-4.6v"], _llm_env(ZAI_API_KEY="zai-key"), sleep_mock
+        )
+        self.assertEqual((text, model), ('{"a": 4}', "glm-4.6v"))
+        self.assertEqual(calls, ["glm-5v-turbo", "glm-4.6v"], "kalici red yeniden denenmemeli")
+        sleep_mock.assert_not_awaited()
+
+    async def test_zai_429_without_a_readable_body_is_still_retried(self) -> None:
+        """Kod okunamiyorsa gecici varsayilir: saglayici govde vermemis olabilir."""
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content)["model"])
+            if len(calls) == 1:
+                return httpx.Response(429, text="<html>rate limited</html>")
+            return httpx.Response(200, json=_chat_response('{"a": 5}'))
+
+        sleep_mock = AsyncMock()
+        await self._chat(handler, ["glm-5.3"], _llm_env(ZAI_API_KEY="zai-key"), sleep_mock)
+        self.assertEqual(calls, ["glm-5.3", "glm-5.3"])
+        sleep_mock.assert_awaited_once_with(3.0)
+
+    def test_error_code_reader_tolerates_every_body_shape(self) -> None:
+        read = customs_advisor._zai_error_code
+        self.assertEqual(read(httpx.Response(429, json={"error": {"code": "1302"}})), "1302")
+        self.assertEqual(read(httpx.Response(429, json={"error": {"code": 1302}})), "1302")
+        self.assertEqual(read(httpx.Response(429, json={"code": "1113"})), "1113")
+        self.assertIsNone(read(httpx.Response(429, text="not json")))
+        self.assertIsNone(read(httpx.Response(429, json={"error": {"message": "x"}})))
+        self.assertIsNone(read(httpx.Response(429, json=["liste"])))
+        self.assertIsNone(read(httpx.Response(429, json={"error": {"code": {"nested": 1}}})))
+
     async def test_zai_concurrency_is_capped(self) -> None:
         state = {"active": 0, "peak": 0}
 
@@ -1684,6 +1737,81 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(usage), 2)
         self.assertEqual(usage[0]["operation"], "diagnostic_text")
         self.assertEqual(usage[0]["model"], "gateway-model")
+
+    async def test_every_model_in_a_chain_is_probed_until_one_answers(self) -> None:
+        """Yalniz models[0]'i denemek yaniltir.
+
+        Canli cagri ilk model basarisiz olunca zincirdeki sonrakine duser, dolayisiyla
+        "yedegim var mi" sorusunun cevabi sonraki modellerde saklidir. Canlida gorulen
+        tam senaryo: Gemini calisiyor, tek yedegin ILK gorsel modeli abonelige dahil
+        degil, IKINCISI calisiyor.
+        """
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "generativelanguage.googleapis.com":
+                model = _gemini_model_from_url(request)
+                calls.append(model)
+                return httpx.Response(200, json=_gemini_response('{"ok": true, "seen": "kırmızı"}', model))
+            model = json.loads(request.content)["model"]
+            calls.append(model)
+            if model == "glm-5v-turbo":
+                return httpx.Response(429, json={"error": {"code": "1211", "message": "subscription"}})
+            return httpx.Response(200, json=_chat_response('{"ok": true, "seen": "kırmızı"}', model))
+
+        env = _llm_env(GEMINI_API_KEY="gem-key", ZAI_API_KEY="zai-key")  # gitleaks:allow
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._retry_sleep", new=AsyncMock()):
+            report = await customs_advisor.diagnose_llm_providers(vision=True, timeout_seconds=5)
+        # Birincil ilk modelde basarili: ikinci Gemini modeli bosuna denenmez.
+        self.assertEqual(calls, ["gemini-3.8-flash", "glm-5v-turbo", "glm-4.6v"])
+        zai_checks = [check for check in report["checks"] if check["provider"] == "zai"]
+        self.assertEqual([check["model"] for check in zai_checks], ["glm-5v-turbo", "glm-4.6v"])
+        self.assertFalse(zai_checks[0]["ok"], "basarisiz model de rapora yazilmali")
+        # Yapisal hata kodu rapora dusmeli: bir hatanin gecici mi kalici mi sayildigi
+        # tahminle degil, okunarak bilinsin.
+        self.assertEqual(zai_checks[0]["error_code"], "1211")
+        self.assertFalse(zai_checks[0]["retryable"])
+        self.assertTrue(zai_checks[1]["ok"])
+        self.assertTrue(report["healthy"])
+        self.assertTrue(report["fallback_healthy"], "birincil disinda calisan bir model var")
+
+    async def test_a_working_primary_with_no_working_fallback_is_reported_as_such(self) -> None:
+        """Canlida bugunku durum: Gemini calisiyor, tutacak kimse yok.
+
+        ``healthy`` bunu gizler (birincil calistigi icin true doner); asil soruyu
+        ``fallback_healthy`` cevaplar.
+        """
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "generativelanguage.googleapis.com":
+                model = _gemini_model_from_url(request)
+                return httpx.Response(200, json=_gemini_response('{"ok": true, "seen": "kırmızı"}', model))
+            return httpx.Response(429, json={"error": {"code": "1211", "message": "subscription"}})
+
+        env = _llm_env(GEMINI_API_KEY="gem-key", ZAI_API_KEY="zai-key")  # gitleaks:allow
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._retry_sleep", new=AsyncMock()):
+            report = await customs_advisor.diagnose_llm_providers(vision=True, timeout_seconds=5)
+        self.assertTrue(report["healthy"])
+        self.assertFalse(report["fallback_healthy"])
+        self.assertEqual(report["keys"]["kie"], False)
+
+    async def test_an_error_without_a_code_is_reported_as_having_none(self) -> None:
+        """Kodsuz gövde de bilgidir: o saglayici yapisal kod yayinlamiyor demektir."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, json={"error": {"message": "subscription plan does not include"}})
+
+        env = _llm_env(ZAI_API_KEY="zai-key")  # gitleaks:allow
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ), patch("customs_advisor._retry_sleep", new=AsyncMock()):
+            report = await customs_advisor.diagnose_llm_providers(vision=True, timeout_seconds=5)
+        first = report["checks"][0]
+        self.assertIsNone(first["error_code"])
+        self.assertTrue(first["retryable"], "kod yoksa gecici varsayilir; bu bilinerek secilmis bir varsayim")
+        self.assertFalse(report["fallback_healthy"])
 
     async def test_missing_primary_key_is_reported_without_requests(self) -> None:
         calls: list[str] = []

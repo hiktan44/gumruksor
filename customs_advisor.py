@@ -739,7 +739,12 @@ _LLM_PROVIDERS = ("gemini", "kie", "zai", "openrouter")
 # GLM-5.x always thinks; reasoning tokens count against max_tokens.
 _ZAI_THINKING_TOKEN_ALLOWANCE = 4000
 _ZAI_RETRY_DELAYS_SECONDS = (3.0, 6.0)
-_ZAI_BALANCE_ERROR_CODE = "1113"
+# Yeniden deneme BEYAZ listedir: yalnizca gercekten gecici oldugunu bildigimiz kod
+# tekrar denenir. Kara liste ("1113 degilse dene") bilinmeyen her hatayi gecici
+# sayiyordu; abonelik/yetki reddi boylece 9 saniye bosuna bekletiyordu (3 + 6 sn).
+# Kalici olanlar (asla tekrar denenmez): 1113 bakiye/plan, abonelik ve yetki reddi.
+# Kodsuz duz 429 da gecici sayilir (saglayici govde vermemis olabilir).
+_ZAI_TRANSIENT_ERROR_CODES = frozenset({"1302"})
 # Tek bir HTTP istegi icin ust sinir; asilirsa zincirdeki sonraki modele gecilir.
 _LLM_REQUEST_TIMEOUT_SECONDS = 75.0
 _LLM_CONNECT_TIMEOUT_SECONDS = 15.0
@@ -1425,6 +1430,36 @@ def _gemini_usage(body: dict[str, Any]) -> tuple[int, int, int]:
     return prompt_tok, comp_tok, total_tok
 
 
+def _zai_error_code(response: httpx.Response) -> str | None:
+    """Z.ai hata govdesindeki ``error.code`` degeri; okunamazsa ``None``.
+
+    Ingilizce hata METNINE gore eslesme yapilmaz: saglayici metni degistirdigi gun
+    sessizce bozulur. Yalnizca yapisal kod alani okunur.
+    """
+    try:
+        body = response.json()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    raw = error.get("code") if isinstance(error, dict) else body.get("code")
+    if raw is None or isinstance(raw, (dict, list)):
+        return None
+    code = str(raw).strip()
+    return code or None
+
+
+def _zai_should_retry(response: httpx.Response) -> bool:
+    """429 yanitinda yeniden denenir mi? Yalniz bilinen gecici kod veya kodsuz govde."""
+    if response.status_code != 429:
+        return False
+    code = _zai_error_code(response)
+    if code is None:
+        return True
+    return code in _ZAI_TRANSIENT_ERROR_CODES
+
+
 async def _post_chat_completion(
     client: httpx.AsyncClient,
     *,
@@ -1447,13 +1482,9 @@ async def _post_chat_completion(
             response = await client.post(url, headers=headers, json=payload)
         finally:
             semaphore.release()
-        # 429/1302 is a transient concurrency limit; 1113 (balance/plan) is not
-        # retryable and falls through to the next model. Wait outside the semaphore.
-        if (
-            response.status_code == 429
-            and _ZAI_BALANCE_ERROR_CODE not in response.text
-            and retries < len(_ZAI_RETRY_DELAYS_SECONDS)
-        ):
+        # 1302 gecici eszamanlilik sinirdir; 1113 (bakiye) ve abonelik/yetki reddi
+        # degildir ve dogrudan sonraki modele duser. Bekleme semafor disindadir.
+        if _zai_should_retry(response) and retries < len(_ZAI_RETRY_DELAYS_SECONDS):
             await _retry_sleep(_ZAI_RETRY_DELAYS_SECONDS[retries])
             retries += 1
             continue
@@ -1710,6 +1741,11 @@ _DIAGNOSTIC_SCHEMA: dict[str, Any] = {
 }
 
 
+# Saglayici basina en fazla bu kadar model denenir; zincirler zaten kisa, bu yalniz
+# yanlis yapilandirilmis uzun bir listenin tanilamayi dakikalarca surdurmesini onler.
+_DIAGNOSTIC_MAX_MODELS_PER_PROVIDER = 3
+
+
 async def _diagnose_one(
     *,
     provider: str,
@@ -1780,6 +1816,12 @@ async def _diagnose_one(
     result["status"] = response.status_code
     if not response.is_success:
         result["error"] = f"HTTP {response.status_code} · {_openrouter_error_detail(response)}"
+        # Saglayicinin yapisal hata kodu. Yeniden deneme karari (``_zai_should_retry``)
+        # buna bakar; kodun raporda gorunmesi, bir hatanin gecici mi kalici mi
+        # siniflandirildigini tahmin etmeden okumayi saglar. Kod yoksa alan None kalir
+        # ve bu da bilgidir: o saglayici kod yayinlamiyor demektir.
+        result["error_code"] = _zai_error_code(response)
+        result["retryable"] = _zai_should_retry(response) if provider == "zai" else None
         return result
     try:
         body = response.json()
@@ -1861,17 +1903,28 @@ async def diagnose_llm_providers(*, vision: bool = False, timeout_seconds: float
         if not models:
             report["checks"].append({"provider": provider, "ok": False, "error": "model listesi boş"})
             continue
-        report["checks"].append(
-            await _diagnose_one(
+        # Yalniz models[0] denemek yaniltir: canli cagri ilk model basarisiz olunca
+        # zincirdeki sonrakine duser, dolayisiyla "yedegim var mi" sorusunun cevabi
+        # sonraki modellerde saklidir. Ilk basarili modelden sonrasi atlanir (gereksiz
+        # istek yok), ama basarisiz olan her model rapora yazilir.
+        for model in models[:_DIAGNOSTIC_MAX_MODELS_PER_PROVIDER]:
+            check = await _diagnose_one(
                 provider=provider,
                 base_url=url,
                 api_key=key,
-                model=models[0],
+                model=model,
                 vision=vision,
                 timeout_seconds=timeout_seconds,
             )
-        )
+            report["checks"].append(check)
+            if check.get("ok"):
+                break
     report["healthy"] = any(check.get("ok") for check in report["checks"])
+    # Asil soru bu: birincil coktugunde tutacak biri var mi? Bugune kadar hicbir
+    # yerde yazmiyordu ve "healthy: true" yalnizca birincili anlatiyordu.
+    report["fallback_healthy"] = any(
+        check.get("ok") and check.get("provider") != primary for check in report["checks"]
+    )
     report["recent"] = recent_llm_events()
     return report
 
