@@ -236,7 +236,14 @@ sorgu yok) aşılmamış olmalı ve kod × ülke çifti arşivde **taze** olmama
 `EU_TARIC_FILL_BATCH` kadar çift işler, aktöre tek çağrıda en fazla `EU_TARIC_MAX_CODES` kod
 gönderir, sonucu arşive yazar ve harcamayı `fill_spend` tablosuna işler. Aktör bir grubu
 `400` ile reddederse (grupta tek bir geçersiz kod bütün grubu düşürebiliyor) kodlar **tek tek**
-yeniden denenir ve geçerli olanlar kurtarılır. Kendi başına çalıştırılıp yine `400` alan kod
+yeniden denenir ve geçerli olanlar kurtarılır. Bu kurtarma **eş zamanlı** çalışır
+(`EU_TARIC_CONCURRENCY`, varsayılan 3, tavan 8): sıralı hâlinde 20 kodluk bir grup 20-30 dakika
+sürüyor, tur bitene kadar hiçbir şey kaydedilmiyor ve kuyruk bozuk bir fasıla takılınca dolum
+tamamen duruyordu (canlıda 45 dakika boyunca tek kod eklenmediği ölçüldü). Aktör **sonuç
+başına** ücretlendirdiği için eş zamanlılık maliyeti değiştirmez, yalnız duvar saatini kısaltır;
+`1` yazılırsa birebir eski sıralı davranışa dönülür. Kaynağı korumak için
+`EU_TARIC_FILL_DELAY_SECONDS` beklemesi semaforun **içinde** yapılır, böylece eş zamanlılık
+artsa da çağrılar arası aralık korunur. Kendi başına çalıştırılıp yine `400` alan kod
 `actor_failed` olarak kaydedilir ve `EU_TARIC_FAILED_RETRY_DAYS` (varsayılan 7 gün) boyunca
 yeniden denenmez — aktör bazı kodlarda çöküyor (`Actor run did not succeed … status: FAILED`)
 ve kaydedilmezse bu kodlar her turda yeniden denenip kuyruğu tıkar; pencere kısa tutulur çünkü
@@ -244,13 +251,22 @@ ve kaydedilmezse bu kodlar her turda yeniden denenip kuyruğu tıkar; pencere k�
 doğurmaz. `500` gibi geçici hatalarda tek tek deneme **yapılmaz** ve hiçbir şey kaydedilmez;
 bütün grup bir sonraki turda yeniden denenir.
 
+**Kuyruk katalog sırasında gezilmez.** Sıralı gezilseydi tek bir bozuk fasıl (canlıda 04 —
+peynir kodları) arkasındaki her şeyi kilitlerdi. Hiç alınmamış çiftler kodun kararlı
+BLAKE2s özetine göre sıralanır: bozuk bir bölge yalnız kendi payı kadar yavaşlatır ve arşiv
+baştan itibaren bütün fasıllara yayılır, yani kullanıcı sorgularının isabet ihtimali erken
+yükselir. Rastgelelik yoktur; aynı katalog her zaman aynı sırayı verir.
+
 **Zaman aşımı ayrı ele alınır.** `run-sync` çağrısında yanıt hiç gelmezse (zaman aşımı,
 bağlantı kopması) aktör sunucuda çalışmaya devam edip ücreti yazmış olabilir; bu yüzden grup
 aynı turda **yeniden denenmez** ve grup boyutu (`chunk_size`) yarıya indirilir. Bir sonraki
 tur daha küçük gruplarla dener, yani `EU_TARIC_MAX_CODES` fazla yüksek verilmişse sistem
 kendi kendini düzeltir. Art arda `EU_TARIC_CHUNK_RECOVER_ROUNDS` (varsayılan 5) hatasız turun
 ardından boyut kademeli olarak (×2, tavan `EU_TARIC_MAX_CODES`) geri büyür. Güncel değer
-`fill.chunk_size` alanında görünür. Çağrılar
+`fill.chunk_size` alanında, eş zamanlılık `fill.concurrency` alanında görünür. `fill.attempts`
+çift başına **son** denemenin durum dökümünü verir (`ok` / `not_declarable` / `actor_failed`);
+grup hâlinde sorgulamanın hâlâ işe yarayıp yaramadığı bu orana bakılarak karara bağlanır,
+tahmin edilmez. Çağrılar
 arasında `EU_TARIC_FILL_DELAY_SECONDS` kadar beklenir (BK arşivindeki
 `UK_MEASURES_DELAY_SECONDS` deseni). Aktörün hata metni — jeton maskelenerek — dolum
 hatalarına yazılır, böylece reddin sebebi görülebilir. AB'de beyana elverişli
