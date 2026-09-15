@@ -181,6 +181,18 @@ def _rate_limit_response(
     )
 
 
+def _quota_error(exc: QuotaExceeded) -> JSONResponse:
+    """429 gövdesi: sebep kodu + hangi işlem + satın alınabilir üst paketler."""
+    body: dict[str, Any] = {"error": str(exc), "code": "quota_exceeded"}
+    operation = getattr(exc, "operation", None)
+    if operation:
+        body["operation"] = operation
+    upgrade = getattr(exc, "upgrade", None)
+    if upgrade:
+        body["upgrade"] = upgrade
+    return JSONResponse(body, status_code=429)
+
+
 def _security_response(exc: SecurityViolation) -> JSONResponse:
     return JSONResponse({"error": str(exc), "code": exc.code}, status_code=403)
 
@@ -306,9 +318,15 @@ def _enforce_quota(request: Request, operation: str) -> dict[str, Any] | None:
         if google_auth.configured:
             raise AuthError("Bu analiz için Google hesabınızla giriş yapın.")
         return None
-    quota = account_service.account(user)["quotas"][operation]
+    account = account_service.account(user)
+    quota = account["quotas"][operation]
     if quota["remaining"] is not None and quota["remaining"] <= 0:
-        raise QuotaExceeded(f"Aylık {operation} kotanız doldu. Hesabım alanından paketinizi yükseltebilirsiniz.")
+        plan_code = str((account.get("plan") or {}).get("code") or "starter")
+        raise QuotaExceeded(
+            f"Aylık {operation} kotanız doldu. Hesabım alanından paketinizi yükseltebilirsiniz.",
+            operation=operation,
+            upgrade=account_service.upgrade_options(plan_code, operation),
+        )
     return user
 
 
@@ -799,7 +817,7 @@ async def web_create_dossier(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     except (AccountError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
 
@@ -1490,7 +1508,7 @@ async def web_customs_describe_image(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     MAX_IMAGE_REQUEST_BYTES = 12 * 1024 * 1024
     try:
         content_length = int(request.headers.get("content-length", "0") or 0)
@@ -1849,7 +1867,7 @@ async def web_customs_ingest_source(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=503)
     except ValidationError:
@@ -2004,7 +2022,7 @@ async def web_customs_ingest_shipping_document(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     try:
         body = await _read_json_body_limited(request, 14 * 1024 * 1024)
         if not body.get("document_data_url"):
@@ -2056,7 +2074,7 @@ async def web_customs_classify_product(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     except ValidationError as exc:
         message = exc.errors(include_url=False)[0].get("msg", "Ürün evsaflarını kontrol edin.")
         return JSONResponse({"error": f"Evsaflar doğrulanamadı: {message}"}, status_code=422)
@@ -2087,7 +2105,7 @@ async def web_customs_precheck(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     try:
         content_length = int(request.headers.get("content-length", "0") or 0)
     except ValueError:
@@ -2220,7 +2238,7 @@ async def web_customs_assistant(request: Request):
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
-        return JSONResponse({"error": str(exc), "code": "quota_exceeded"}, status_code=429)
+        return _quota_error(exc)
     except ValidationError as exc:
         message = exc.errors(include_url=False)[0].get("msg", "Soruyu kontrol edin.")
         return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
