@@ -343,6 +343,10 @@ class AccountService:
                 """
             )
             self._ensure_column(connection, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
+            # İhracat yönü: göç öncesi kaydedilmiş her dosya ithalat sayılır, böylece
+            # eski kanıt dosyaları aynen açılmaya devam eder.
+            self._ensure_column(connection, "dossiers", "direction", "TEXT NOT NULL DEFAULT 'import'")
+            self._ensure_column(connection, "dossiers", "destination_country", "TEXT")
         self.db_path.chmod(0o600)
 
     # ------------------------------------------------------------------ watchlist
@@ -663,7 +667,10 @@ class AccountService:
         origin_country: str | None, effective_date: str | None, checked_at: str,
         payload: dict[str, Any], evidence: dict[str, Any],
     ) -> dict[str, Any]:
-        title = title.strip()[:200] or "İthalat ön değerlendirmesi"
+        # Yön doğrudan sonucun kendisinden okunur; istemci ayrıca göndermek zorunda değil.
+        direction = "export" if str(payload.get("direction") or "").strip() == "export" else "import"
+        destination = str(payload.get("inquiry", {}).get("destination_country") or "").strip()[:100] or None
+        title = title.strip()[:200] or ("İhracat ön değerlendirmesi" if direction == "export" else "İthalat ön değerlendirmesi")
         product_name = product_name.strip()[:500]
         gtip_digits = re.sub(r"\D", "", gtip or "") or None
         if gtip_digits and not _GTIP_RE.fullmatch(gtip_digits):
@@ -678,17 +685,19 @@ class AccountService:
         safe_evidence["origin_country"] = (origin_country or "").strip()[:100] or None
         safe_evidence["effective_date"] = (effective_date or "").strip()[:40] or None
         safe_evidence["schema_version"] = 1
+        safe_evidence["direction"] = direction
+        safe_evidence["destination_country"] = destination
         payload_json = _json(payload, max_bytes=750_000)
         evidence_json = _json(safe_evidence, max_bytes=250_000)
         self.consume(user, "dossier", dossier_id=dossier_id)
         try:
             with self._connect() as connection:
                 connection.execute(
-                    "INSERT INTO dossiers(id,google_sub,title,product_name,gtip,origin_country,effective_date,checked_at,payload_json,evidence_json,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO dossiers(id,google_sub,title,product_name,gtip,origin_country,effective_date,checked_at,payload_json,evidence_json,created_at,updated_at,direction,destination_country) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (dossier_id, str(user["sub"]), title, product_name, gtip_digits,
                      safe_evidence["origin_country"], safe_evidence["effective_date"], checked_at,
-                     payload_json, evidence_json, now, now),
+                     payload_json, evidence_json, now, now, direction, destination),
                 )
         except Exception:
             with self._connect() as connection:

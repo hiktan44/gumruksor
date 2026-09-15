@@ -475,6 +475,46 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .classification-cost-route p { margin: 0; color: var(--ink-2); font-size: .65rem; line-height: 1.55; }
 .classification-cost-route button { min-height: 38px; padding: 0 13px; border: 1px solid var(--ink); background: var(--surface); color: var(--ink); font-size: .62rem; font-weight: 700; cursor: pointer; }
 .classification-cost-route button:hover { background: var(--ink); color: var(--surface); }
+/* İthalat / İhracat yön kutusu: formun ilk ve en belirgin kararı. */
+.direction-switch { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin: 0 0 20px; padding: 0; border: 0; }
+.direction-switch legend { padding: 0 0 10px; color: var(--ink-3); font-family: var(--mono); font-size: .58rem; letter-spacing: .06em; text-transform: uppercase; }
+.direction-card { display: flex; align-items: flex-start; gap: 11px; padding: 16px 16px; border: 1px solid var(--line-strong); background: var(--surface); cursor: pointer; }
+.direction-card:hover { border-color: var(--teal); }
+.direction-card input { margin-top: 3px; accent-color: var(--teal); }
+.direction-card b { display: block; font-family: var(--display); font-size: 1rem; }
+.direction-card small { display: block; margin-top: 4px; color: var(--ink-3); font-size: .58rem; line-height: 1.5; }
+.direction-card:has(input:checked) { border-color: var(--teal); background: var(--teal-soft); box-shadow: inset 0 0 0 1px var(--teal); }
+@media (max-width: 720px) { .direction-switch { grid-template-columns: 1fr; } }
+
+/* Hedef ülke seçici ve veri düzeyi rozeti: kullanıcı kota harcamadan ne olduğunu görür. */
+.destination-picker { display: grid; gap: 9px; margin: 0 0 20px; padding: 15px 16px; border: 1px solid var(--teal); background: var(--surface); }
+.destination-tier { margin: 0; padding: 9px 11px; border-left: 3px solid var(--line-strong); background: var(--canvas); color: var(--ink-2); font-size: .58rem; line-height: 1.55; }
+.destination-tier[data-tier="rates"] { border-left-color: var(--teal); }
+.destination-tier[data-tier="nomenclature"] { border-left-color: #b8860b; }
+.destination-tier[data-tier="agreement_only"], .destination-tier[data-tier="none"] { border-left-color: var(--danger); }
+
+/* Yöne göre görünürlük: tek kural, her iki modda da doğru alanlar kalır. */
+body[data-trade-direction="import"] [data-direction="export"],
+body[data-trade-direction="export"] [data-direction="import"] { display: none !important; }
+
+/* Beyanname alan tablosu ve emin olma rozeti. */
+.declaration-table td { vertical-align: top; }
+.declaration-table .field-empty { color: var(--ink-3); font-style: normal; }
+.certainty-badge { display: inline-block; padding: 2px 8px; font-family: var(--mono); font-size: .5rem; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.certainty-badge[data-certainty="verified"] { background: var(--teal); color: #fff; }
+.certainty-badge[data-certainty="check_required"] { background: #b8860b; color: #fff; }
+.certainty-badge[data-certainty="unavailable"] { background: var(--line); color: var(--ink-3); }
+tr[data-certainty="check_required"] td:first-child { box-shadow: inset 3px 0 0 #b8860b; }
+tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
+
+/* Beyanname hazırlık kapısı: "hazır" yalnız her zorunlu alan doğrulandıysa. */
+.declaration-gate { margin: 14px 0; padding: 14px 16px; border-left: 4px solid var(--line-strong); background: var(--canvas); }
+.declaration-gate b { display: block; font-family: var(--display); font-size: .94rem; }
+.declaration-gate p { margin: 6px 0 0; color: var(--ink-2); font-size: .6rem; line-height: 1.55; }
+.declaration-gate[data-status="ready"] { border-left-color: var(--teal); background: var(--teal-soft); }
+.declaration-gate[data-status="needs_check"] { border-left-color: #b8860b; }
+.declaration-gate[data-status="blocked"] { border-left-color: var(--danger); }
+
 /* Sıradaki adım kutusu: kullanıcı görsel analizden sonra ne tıklayacağını aramamalı. */
 .next-step-cta { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 18px; margin: 0; padding: 16px 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--teal-soft); }
 .next-step-cta .next-step-text { display: grid; gap: 5px; }

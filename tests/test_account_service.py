@@ -86,6 +86,29 @@ class AccountServiceTests(unittest.TestCase):
         with self.assertRaises(AccountError):
             self.accounts.get_dossier(user("user-2", "other@example.com"), dossier["id"])
 
+    def test_dossier_records_the_trade_direction_from_the_result(self):
+        # Yön sonucun kendisinden okunur; istemcinin ayrıca göndermesi gerekmez.
+        dossier = self.accounts.create_dossier(
+            user(), title="", product_name="Çocuk pijaması", gtip="610910000011",
+            origin_country="Türkiye", effective_date=None, checked_at="2026-09-15T10:00:00+00:00",
+            payload={"direction": "export", "inquiry": {"destination_country": "Almanya"}, "sources": []},
+            evidence={},
+        )
+        self.assertEqual(dossier["evidence"]["direction"], "export")
+        self.assertEqual(dossier["evidence"]["destination_country"], "Almanya")
+        self.assertEqual(dossier["title"], "İhracat ön değerlendirmesi")
+
+    def test_dossier_without_direction_stays_import(self):
+        # Göç öncesi kaydedilmiş dosyalar ve yön göndermeyen istemciler ithalat sayılır.
+        dossier = self.accounts.create_dossier(
+            user(), title="", product_name="Porselen fincan", gtip="691110",
+            origin_country="Çin", effective_date=None, checked_at="2026-09-15T10:00:00+00:00",
+            payload={"sources": []}, evidence={},
+        )
+        self.assertEqual(dossier["evidence"]["direction"], "import")
+        self.assertIsNone(dossier["evidence"]["destination_country"])
+        self.assertEqual(dossier["title"], "İthalat ön değerlendirmesi")
+
     def test_deleting_a_dossier_returns_its_quota_entry(self):
         kwargs = dict(
             product_name="Porselen fincan", gtip="691110", origin_country="Çin", effective_date="2026-08-30",
