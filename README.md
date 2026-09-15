@@ -242,7 +242,15 @@ yeniden denenmez — aktör bazı kodlarda çöküyor (`Actor run did not succee
 ve kaydedilmezse bu kodlar her turda yeniden denenip kuyruğu tıkar; pencere kısa tutulur çünkü
 çökme geçici de olabilir. Geçersiz kod ücretlendirilmediği için bu kurtarma ek maliyet
 doğurmaz. `500` gibi geçici hatalarda tek tek deneme **yapılmaz** ve hiçbir şey kaydedilmez;
-bütün grup bir sonraki turda yeniden denenir. Çağrılar
+bütün grup bir sonraki turda yeniden denenir.
+
+**Zaman aşımı ayrı ele alınır.** `run-sync` çağrısında yanıt hiç gelmezse (zaman aşımı,
+bağlantı kopması) aktör sunucuda çalışmaya devam edip ücreti yazmış olabilir; bu yüzden grup
+aynı turda **yeniden denenmez** ve grup boyutu (`chunk_size`) yarıya indirilir. Bir sonraki
+tur daha küçük gruplarla dener, yani `EU_TARIC_MAX_CODES` fazla yüksek verilmişse sistem
+kendi kendini düzeltir. Art arda `EU_TARIC_CHUNK_RECOVER_ROUNDS` (varsayılan 5) hatasız turun
+ardından boyut kademeli olarak (×2, tavan `EU_TARIC_MAX_CODES`) geri büyür. Güncel değer
+`fill.chunk_size` alanında görünür. Çağrılar
 arasında `EU_TARIC_FILL_DELAY_SECONDS` kadar beklenir (BK arşivindeki
 `UK_MEASURES_DELAY_SECONDS` deseni). Aktörün hata metni — jeton maskelenerek — dolum
 hatalarına yazılır, böylece reddin sebebi görülebilir. AB'de beyana elverişli

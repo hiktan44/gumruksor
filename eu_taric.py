@@ -98,6 +98,8 @@ EU_TARIC_REFRESH_DAYS = max(1, _env_int("EU_TARIC_REFRESH_DAYS", 90))
 EU_TARIC_NOT_DECLARABLE_RETRY_DAYS = max(1, _env_int("EU_TARIC_NOT_DECLARABLE_RETRY_DAYS", 180))
 # Aktörün çökmesi geçici de olabilir; beyana elverişsiz koddan daha kısa aralıkla yoklanır.
 EU_TARIC_FAILED_RETRY_DAYS = max(1, _env_int("EU_TARIC_FAILED_RETRY_DAYS", 7))
+# Zaman aşımından sonra küçülen grup boyutu, bu kadar hatasız turun ardından yeniden büyür.
+EU_TARIC_CHUNK_RECOVER_ROUNDS = max(1, _env_int("EU_TARIC_CHUNK_RECOVER_ROUNDS", 5))
 # Ardışık aktör çağrıları arasında bekleme (``UK_MEASURES_DELAY_SECONDS`` deseni): kaynağın
 # eşzamanlılık/kaynak sınırlarına toptan 400 ile takılmamak için.
 EU_TARIC_FILL_DELAY_SECONDS = max(0.0, _env_float("EU_TARIC_FILL_DELAY_SECONDS", 3.0))
@@ -362,6 +364,14 @@ def _ensure_columns(db: sqlite3.Connection, table: str, columns: dict[str, str])
             db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
+class ActorTransportError(RuntimeError):
+    """Yanıt hiç alınamadı (zaman aşımı, bağlantı kopması).
+
+    Bu durumda aktör sunucuda çalışmaya devam edip ücreti yazmış olabilir; grup aynı turda
+    **yeniden denenmez** ve bir sonraki tur daha küçük gruplarla dener.
+    """
+
+
 class ActorRequestError(RuntimeError):
     """Aktörün reddettiği istek; ``status_code`` 400 ise kod başına yeniden denenir."""
 
@@ -392,6 +402,8 @@ class EuTaricEngine:
         not_declarable_retry_days: int = EU_TARIC_NOT_DECLARABLE_RETRY_DAYS,
         failed_retry_days: int = EU_TARIC_FAILED_RETRY_DAYS,
         fill_delay_seconds: float = EU_TARIC_FILL_DELAY_SECONDS,
+        max_chunk_size: int = EU_TARIC_MAX_CODES,
+        chunk_recover_rounds: int = EU_TARIC_CHUNK_RECOVER_ROUNDS,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
         root.mkdir(parents=True, exist_ok=True)
@@ -422,6 +434,11 @@ class EuTaricEngine:
         self.not_declarable_retry_days = max(1, int(not_declarable_retry_days or 1))
         self.failed_retry_days = max(1, int(failed_retry_days or 1))
         self.fill_delay_seconds = max(0.0, float(fill_delay_seconds or 0.0))
+        # Uyarlanabilir grup boyutu: zaman aşımında yarılanır, hatasız turlarda geri büyür.
+        self.max_chunk_size = max(1, min(int(max_chunk_size or 1), 20))
+        self._chunk_size = self.max_chunk_size
+        self._clean_rounds = 0
+        self.chunk_recover_rounds = max(1, int(chunk_recover_rounds or 1))
         self._fill_lock = asyncio.Lock()
         self._fill_errors: list[str] = []
         self._initialise()
@@ -550,7 +567,7 @@ class EuTaricEngine:
                 status_code=status_code,
             ) from None
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"Apify aktörüne ulaşılamadı: {type(exc).__name__}") from None
+            raise ActorTransportError(f"Apify aktörüne ulaşılamadı: {type(exc).__name__}") from None
         except (UnicodeEncodeError, TypeError) as exc:  # bozuk jeton/başlık: jeton metne sızmasın
             raise RuntimeError(f"Apify isteği oluşturulamadı: {type(exc).__name__}") from None
         content = response.content
@@ -750,6 +767,28 @@ class EuTaricEngine:
             queue = queue[: max(0, int(limit))]
         return queue, len(never), len(due), skipped
 
+    def _shrink_chunk(self, attempted: int) -> None:
+        """Zaman aşımı: grup boyutunu yarıya indir (1'in altına inmez)."""
+        if attempted <= 1:
+            return
+        reduced = max(1, min(self._chunk_size, attempted) // 2)
+        if reduced < self._chunk_size:
+            self._chunk_size = reduced
+            self._fill_errors.append(
+                f"{_now()}: Zaman aşımı sonrası grup boyutu {reduced} koda indirildi."
+            )
+        self._clean_rounds = 0
+
+    def _note_clean_round(self) -> None:
+        """Hatasız tur: yeterince biriktiyse grup boyutunu kademeli geri büyüt."""
+        if self._chunk_size >= self.max_chunk_size:
+            self._clean_rounds = 0
+            return
+        self._clean_rounds += 1
+        if self._clean_rounds >= self.chunk_recover_rounds:
+            self._chunk_size = min(self.max_chunk_size, self._chunk_size * 2)
+            self._clean_rounds = 0
+
     async def _run_chunk(
         self, chunk: list[str], origin: str
     ) -> tuple[list[dict[str, Any]], dict[str, str], set[str]]:
@@ -773,6 +812,10 @@ class EuTaricEngine:
             if len(chunk) == 1:
                 # Tek kodluk çağrı 400 aldı: kodun kendisi sorunlu, kayda geçer.
                 return [], {chunk[0]: str(exc)}, set()
+        except ActorTransportError as exc:
+            self._fill_errors.append(f"{_now()}: {exc}")
+            self._shrink_chunk(len(chunk))
+            return [], {}, set(chunk)
         except (SecurityViolation, RuntimeError, ValueError) as exc:
             self._fill_errors.append(f"{_now()}: {str(exc)[:200]}")
             return [], {}, set(chunk)
@@ -815,6 +858,8 @@ class EuTaricEngine:
             "not_declarable_retry_days": self.not_declarable_retry_days,
             "failed_retry_days": self.failed_retry_days,
             "batch": self.fill_batch,
+            "chunk_size": self._chunk_size,
+            "max_chunk_size": self.max_chunk_size,
             "estimated_total_usd": round(total * self.unit_cost_usd, 2),
             "estimated_pending_usd": round((never + due) * self.unit_cost_usd, 2),
             "estimated_monthly_usd": round(monthly, 2),
@@ -847,8 +892,12 @@ class EuTaricEngine:
             for code, origin in pending:
                 by_origin.setdefault(origin, []).append(code)
             for origin, origin_codes in by_origin.items():
-                for start in range(0, len(origin_codes), EU_TARIC_MAX_CODES):
-                    chunk = origin_codes[start : start + EU_TARIC_MAX_CODES]
+                start = 0
+                while start < len(origin_codes):
+                    # Grup boyutu her adımda yeniden okunur: zaman aşımı olduysa küçülmüştür.
+                    size = max(1, self._chunk_size)
+                    chunk = origin_codes[start : start + size]
+                    start += len(chunk)
                     items, broken, transient = await self._run_chunk(chunk, origin)
                     if broken:
                         # Kod kendi başına denendi ve yine başarısız: kaydedilir ki her turda
@@ -891,6 +940,8 @@ class EuTaricEngine:
                     await asyncio.to_thread(self._record_spend, period, chunk_ok)
             if fetched:
                 self._errors.clear()
+            if not failed:
+                self._note_clean_round()
             return {
                 "status": "ok" if fetched or missing else "failed",
                 "period": period,
@@ -947,6 +998,7 @@ __all__ = [
     "EU_TARIC_FILL_LEVEL",
     "EU_TARIC_MONTHLY_BUDGET_USD",
     "EU_TARIC_NOT_DECLARABLE_RETRY_DAYS",
+    "EU_TARIC_CHUNK_RECOVER_ROUNDS",
     "EU_TARIC_FAILED_RETRY_DAYS",
     "EU_TARIC_REFRESH_DAYS",
     "EU_TARIC_UNIT_COST_USD",
@@ -956,6 +1008,7 @@ __all__ = [
     "EuTaricEngine",
     "EuTaricResult",
     "ActorRequestError",
+    "ActorTransportError",
     "KIND_LABELS",
     "SOURCE_NOTE",
     "classify_measure",

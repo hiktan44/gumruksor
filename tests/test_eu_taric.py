@@ -279,7 +279,8 @@ class FillTests(unittest.TestCase):
         self.calls: list[dict] = []
 
     def _engine(self, *, codes=("610910001000", "851713000000"), origins="TR,CN", budget=10.0,
-                batch=10, items=None, status=200, fill_enabled=True) -> et.EuTaricEngine:
+                batch=10, items=None, status=200, fill_enabled=True,
+                max_chunk_size=et.EU_TARIC_MAX_CODES, chunk_recover_rounds=5) -> et.EuTaricEngine:
         client = httpx.AsyncClient(transport=_transport(self.calls, status=status, items=items))
         engine = et.EuTaricEngine(
             self._tmp.name,
@@ -295,6 +296,8 @@ class FillTests(unittest.TestCase):
             unit_cost_usd=0.015,
             fill_delay_seconds=0.0,
             failed_retry_days=7,
+            max_chunk_size=max_chunk_size,
+            chunk_recover_rounds=chunk_recover_rounds,
         )
         self.addCleanup(lambda: asyncio.run(engine.close()))
         return engine
@@ -552,6 +555,66 @@ class FillTests(unittest.TestCase):
         self._age_rows(engine, 6)  # 7 günlük pencere dolmadı
         self.assertEqual(asyncio.run(engine.fill_once())["status"], "complete")
         self.assertEqual(len(self.calls), calls)
+
+    def _timeout_transport(self, fail_when_larger_than: int) -> httpx.MockTransport:
+        """Aktör taklidi: gruptaki kod sayısı eşiği aşarsa yanıt gelmez (zaman aşımı)."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            self.calls.append({"body": body})
+            if len(body["goodsCodes"]) > fail_when_larger_than:
+                raise httpx.ReadTimeout("timeout", request=request)
+            return httpx.Response(200, json=[_item(code) for code in body["goodsCodes"]])
+
+        return httpx.MockTransport(handler)
+
+    def test_timeout_halves_the_chunk_and_does_not_retry_in_the_same_round(self):
+        # Zaman aşımında aktör sunucuda çalışmaya devam edip ücret yazmış olabilir:
+        # aynı kodlar aynı turda ikinci kez gönderilmemeli.
+        codes = [f"61091000{index:02d}00" for index in range(4)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=4, max_chunk_size=4)
+        engine._http = httpx.AsyncClient(transport=self._timeout_transport(2))
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["fetched"], 0)
+        self.assertEqual(report["failed"], 4)
+        self.assertEqual(engine.spend_status()["lookups"], 0)
+        self.assertEqual(len(self.calls), 1, "zaman aşımına düşen grup aynı turda yeniden denenmemeli")
+        self.assertEqual(engine._chunk_size, 2)
+        # Hiçbir şey kaydedilmez: bütün grup bir sonraki turda beklemede.
+        self.assertEqual(engine.fill_plan()["pending_pairs"], 4)
+
+    def test_next_round_uses_the_smaller_chunk_and_succeeds(self):
+        codes = [f"61091000{index:02d}00" for index in range(4)]
+        engine = self._engine(codes=tuple(codes), origins="TR", batch=4, max_chunk_size=4)
+        engine._http = httpx.AsyncClient(transport=self._timeout_transport(2))
+        asyncio.run(engine.fill_once())
+        self.calls.clear()
+        report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["fetched"], 4)
+        for call in self.calls:
+            self.assertLessEqual(len(call["body"]["goodsCodes"]), 2)
+
+    def test_chunk_size_never_drops_below_one(self):
+        # Her çağrı zaman aşımına düşse bile boyut 1'in altına inmez.
+        codes = ("610910000000", "610910000100")
+        engine = self._engine(codes=codes, origins="TR", batch=2, max_chunk_size=2)
+        engine._http = httpx.AsyncClient(transport=self._timeout_transport(0))
+        for _ in range(4):
+            asyncio.run(engine.fill_once())
+        self.assertEqual(engine._chunk_size, 1)
+
+    def test_chunk_size_recovers_after_clean_rounds(self):
+        codes = [f"61091000{index:02d}00" for index in range(12)]
+        engine = self._engine(
+            codes=tuple(codes), origins="TR", batch=2, max_chunk_size=4, chunk_recover_rounds=2,
+        )
+        engine._chunk_size = 1
+        engine._http = httpx.AsyncClient(
+            transport=_transport(self.calls, items=[_item(f"61091000{i:02d}") for i in range(12)])
+        )
+        asyncio.run(engine.fill_once())
+        self.assertEqual(engine._chunk_size, 1, "tek hatasız tur yetmez")
+        asyncio.run(engine.fill_once())
+        self.assertEqual(engine._chunk_size, 2, "iki hatasız turdan sonra büyür")
 
     def test_rejected_code_reason_is_reported_without_the_token(self):
         engine = self._engine(codes=("610910000000",), origins="TR", batch=5)
