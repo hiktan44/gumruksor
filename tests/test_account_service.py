@@ -42,6 +42,38 @@ class AccountServiceTests(unittest.TestCase):
             {"used": 5, "limit": 5, "remaining": 0},
         )
 
+    def test_admin_is_exempt_from_quota_but_usage_is_still_recorded(self):
+        # Yonetici kendi urununu sinirsiz deneyebilmeli; aksi halde bir kac denemede
+        # kendi kotasini doldurup urunu test edemez hale gelir.
+        admin = user("admin", "admin@example.com")
+        for _ in range(20):
+            self.accounts.consume(admin, "vision")
+        quota = self.accounts.account(admin)["quotas"]["vision"]
+        self.assertIsNone(quota["limit"])
+        self.assertIsNone(quota["remaining"])
+        self.assertEqual(quota["used"], 20, "kullanım yine kaydedilir")
+        # Yonetici olmayan kullanici ayni sinirla karsilasmaya devam eder.
+        for _ in range(5):
+            self.accounts.consume(user(), "vision")
+        with self.assertRaises(QuotaExceeded):
+            self.accounts.consume(user(), "vision")
+
+    def test_quota_error_carries_purchasable_upgrade_options(self):
+        for _ in range(5):
+            self.accounts.consume(user(), "vision")
+        with self.assertRaises(QuotaExceeded) as caught:
+            self.accounts.consume(user(), "vision")
+        options = caught.exception.upgrade
+        self.assertEqual([item["code"] for item in options], ["expert", "team", "institutional"])
+        first = options[0]
+        self.assertEqual(first["name"], "Uzman")
+        self.assertTrue(first["purchasable"])
+        self.assertEqual(first["quota"], 100, "kullanıcı yeni sınırı görebilmeli")
+        self.assertFalse(options[-1]["purchasable"], "kurumsal paket satış ekibine gider")
+
+    def test_upgrade_options_are_empty_on_the_top_plan(self):
+        self.assertEqual(self.accounts.upgrade_options("institutional"), [])
+
     def test_dossiers_are_owner_scoped_and_only_official_urls_are_kept(self):
         dossier = self.accounts.create_dossier(
             user(), title="Kahve fincanı", product_name="Porselen fincan", gtip="691110",

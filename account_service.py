@@ -23,7 +23,17 @@ class AccountError(ValueError):
 
 
 class QuotaExceeded(AccountError):
-    """Raised when the active plan has no allowance left for an operation."""
+    """Raised when the active plan has no allowance left for an operation.
+
+    ``upgrade`` doluysa arayuz kullaniciya dogrudan bir ust paketi onerir; kota
+    dolmasi bir ariza degil, satin alinabilir bir sinirdir ve kullanicinin ne
+    yapacagini gormesi gerekir.
+    """
+
+    def __init__(self, message: str, *, operation: str | None = None, upgrade: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.operation = operation
+        self.upgrade = upgrade or []
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,6 +525,33 @@ class AccountService:
                  str(target_id)[:200], _json(details or {}, max_bytes=5_000), _now()),
             )
 
+    def upgrade_options(self, plan_code: str, operation: str | None = None) -> list[dict[str, Any]]:
+        """Mevcut paketin üstündeki paketler: kod, ad, fiyat ve ilgili kotanın yeni sınırı.
+
+        Kota dolması bir arıza değil, satın alınabilir bir sınırdır; kullanıcının
+        "ne alırsam açılır" sorusunun cevabını hatanın yanında görmesi gerekir.
+        """
+        order = list(PLANS)
+        try:
+            current = order.index(plan_code)
+        except ValueError:
+            current = 0
+        options: list[dict[str, Any]] = []
+        for code in order[current + 1 :]:
+            plan = PLANS[code]
+            option: dict[str, Any] = {
+                "code": plan.code,
+                "name": plan.name,
+                "monthly_price_try": plan.monthly_price_try,
+                "yearly_price_try": plan.yearly_price_try,
+                # Yalnız expert ve team çevrim içi satın alınabilir; diğeri satış ekibine gider.
+                "purchasable": plan.code in {"expert", "team"},
+            }
+            if operation and operation in plan.quotas:
+                option["quota"] = plan.quotas[operation]
+            options.append(option)
+        return options
+
     def is_admin(self, user: dict[str, Any]) -> bool:
         email = str(user.get("email", "")).strip().casefold()
         if not email:
@@ -556,11 +593,14 @@ class AccountService:
             ).fetchall()
             grants = {item["operation"]: int(item["granted"]) for item in grant_rows}
         plan = PLANS[plan_code]
+        # Yonetici kendi urununu sinirsiz deneyebilmeli; aksi halde bir kac denemede
+        # kendi kotasini doldurup urunu test edemez hale gelir. Kullanim yine kaydedilir.
+        unlimited = self.is_admin(user)
         quotas = {}
         for key, base_limit in plan.quotas.items():
             used_qty = usage.get(key, 0)
             extra = grants.get(key, 0) + grants.get("all", 0)
-            effective_limit = None if base_limit is None else (base_limit + extra)
+            effective_limit = None if (base_limit is None or unlimited) else (base_limit + extra)
             remaining = None if effective_limit is None else max(0, effective_limit - used_qty)
             quota_entry = {
                 "used": used_qty,
@@ -604,9 +644,14 @@ class AccountService:
                 (google_sub, operation),
             ).fetchone()[0])
             base_limit = plan.quotas[operation]
-            limit = None if base_limit is None else (base_limit + extra)
+            unlimited = self.is_admin(user)
+            limit = None if (base_limit is None or unlimited) else (base_limit + extra)
             if limit is not None and used + quantity > limit:
-                raise QuotaExceeded(f"{plan.name} paketinin aylık {operation} kotası doldu.")
+                raise QuotaExceeded(
+                    f"{plan.name} paketinin aylık {operation} kotası doldu.",
+                    operation=operation,
+                    upgrade=self.upgrade_options(plan_code, operation),
+                )
             connection.execute(
                 "INSERT INTO usage_ledger(google_sub,operation,quantity,period_key,dossier_id,created_at) VALUES(?,?,?,?,?,?)",
                 (google_sub, operation, quantity, period, dossier_id, _now()),

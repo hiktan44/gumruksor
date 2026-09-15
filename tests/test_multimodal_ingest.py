@@ -365,6 +365,18 @@ class DescribeImageRouteTests(unittest.TestCase):
         self.assertIn("kota", response.json()["error"].lower())
         self.describe.assert_not_awaited()
 
+    def test_quota_error_offers_the_next_plan(self) -> None:
+        # Kota dolmasi satin alinabilir bir sinirdir: cozum hatanin yaninda gelmeli.
+        limit = self.accounts.account(self.user)["quotas"]["vision"]["limit"]
+        for _ in range(limit):
+            self.accounts.consume(self.user, "vision")
+        body = self._post(signed=True).json()
+        self.assertEqual(body["operation"], "vision")
+        upgrade = body["upgrade"]
+        self.assertEqual(upgrade[0]["code"], "expert")
+        self.assertTrue(upgrade[0]["purchasable"])
+        self.assertEqual(upgrade[0]["quota"], 100)
+
     def test_rate_limit_reports_retry_after_without_quota_code(self) -> None:
         # Dakikalik gorsel hiz siniri: kota degil, bekleme gerektirir.
         for _ in range(20):

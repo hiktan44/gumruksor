@@ -226,6 +226,8 @@ async function fetchJson(url, options = {}) {
     error.status = response.status;
     if (data.code) error.code = data.code;
     if (data.retry_after) error.retryAfter = Number(data.retry_after) || null;
+    if (Array.isArray(data.upgrade) && data.upgrade.length) error.upgrade = data.upgrade;
+    if (data.operation) error.operation = data.operation;
     throw error;
   }
   return data;
@@ -237,7 +239,13 @@ function describeRequestError(error, fallback = "İşlem tamamlanamadı.") {
   const message = (error && error.message) || fallback;
   if (!error || !error.status) return message;
   if (error.code === "quota_exceeded") {
-    return `${message} Yönetici iseniz yönetim panelinden ek kota tanımlayabilirsiniz.`;
+    const next = (error.upgrade || []).find((plan) => plan.purchasable) || (error.upgrade || [])[0];
+    if (!next) return message;
+    const price = next.monthly_price_try
+      ? `${numberFormat.format(next.monthly_price_try)} TL + KDV / ay`
+      : "teklif usulü";
+    const quota = next.quota == null ? "sınırsız" : `${numberFormat.format(next.quota)} adet/ay`;
+    return `${message} ${next.name} paketi bu işlem için ${quota} veriyor (${price}).`;
   }
   if (error.status === 429) {
     const wait = error.retryAfter ? `${error.retryAfter} saniye` : "kısa bir süre";
@@ -720,7 +728,15 @@ async function loadAuthState() {
     $("#appAccountButton").textContent = `${firstName} · Hesabım`;
     refreshConsultationBadge();
     renderWatchList();
-    if (new URLSearchParams(location.search).get("account")) openAccount();
+    const params = new URLSearchParams(location.search);
+    if (params.get("account")) {
+      // Abonelik donusu: hesap paneli /api/account'u yeniden okur, yani yeni kota
+      // hemen gecerli olur. Kullaniciya sonucu da acikca soyleriz.
+      const payment = params.get("payment");
+      openAccount(payment ? "plans" : "summary");
+      if (payment === "success") showToast("Aboneliğiniz açıldı; yeni kotanız hemen geçerli.");
+      if (payment === "failed") showToast("Ödeme tamamlanamadı. Paket sekmesinden yeniden deneyebilirsiniz.");
+    }
   } catch (_) {
     // The application remains usable as a guest if account state is unavailable.
   }
@@ -1833,8 +1849,15 @@ async function analyseProductImage() {
     // Gercek sebep ust satirda gorunmeli: "kotaniz doldu" ile "model yanit vermedi"
     // birbirinden ayirt edilemezse kullanici da, hata arayan da yanlis yere bakar.
     const reason = describeRequestError(error, "Görsel analizi tamamlanamadı.");
-    $("#productFileStatus").dataset.state = "error";
-    $("#productFileStatus").textContent = reason;
+    const status = $("#productFileStatus");
+    status.dataset.state = "error";
+    if (error && error.code === "quota_exceeded") {
+      // Kota dolmasi satin alinabilir bir sinirdir: cozumu ayni yerde gosteriyoruz.
+      status.innerHTML = `${escapeHtml(reason)} <button type="button" class="secondary-action" id="quotaUpgrade">Paketleri gör</button>`;
+      $("#quotaUpgrade")?.addEventListener("click", () => openAccount("plans"));
+    } else {
+      status.textContent = reason;
+    }
     setVisionState("error", `${reason} Ürün evsaflarını elle doldurup yine de açıkça onaylayabilirsiniz.`);
   }
 }
