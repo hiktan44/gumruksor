@@ -1,0 +1,506 @@
+{
+  "source": "Üye devlet resmî vergi idareleri; AB KDV Direktifi 2006/112/AT ve Ek-III çerçevesi (elle derlenmiş tohum)",
+  "source_url": "https://ec.europa.eu/taxation_customs/tedb/",
+  "parser_version": 1,
+  "retrieved_at": null,
+  "sha256": null,
+  "note": "Elle derlenmiş tohum verisidir; hiçbir satır doğrulanmamıştır (verified=false). AB'nin resmî veritabanı TEDB bu tarihte başsız sorguya kapalıdır: arama ucu her istekte 500 dönüyor ve Excel dışa aktarımı sunucu oturumundaki son aramayı verdiği için anonim istekte boş şablon geliyor. TEDB veri döndürmeye başladığında eşitleme bu tohumu resmî veriyle değiştirir. volatile=true satırlar son iki yılda oranı değişmiş olan ve öncelikle doğrulanması gereken ülkelerdir.",
+  "checked_at": "2026-09-15",
+  "chapter_rules": [
+    {
+      "id": "food",
+      "label": "Gıda maddeleri",
+      "chapters": [
+        [
+          1,
+          23
+        ]
+      ],
+      "exclude_headings": [
+        "2203",
+        "2204",
+        "2205",
+        "2206",
+        "2207",
+        "2208",
+        "2402",
+        "2403"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/1 (gıda maddeleri; alkollü içki ve tütün hariç)"
+    },
+    {
+      "id": "pharma",
+      "label": "İlaç ve eczacılık ürünleri",
+      "chapters": [
+        [
+          30,
+          30
+        ]
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/3"
+    },
+    {
+      "id": "medical",
+      "label": "Engelliler için tıbbi cihaz",
+      "headings": [
+        "9021"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/4 (yalnız engellilerin kullanımına özgü cihaz)",
+      "narrow": true
+    },
+    {
+      "id": "books",
+      "label": "Kitap, gazete ve süreli yayın",
+      "chapters": [
+        [
+          49,
+          49
+        ]
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/6"
+    },
+    {
+      "id": "plants",
+      "label": "Canlı bitki ve çiçekçilik ürünleri",
+      "headings": [
+        "0601",
+        "0602",
+        "0603",
+        "0604"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/11"
+    },
+    {
+      "id": "firewood",
+      "label": "Yakacak odun",
+      "headings": [
+        "4401"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/11a"
+    },
+    {
+      "id": "child_seats",
+      "label": "Çocuk oto koltuğu",
+      "headings": [
+        "9401"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/8",
+      "narrow": true
+    },
+    {
+      "id": "bicycles",
+      "label": "Bisiklet",
+      "headings": [
+        "8712"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/22 (2022 reformu)"
+    },
+    {
+      "id": "solar",
+      "label": "Güneş paneli",
+      "headings": [
+        "8541"
+      ],
+      "legal_basis": "KDV Direktifi Ek-III/10c (2022 reformu)",
+      "narrow": true
+    }
+  ],
+  "rows": [
+    {
+      "iso2": "AT",
+      "tedb_code": "AT",
+      "country": "Avusturya",
+      "standard": 20.0,
+      "reduced": [
+        10.0,
+        13.0
+      ],
+      "super_reduced": null,
+      "parking": 13.0,
+      "authority_url": "https://www.bmf.gv.at/themen/steuern/umsatzsteuer.html",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "BE",
+      "tedb_code": "BE",
+      "country": "Belçika",
+      "standard": 21.0,
+      "reduced": [
+        6.0,
+        12.0
+      ],
+      "super_reduced": null,
+      "parking": 12.0,
+      "authority_url": "https://finance.belgium.be/en/enterprises/vat",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "BG",
+      "tedb_code": "BG",
+      "country": "Bulgaristan",
+      "standard": 20.0,
+      "reduced": [
+        9.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://nra.bg/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "HR",
+      "tedb_code": "HR",
+      "country": "Hırvatistan",
+      "standard": 25.0,
+      "reduced": [
+        5.0,
+        13.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.porezna-uprava.hr/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "CY",
+      "tedb_code": "CY",
+      "country": "Kıbrıs (GKRY)",
+      "standard": 19.0,
+      "reduced": [
+        5.0,
+        9.0
+      ],
+      "super_reduced": 3.0,
+      "parking": null,
+      "authority_url": "https://www.mof.gov.cy/mof/tax/taxdep.nsf",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "CZ",
+      "tedb_code": "CZ",
+      "country": "Çekya",
+      "standard": 21.0,
+      "reduced": [
+        12.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.financnisprava.cz/en",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "DK",
+      "tedb_code": "DK",
+      "country": "Danimarka",
+      "standard": 25.0,
+      "reduced": [],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://skat.dk/en-us",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "EE",
+      "tedb_code": "EE",
+      "country": "Estonya",
+      "standard": 24.0,
+      "reduced": [
+        9.0,
+        13.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.emta.ee/en",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "FI",
+      "tedb_code": "FI",
+      "country": "Finlandiya",
+      "standard": 25.5,
+      "reduced": [
+        10.0,
+        14.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.vero.fi/en",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "FR",
+      "tedb_code": "FR",
+      "country": "Fransa",
+      "standard": 20.0,
+      "reduced": [
+        5.5,
+        10.0
+      ],
+      "super_reduced": 2.1,
+      "parking": null,
+      "authority_url": "https://www.impots.gouv.fr",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "DE",
+      "tedb_code": "DE",
+      "country": "Almanya",
+      "standard": 19.0,
+      "reduced": [
+        7.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.bzst.de/EN/Home/home_node.html",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "GR",
+      "tedb_code": "EL",
+      "country": "Yunanistan",
+      "standard": 24.0,
+      "reduced": [
+        6.0,
+        13.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.aade.gr/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "HU",
+      "tedb_code": "HU",
+      "country": "Macaristan",
+      "standard": 27.0,
+      "reduced": [
+        5.0,
+        18.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://nav.gov.hu/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "IE",
+      "tedb_code": "IE",
+      "country": "İrlanda",
+      "standard": 23.0,
+      "reduced": [
+        9.0,
+        13.5
+      ],
+      "super_reduced": 4.8,
+      "parking": 13.5,
+      "authority_url": "https://www.revenue.ie/en/vat",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "IT",
+      "tedb_code": "IT",
+      "country": "İtalya",
+      "standard": 22.0,
+      "reduced": [
+        5.0,
+        10.0
+      ],
+      "super_reduced": 4.0,
+      "parking": null,
+      "authority_url": "https://www.agenziaentrate.gov.it",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "LV",
+      "tedb_code": "LV",
+      "country": "Letonya",
+      "standard": 21.0,
+      "reduced": [
+        5.0,
+        12.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.vid.gov.lv/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "LT",
+      "tedb_code": "LT",
+      "country": "Litvanya",
+      "standard": 21.0,
+      "reduced": [
+        5.0,
+        9.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.vmi.lt/evmi/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "LU",
+      "tedb_code": "LU",
+      "country": "Lüksemburg",
+      "standard": 17.0,
+      "reduced": [
+        8.0
+      ],
+      "super_reduced": 3.0,
+      "parking": 14.0,
+      "authority_url": "https://pfi.public.lu/en.html",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "MT",
+      "tedb_code": "MT",
+      "country": "Malta",
+      "standard": 18.0,
+      "reduced": [
+        5.0,
+        7.0,
+        12.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://cfr.gov.mt/en/vat",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "NL",
+      "tedb_code": "NL",
+      "country": "Hollanda",
+      "standard": 21.0,
+      "reduced": [
+        9.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.belastingdienst.nl/wps/wcm/connect/en/vat",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "PL",
+      "tedb_code": "PL",
+      "country": "Polonya",
+      "standard": 23.0,
+      "reduced": [
+        5.0,
+        8.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.podatki.gov.pl/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "PT",
+      "tedb_code": "PT",
+      "country": "Portekiz",
+      "standard": 23.0,
+      "reduced": [
+        6.0,
+        13.0
+      ],
+      "super_reduced": null,
+      "parking": 13.0,
+      "authority_url": "https://info.portaldasfinancas.gov.pt",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "RO",
+      "tedb_code": "RO",
+      "country": "Romanya",
+      "standard": 21.0,
+      "reduced": [
+        11.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.anaf.ro/anaf/internet/ANAF/despre_anaf/strategii_anaf/en",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "SK",
+      "tedb_code": "SK",
+      "country": "Slovakya",
+      "standard": 23.0,
+      "reduced": [
+        5.0,
+        19.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.financnasprava.sk/en",
+      "verified": false,
+      "volatile": true
+    },
+    {
+      "iso2": "SI",
+      "tedb_code": "SI",
+      "country": "Slovenya",
+      "standard": 22.0,
+      "reduced": [
+        5.0,
+        9.5
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.fu.gov.si/en",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "ES",
+      "tedb_code": "ES",
+      "country": "İspanya",
+      "standard": 21.0,
+      "reduced": [
+        10.0
+      ],
+      "super_reduced": 4.0,
+      "parking": null,
+      "authority_url": "https://sede.agenciatributaria.gob.es",
+      "verified": false,
+      "volatile": false
+    },
+    {
+      "iso2": "SE",
+      "tedb_code": "SE",
+      "country": "İsveç",
+      "standard": 25.0,
+      "reduced": [
+        6.0,
+        12.0
+      ],
+      "super_reduced": null,
+      "parking": null,
+      "authority_url": "https://www.skatteverket.se/servicelankar/otherlanguages/inenglish.4.html",
+      "verified": false,
+      "volatile": false
+    }
+  ]
+}
