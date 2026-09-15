@@ -1445,10 +1445,11 @@ async def _run_model_chain(
             if gemini:
                 model_url = _gemini_generate_url(base_url, model)
                 validate_outbound_url(model_url, allowed_hosts={(urlsplit(model_url).hostname or "").lower()})
-                request = _post_gemini_generate(client, url=model_url, api_key=api_key, payload=gemini_payload)
+                sent_payload: dict[str, Any] = gemini_payload
+                request = _post_gemini_generate(client, url=model_url, api_key=api_key, payload=sent_payload)
             else:
-                payload = _model_payload(base_payload, model, provider)
-                request = _post_chat_completion(client, url=url, headers=headers, payload=payload, provider=provider)
+                sent_payload = _model_payload(base_payload, model, provider)
+                request = _post_chat_completion(client, url=url, headers=headers, payload=sent_payload, provider=provider)
             try:
                 response = await asyncio.wait_for(request, timeout=remaining)
             except asyncio.TimeoutError:
@@ -1487,7 +1488,9 @@ async def _run_model_chain(
                 comp_tok = int(usage_data.get("completion_tokens") or 0)
                 tot_tok = int(usage_data.get("total_tokens") or (prompt_tok + comp_tok))
             if prompt_tok == 0 and comp_tok == 0:
-                prompt_tok = max(10, len(str(payload)) // 4)
+                # Kaynak kullanım bilgisi vermediyse kaba bir tahmin yeter; bu yalnız maliyet
+                # kaydı içindir ve asla başarılı bir yanıtı düşürmemelidir.
+                prompt_tok = max(10, len(str(sent_payload)) // 4)
                 comp_tok = max(5, len(content) // 4)
                 tot_tok = prompt_tok + comp_tok
             cost = estimate_llm_cost(resolved_m, prompt_tok, comp_tok)
