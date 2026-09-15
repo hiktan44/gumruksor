@@ -604,10 +604,14 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .cost-table td { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .cost-table td:last-child { text-align: right; font-family: var(--mono); }
 .source-ledger { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
-.source-ledger a { display: grid; grid-template-columns: 36px 1fr; gap: 10px; padding: 11px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
-.source-ledger code { color: var(--teal); font-family: var(--mono); font-size: .52rem; }
-.source-ledger b { display: block; font-size: .61rem; }
-.source-ledger small { display: block; margin-top: 2px; color: var(--ink-3); font-size: .51rem; }
+/* Kaynak kimlikleri 6-30 karakter arasında değişiyor (tareks … eu_classification_regulations).
+   Sabit 36 piksellik sütunda uzun kimlik taşıp başlığın üstüne biniyordu; sütun artık
+   içeriğe göre bir tavana kadar büyüyor ve kimlik gerekirse alt satıra kırılıyor. */
+.source-ledger a { display: grid; gap: 4px; padding: 11px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+.source-ledger code { min-width: 0; color: var(--teal); font-family: var(--mono); font-size: .52rem; line-height: 1.35; overflow-wrap: anywhere; }
+.source-ledger a > span { min-width: 0; }
+.source-ledger b { display: block; font-size: .61rem; overflow-wrap: anywhere; }
+.source-ledger small { display: block; margin-top: 2px; color: var(--ink-3); font-size: .51rem; overflow-wrap: anywhere; }
 .source-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--teal); border-radius: 999px; color: var(--teal); font-size: .46rem; font-style: normal; letter-spacing: .03em; text-transform: uppercase; vertical-align: middle; }
 .legal-banner { padding: 18px 24px; border-left: 5px solid var(--danger); background: var(--danger-soft); color: var(--danger); font-size: .61rem; line-height: 1.65; }
 .answer-error { padding: 22px; border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger); }
