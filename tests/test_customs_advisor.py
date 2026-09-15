@@ -1193,6 +1193,24 @@ class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
         for key in ("model", "response_format", "reasoning_effort", "generationConfig", "thinking"):
             self.assertNotIn(key, body)
 
+    async def test_gemini_reply_without_usage_metadata_is_not_dropped(self) -> None:
+        # Gerileme: jeton sayacı yalnız Gemini dışı dalda tanımlı bir değişkene bakıyordu.
+        # Gemini usageMetadata göndermediğinde UnboundLocalError ile BAŞARILI analiz çöpe
+        # gidiyor ve kullanıcı 502 görüyordu.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {"content": {"parts": [{"text": '{"a": 5}'}]}, "finishReason": "STOP"}
+                    ],
+                    "modelVersion": "gemini-3.8-flash-001",
+                },
+            )
+
+        text, model = await self._chat(handler, ["gemini-3.8-flash"], _llm_env(GEMINI_API_KEY="gem-key"))
+        self.assertEqual((text, model), ('{"a": 5}', "gemini-3.8-flash-001"))
+
     async def test_zai_failure_prefers_gemini_over_openrouter(self) -> None:
         seen: list[str] = []
 
