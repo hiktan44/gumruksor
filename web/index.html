@@ -183,11 +183,11 @@
           <div class="safety-seal"><b>ÖN</b><span>Bağlayıcı karar değildir</span></div>
         </header>
 
-        <div class="customs-flow" aria-hidden="true">
-          <span class="active"><i>1</i>Fotoğrafı analiz et</span><b></b>
-          <span><i>2</i>Evsafı doğrula</span><b></b>
-          <span><i>3</i>Resmî kaynak tara</span><b></b>
-          <span><i>4</i>Risk ve maliyet dosyası</span>
+        <div class="customs-flow" id="customsFlow" data-step="1" aria-hidden="true">
+          <span data-flow-step="1" class="active"><i>1</i>Fotoğraf veya ürün tanımı</span><b></b>
+          <span data-flow-step="2"><i>2</i>Evsafı onayla · aday GTİP</span><b></b>
+          <span data-flow-step="3"><i>3</i>12 haneli GTİP'i seç</span><b></b>
+          <span data-flow-step="4"><i>4</i>Vergi, TAREKS ve maliyet</span>
         </div>
 
         <nav class="customs-view-tabs" aria-label="Gümrükçe çalışma alanları">
@@ -263,6 +263,8 @@
                 </div>
                 <section class="gtip-suggestions" id="gtipSuggestions" hidden aria-live="polite">
                   <header><b>En yakın tarife adayları</b><small id="gtipSuggestionStatus">Evsaf onayından sonra hazırlanır.</small></header>
+                  <p class="box-purpose"><b>Bu kutu ne yapar?</b> Onayladığınız evsafa en yakın 6 veya 8 haneli uluslararası
+                    tarife pozisyonlarını listeler. Henüz vergi hesaplanmaz. <b>Yapmanız gereken:</b> bir adaya tıklayın.</p>
                   <div id="gtipSuggestionList"></div>
                   <p>Bir aday seçtiğinizde Türk tarife ağacının alt dalları açılır. Sistem ilk adayı kendiliğinden seçmez.</p>
                 </section>
@@ -271,6 +273,9 @@
                     <div><span class="eyebrow">Resmî tarife dalları</span><h3 id="tariffTreeTitle">Türk GTİP12 karar ağacı</h3></div>
                     <small id="tariffTreeStatus">Bir HS/CN adayı seçin.</small>
                   </header>
+                  <p class="box-purpose"><span class="step-badge">Adım 3</span><b>Bu kutu ne yapar?</b> Seçtiğiniz pozisyonun
+                    resmî Türk tarife cetvelindeki alt dallarını açar. Vergi oranı ve TAREKS kapsamı <b>12 hane
+                    kesinleşmeden</b> belirlenemez. <b>Yapmanız gereken:</b> soruları yanıtlayıp 12 haneli satıra inin.</p>
                   <div class="tariff-tree-path" id="tariffTreePath" aria-label="Seçilen tarife yolu"></div>
                   <div class="tariff-tree-questions" id="tariffTreeQuestions" hidden></div>
                   <div class="tariff-tree-list" id="tariffTreeList"></div>
@@ -287,6 +292,20 @@
                 <span class="vision-state" id="visionState" data-state="idle">Bekliyor</span>
               </header>
               <p class="vision-message" id="visionMessage">Fotoğraf analiz edildiğinde sonuçlar bu satırlara gelir. GTİP ve mevzuat araması henüz başlamaz.</p>
+
+              <div class="next-step-cta" id="attributeNextStep">
+                <div class="next-step-text">
+                  <span class="step-badge">Sıradaki adım · 2</span>
+                  <b>Aşağıdaki evsafları kontrol edin, sonra bu düğmeye basın</b>
+                  <small>Onayladığınızda sistem resmî tarife cetvelinde en yakın <b>aday GTİP kodlarını</b> arar.
+                    Vergi, TAREKS ve maliyet araması bu adımda <b>başlamaz</b>; onlar 4. adımdadır.</small>
+                </div>
+                <button id="confirmAttributes" type="button" class="primary-step-button" data-action="confirm-attributes">
+                  <span>Evsafları onayla → aday GTİP bul</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14 0M14 6l6 6-6 6"/></svg>
+                </button>
+              </div>
+
               <p class="editable-note"><b>Tüm alanlar düzenlenebilir.</b> Modelin yanlış veya eksik gördüğü bir bilgiyi kutunun içine tıklayıp değiştirebilirsiniz.</p>
               <div class="attribute-grid">
                 <label class="field"><span>Ürün kategorisi</span><input id="productCategory" maxlength="200" placeholder="Örn. çocuk dış giyim"></label>
@@ -324,7 +343,7 @@
               </div>
               <div class="attribute-actions">
                 <p id="visionProvider">Model bilgisi analizden sonra gösterilir.</p>
-                <button id="confirmAttributes" type="button"><span>Evsafları onayla ve aday GTİP bul</span></button>
+                <button id="confirmAttributesBottom" type="button" data-action="confirm-attributes"><span>Evsafları onayla → aday GTİP bul</span></button>
               </div>
             </section>
 
@@ -342,8 +361,11 @@
               </div>
             </details>
 
-            <details class="advanced-fields cost-fields" id="costDetails" open>
-              <summary><span>Maliyet hesabı</span><small>Fatura · döviz · navlun · sigorta</small></summary>
+            <details class="advanced-fields cost-fields optional-later" id="costDetails">
+              <summary><span>Maliyet hesabı <em class="optional-tag">isteğe bağlı · sonra doldurabilirsiniz</em></span><small>Fatura · döviz · navlun · sigorta</small></summary>
+              <p class="box-purpose">Bu kutu <b>yalnızca TL maliyet toplamı</b> içindir. Boş bırakırsanız GTİP, vergi oranları,
+                TAREKS kapsamı ve belge listesi yine de çıkar; sadece toplam tutar hesaplanmaz. Kodunuz kesinleştikten sonra
+                geri dönüp doldurabilirsiniz.</p>
               <div class="advanced-grid cost-grid">
                 <label class="field"><span>Fatura bedeli</span><input id="invoiceValue" type="text" inputmode="decimal" data-number data-min="0" placeholder="0,00 (örn. 1.234,56)"></label>
                 <label class="field"><span>Navlun</span><input id="freight" type="text" inputmode="decimal" data-number data-min="0" placeholder="0,00 (örn. 1.234,56)"></label>
@@ -373,7 +395,16 @@
             </details>
 
             <div class="consent-line"><span aria-hidden="true">!</span><p>Fotoğraf yalnızca evsaf çıkarır; kesin GTİP sayılmaz. Güvenlik sorulu Tarife Arama Motoru otomatik aşılmaz ve yalnızca manuel doğrulama bağlantısı olarak gösterilir.</p></div>
-            <button class="analyse-button" id="analyseButton" type="submit"><span>GTİP bul · vergi ve TAREKS'i araştır</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14 0M14 6l6 6-6 6"/></svg></button>
+            <div class="next-step-cta final-step" id="analyseNextStep">
+              <div class="next-step-text">
+                <span class="step-badge">Son adım · 4</span>
+                <b>Resmî kaynakları tara ve dosyayı çıkar</b>
+                <small>Bu düğme seçtiğiniz GTİP için <b>resmî tarife satırını</b>, gümrük vergisi ve İGV oranlarını,
+                  <b>TAREKS / ürün güvenliği kapsamını</b>, damping-gözetim gibi ticaret politikası önlemlerini, gereken
+                  belgeleri ve (maliyet kutusunu doldurduysanız) TL toplam maliyeti tek dosyada toplar.</small>
+              </div>
+              <button class="analyse-button" id="analyseButton" type="submit"><span>Vergi, TAREKS ve belgeleri araştır</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14 0M14 6l6 6-6 6"/></svg></button>
+            </div>
           </div>
 
           <aside class="readiness-card" aria-labelledby="readinessTitle">

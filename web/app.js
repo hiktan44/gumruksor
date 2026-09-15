@@ -1308,6 +1308,7 @@ document.addEventListener("change", (event) => {
 });
 
 function renderCustomsResult(data) {
+  setFlowStep(4);
   exportStore.precheck = data;
   state.currentCustomsResult = data;
   saveLocalScenario(data);
@@ -1431,13 +1432,32 @@ function setVisionState(status, message, provider = "") {
   badge.textContent = labels[status] || status;
   $("#visionMessage").textContent = message;
   $("#visionProvider").textContent = provider || "Analiz sonucu ve güven düzeyi burada gösterilir.";
-  const confirm = $("#confirmAttributes");
-  confirm.disabled = status === "analysing";
-  confirm.querySelector("span").textContent = status === "confirmed"
-    ? "Evsaflar onaylandı · Adayları yeniden bul"
-    : "Evsafları onayla ve aday GTİP bul";
+  setConfirmButtons(
+    status === "confirmed" ? "Evsaflar onaylandı → adayları yeniden bul" : "Evsafları onayla → aday GTİP bul",
+    status === "analysing",
+  );
   updateVisionAnalyseButton(status);
   updateReadiness();
+}
+
+function setConfirmButtons(label, disabled) {
+  // Onay düğmesi hem evsaf kutusunun üstünde hem altında duruyor; ikisi tek eylemdir.
+  $$('[data-action="confirm-attributes"]').forEach((button) => {
+    button.disabled = disabled;
+    const span = button.querySelector("span");
+    if (span) span.textContent = label;
+  });
+}
+
+function setFlowStep(step) {
+  // Şerit kullanıcının gerçekte nerede olduğunu gösterir; sabit "1. adım" yanıltıcıydı.
+  const flow = $("#customsFlow");
+  if (!flow) return;
+  const current = Math.max(1, Math.min(4, Number(step) || 1));
+  flow.dataset.step = String(current);
+  [...flow.querySelectorAll("[data-flow-step]")].forEach((node) => {
+    node.classList.toggle("active", Number(node.dataset.flowStep) <= current);
+  });
 }
 
 function updateVisionAnalyseButton(status) {
@@ -1647,6 +1667,7 @@ function setSelectedTariffCode(code, { exact = false } = {}) {
   $("#candidateGtip").value = normalised;
   state.customsGtipSelectionConfirmed = [6, 8, 10, 12].includes(normalised.length);
   state.customsExactGtipConfirmed = exact && normalised.length === 12;
+  if (state.customsExactGtipConfirmed) setFlowStep(4);
   state.customsAutoGtip = null;
   $("#candidateGtip").dispatchEvent(new Event("input", { bubbles: true }));
   state.customsApplyingTariffSelection = false;
@@ -1843,7 +1864,10 @@ async function analyseProductImage() {
       `${data.warning} Alanları düzeltin; araştırma ancak onayınızdan sonra başlar.`,
       `Yapay zekâ görsel analizi · güven: ${confidenceLabel(data.confidence)}`,
     );
-    $("#productFileStatus").scrollIntoView({ behavior: "smooth", block: "center" });
+    // Analiz bitince kullanicinin gozu siradaki eyleme dusmeli; eskiden durum satirina
+    // kayiyordu ve onay dugmesi uzun evsaf listesinin altinda kaliyordu.
+    setFlowStep(2);
+    ($("#attributeNextStep") || $("#productFileStatus")).scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
     state.customsVisionResult = null;
     // Gercek sebep ust satirda gorunmeli: "kotaniz doldu" ile "model yanit vermedi"
@@ -2085,7 +2109,7 @@ $("#candidateGtip").addEventListener("input", () => {
   updateReadiness();
 });
 
-$("#confirmAttributes").addEventListener("click", async () => {
+async function confirmAttributesAndFindCandidates() {
   if (state.customsVisionStatus === "analysing") return;
   if ($("#productDescription").value.trim().length < 12) {
     showToast("Onaylamadan önce teknik ürün tanımını tamamlayın.");
@@ -2099,9 +2123,7 @@ $("#confirmAttributes").addEventListener("click", async () => {
       ? "Yapay zekâ görsel analizi · kullanıcı onaylı"
       : "Elle girilen evsaf · kullanıcı onaylı",
   );
-  const confirm = $("#confirmAttributes");
-  confirm.disabled = true;
-  confirm.querySelector("span").textContent = "Aday GTİP’ler bulunuyor…";
+  setConfirmButtons("Aday GTİP’ler bulunuyor…", true);
   try {
     const classification = await classifyApprovedProduct();
     if (classification.candidates?.length) {
@@ -2113,6 +2135,7 @@ $("#confirmAttributes").addEventListener("click", async () => {
           : "Elle girilen evsaf · aday kodlar resmî tarife cetvelinde doğrulandı",
       );
       showToast(`${classification.candidates.length} aday tarife kodu bulundu.`);
+      setFlowStep(3);
       $("#gtipSuggestions").scrollIntoView({ behavior: "smooth", block: "center" });
     } else {
       setVisionState("confirmed", classification.summary, "Yapay zekâ sınıflandırması · aday kod bulunamadı");
@@ -2124,8 +2147,12 @@ $("#confirmAttributes").addEventListener("click", async () => {
     $("#gtipSuggestionList").innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message || "Aday kodlar üretilemedi.")}</p></div>`;
     setVisionState("confirmed", "Evsaflar onaylandı ancak aday GTİP üretilemedi. Tekrar deneyebilir veya kodu elle girebilirsiniz.");
   } finally {
-    confirm.disabled = false;
+    setConfirmButtons("Evsaflar onaylandı → adayları yeniden bul", false);
   }
+}
+
+$$('[data-action="confirm-attributes"]').forEach((button) => {
+  button.addEventListener("click", confirmAttributesAndFindCandidates);
 });
 
 $("#customsForm").addEventListener("submit", async (event) => {
@@ -4198,6 +4225,7 @@ $("#directClassifyButton")?.addEventListener("click", async () => {
     const classification = await classifyApprovedProduct();
     if (classification.candidates?.length) {
       showToast(`${classification.candidates.length} aday tarife kodu bulundu.`);
+      setFlowStep(3);
       $("#gtipSuggestions").scrollIntoView({ behavior: "smooth", block: "center" });
     } else {
       showToast("Aday kod için ürün tanımı biraz daha detaylandırılmalı.");
