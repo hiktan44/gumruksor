@@ -1481,3 +1481,19 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .assistant-actions button.secondary-action { border-color: var(--line-strong, var(--line)); background: transparent; color: var(--ink-2); }
 .assistant-actions button[disabled] { opacity: .55; cursor: progress; }
 @media (max-width: 720px) { .assistant-thread { max-height: none; } }
+
+/* Beyanname taslağı (FAZ 8.1) — kutu durumları renkle de ayrışır ki
+   "veri yok" bir kutu asla dolu bir kutuyla karışmasın. */
+.draft-summary { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); background: var(--canvas); }
+.draft-summary p { margin: 8px 0 4px; font-size: .68rem; line-height: 1.6; }
+.draft-summary small { display: block; color: var(--ink-2); font-size: .57rem; }
+.draft-summary ul { margin: 10px 0 0; }
+.draft-section { margin-bottom: 10px; border: 1px solid var(--line); }
+.draft-section > summary { display: flex; gap: 10px; justify-content: space-between; align-items: center; padding: 11px 14px; background: var(--canvas); cursor: pointer; font-size: .68rem; font-weight: 700; }
+.draft-section > summary small { color: var(--ink-2); font-weight: 400; font-size: .56rem; }
+.draft-section .evidence-table { margin: 0; }
+.draft-row td { vertical-align: top; font-size: .6rem; }
+.draft-row.draft-verified td:nth-child(4) { color: var(--teal); font-weight: 700; }
+.draft-row.draft-check_required td:nth-child(4) { color: var(--warn, #9a6b00); font-weight: 700; }
+.draft-row.draft-unavailable { opacity: .72; }
+.draft-row.draft-unavailable td:nth-child(4) { color: var(--ink-2); }

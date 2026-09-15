@@ -380,6 +380,36 @@
               </div>
             </details>
 
+            <details class="advanced-fields optional-later" id="declarationDetails">
+              <summary><span>Beyanname bilgileri</span><em class="optional-tag">isteğe bağlı · beyanname taslağı için</em><small>Taraflar · taşıma · kap ve ağırlık · fatura</small></summary>
+              <p class="box-purpose">Bu kutu <b>yalnızca beyanname taslağı</b> içindir. Boş bırakırsanız GTİP, vergiler ve belge
+                listesi yine çıkar; taslakta doldurmadığınız kutular <b>boş ve "veri yok" olarak</b> görünür — hiçbir kutu
+                sistem tarafından uydurulmaz.</p>
+              <div class="advanced-grid">
+                <label class="field"><span>Beyan sahibi / temsilci vergi no</span><input id="declarantTaxId" maxlength="40" placeholder="Kutu 14"></label>
+                <label class="field"><span>Gümrük idaresi kodu</span><input id="customsOfficeCode" maxlength="20" placeholder="Kutu A · örn. 060500"></label>
+                <label class="field"><span>Gönderici / ihracatçı unvanı</span><input id="consignorName" maxlength="200" placeholder="Kutu 2"></label>
+                <label class="field"><span>Gönderici adresi</span><input id="consignorAddress" maxlength="400" placeholder="Kutu 2"></label>
+                <label class="field"><span>Alıcı / ithalatçı unvanı</span><input id="consigneeName" maxlength="200" placeholder="Kutu 8"></label>
+                <label class="field"><span>Alıcı adresi</span><input id="consigneeAddress" maxlength="400" placeholder="Kutu 8"></label>
+                <label class="field"><span>Alıcı kimlik no (VKN / EORI)</span><input id="consigneeTaxId" maxlength="40" placeholder="Kutu 8 · alıcıdan alınır"></label>
+                <label class="field"><span>Teslim yeri</span><input id="deliveryPlace" maxlength="200" placeholder="Kutu 20 · örn. İzmir Limanı"></label>
+                <label class="field"><span>Taşıma şekli</span><input id="transportMode" maxlength="60" placeholder="Kutu 25 · karayolu, denizyolu…"></label>
+                <label class="field"><span>Taşıt kimliği</span><input id="transportIdentity" maxlength="200" placeholder="Kutu 18/21 · plaka, gemi adı, uçuş no"></label>
+                <label class="field"><span>Konteyner numaraları</span><input id="containerNumbers" maxlength="300" placeholder="Kutu 19/31"></label>
+                <label class="field"><span>Çıkış / giriş gümrüğü</span><input id="borderCustomsOffice" maxlength="120" placeholder="Kutu 29"></label>
+                <label class="field"><span>Kap adedi</span><input id="packageCount" type="text" inputmode="numeric" data-number data-min="0" placeholder="Kutu 6/31"></label>
+                <label class="field"><span>Kap cinsi</span><input id="packageKind" maxlength="80" placeholder="Kutu 31 · palet, koli, varil…"></label>
+                <label class="field"><span>Ambalaj marka ve numaraları</span><input id="packageMarks" maxlength="300" placeholder="Kutu 31"></label>
+                <label class="field"><span>Brüt ağırlık (kg)</span><input id="grossWeightKg" type="text" inputmode="decimal" data-number data-min="0" placeholder="Kutu 35"></label>
+                <label class="field"><span>Net ağırlık (kg)</span><input id="netWeightKg" type="text" inputmode="decimal" data-number data-min="0" placeholder="Kutu 38"></label>
+                <label class="field"><span>Fatura numarası</span><input id="invoiceNumber" maxlength="60" placeholder="Kutu 44"></label>
+                <label class="field"><span>Fatura tarihi</span><input id="invoiceDate" type="date"></label>
+                <label class="field"><span>Ödeme şekli kodu</span><input id="paymentMethodCode" maxlength="60" placeholder="Kutu 28"></label>
+              </div>
+              <p class="rate-warning">Beyannamenin tescili beyan sahibinin sorumluluğundadır. Taslak karar destek çıktısıdır ve beyanname yerine geçmez.</p>
+            </details>
+
             <details class="advanced-fields cost-fields optional-later" id="costDetails">
               <summary><span data-label-import="Maliyet hesabı" data-label-export="İhracat bedeli ve sevkiyat">Maliyet hesabı</span><em class="optional-tag">isteğe bağlı · sonra doldurabilirsiniz</em><small>Fatura · döviz · navlun · sigorta</small></summary>
               <p class="box-purpose">Bu kutu <b>yalnızca TL maliyet toplamı</b> içindir. Boş bırakırsanız GTİP, vergi oranları,
