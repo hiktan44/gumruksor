@@ -2549,6 +2549,7 @@ class CustomsAdvisor:
         # İhracat yönünde hedef ülke oranını okuyan motorlar; sunucuda bağlanır (ebti deseni).
         self.eu_taric_engine: Any = None
         self.foreign_tariff_engine: Any = None
+        self.eu_vat_index: Any = None
 
     async def _export_requirements(self, inquiry: CustomsInquiry) -> ExportRequirements:
         """Hedef ülke bloğunu kurar; oran YALNIZ resmî bir motordan okunduysa taşınır.
@@ -2625,12 +2626,22 @@ class CustomsAdvisor:
                     note="Hedef ülke tarife kaynağına şu anda ulaşılamadı; oran gösterilmiyor.",
                 )
 
+        # Hedef ülke KDV'si: yalnız AB-27 için verimiz var, ağ çağrısı yok, ücret yok.
+        # Alan hiçbir koşulda "doğrulandı" sayılmaz (export_requirements bunu zorlar).
+        destination_vat: dict[str, Any] | None = None
+        if self.eu_vat_index is not None and profile.regime == "eu" and profile.iso2:
+            try:
+                destination_vat = self.eu_vat_index.lookup(profile.iso2, gtip=code or None)
+            except Exception:
+                logger.exception("AB KDV oranı okunamadı")
+
         return build_export_requirements(
             inquiry.model_dump(),
             profile=profile,
             destination_duty=duty,
             duty_source=source,
             on_demand_lookup=on_demand,
+            destination_vat=destination_vat,
         )
 
     async def close(self) -> None:

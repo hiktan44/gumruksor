@@ -60,6 +60,7 @@ from mevzuat_mcp_server import (
     tariff_engine,
     ticaret_client,
     trade_measure_engine,
+    eu_vat_index,
     vat_rate_index,
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
@@ -2713,6 +2714,24 @@ async def web_excise_tax(request: Request):
     report = excise_tax_index.lookup(str(body.get("gtip", "")))
     report["summary"] = excise_tax_summary(report)
     return JSONResponse(report)
+
+
+@mcp.custom_route("/api/foreign/vat", methods=["GET"])
+async def web_foreign_vat(request: Request):
+    """Hedef ülkenin KDV oranı (AB-27). Ağ çağrısı yok; tohum/önbellekten okunur."""
+    limited = _rate_limit_response(request, "foreign-vat", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    iso2 = str(request.query_params.get("iso2") or "").strip()
+    if len(iso2) != 2 or not iso2.isalpha():
+        return JSONResponse({"error": "İki harfli ülke kodu gerekir (?iso2=DE)."}, status_code=422)
+    gtip = re.sub(r"\D", "", str(request.query_params.get("gtip") or ""))
+    if gtip and not 4 <= len(gtip) <= 12:
+        return JSONResponse({"error": "GTİP 4-12 haneli olmalıdır."}, status_code=422)
+    report = eu_vat_index.lookup(iso2, gtip=gtip or None)
+    report["summary"] = eu_vat_index.summary_lines(report)
+    report["status"] = eu_vat_index.status()
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/tariff/vat", methods=["GET"])

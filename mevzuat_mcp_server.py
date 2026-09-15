@@ -42,6 +42,7 @@ from exchange_rates import ExchangeRateError, ExchangeRateService, parse_registr
 from eylemio_client import EylemioClient, EylemioError, summarise_declaration
 from trade_measures import KIND_LABELS as TRADE_MEASURE_LABELS, TradeMeasureEngine, summary_lines as trade_measure_summary
 from tax_lists import ExciseTaxIndex, summary_lines as excise_tax_summary
+from eu_vat import EuVatRates
 from vat_lists import VatRateIndex
 from tariff_engine import (
     LandedCostInput,
@@ -205,6 +206,10 @@ customs_advisor_service.ebti_engine = ebti_engine
 # ön değerlendirmede archive_only ile çağrılır, yani ücretli aktör tetiklenmez.
 customs_advisor_service.eu_taric_engine = eu_taric_engine
 customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
+# AB-27 KDV oranları (tohum + TEDB'den otomatik yükseltme).
+eu_vat_index = EuVatRates()
+customs_advisor_service.eu_vat_index = eu_vat_index
+BACKGROUND_LOOPS.append(("eu-vat-sync", eu_vat_index.periodic_sync_loop))
 
 
 async def hybrid_index_refresh_loop() -> None:

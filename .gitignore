@@ -167,8 +167,14 @@ test_mevzuat_server.py
 # Claude development notes
 CLAUDE.md
 
-# Data directory (cache, embeddings, etc.)
-data/
+# Data directory (cache, embeddings, etc.) — resmî tohum JSON'ları HARİÇ.
+# data/ tümüyle yok sayılırsa yeni bir tohum dosyası "git add -A" ile sessizce atlanır
+# ve yerelde geçen testler CI'da patlar. Git, üst dizini dışlanmış bir dosyayı geri
+# alamadığı için yol zincirinin tamamı tek tek açılmak zorunda.
+data/*
+!data/official/
+data/official/*
+!data/official/*.json
 
 # yerel geliştirme verisi
 .dev-data/
