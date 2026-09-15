@@ -367,6 +367,29 @@ Geçiş tamamlanıp eski adres kapatıldığında bu değişken tekrar boşaltı
 ADDITIONAL_ALLOWED_ORIGINS=https://www.gumruksor.com,https://mevzuat-mcp.seymata.com
 ```
 
+### İthalat / İhracat yönü
+
+Çalışma masasındaki formun en üstünde **İthalat / İhracat** seçimi vardır ve tüm dosyayı belirler. İhracat seçilince hedef ülke alanı açılır; kullanıcı ülkeyi yazar yazmaz, **kota harcamadan**, o ülke için hangi veriye sahip olduğumuz rozet olarak gösterilir (`/api/tariff/countries` yanıtındaki `export_data_tier` / `export_data_note`).
+
+Hedef ülkede açılacak beyanname yanlış doldurulursa ciddi zarar doğar. Bu yüzden `export_requirements.py` uydurmayı **yapısal olarak** engeller:
+
+| Veri düzeyi | Ülkeler | Gösterilen |
+|---|---|---|
+| `rates` | AB-27 (TARIC arşivi), Birleşik Krallık (resmî API) | Gerçek oran; kaynak URL'i, tarihi ve SHA-256'sı alanın yanında |
+| `nomenclature` | İsviçre | Tarife numarası ve eşya tanımı; **İsviçre oran yayımlamaz** |
+| `agreement_only` | Kayıt defterindeki kalan ülkeler | Yalnız anlaşma ve menşe/belge kuralı; oran **gösterilmez** |
+| `none` | Tanınmayan ülke adı | Yalnız Türkiye tarafı ihracat prosedürü |
+
+`destination_duty` yalnız `rates` düzeyinde taşınabilir; `build_export_requirements` düşük kademede enjekte edilen bir oranı da düşürür.
+
+Beyannameye girecek her kalem bir **emin olma düzeyi** taşır: `verified` (resmî anlık görüntüden okundu; 90 günden eski kaynak otomatik olarak düşürülür), `check_required` (kuraldan türetildi veya eksik; notu nedenini yazar) ve `unavailable` (veri yok; alan **hiçbir koşulda değer taşımaz**). Hedef ülkenin KDV oranı ve ithalatçının EORI numarası kaynaklarımızda olmadığı için kalıcı olarak `unavailable`'dır. Üstündeki **beyanname hazırlık kapısı** ancak her zorunlu alan doğrulanmışsa "hazır" der; oran verisi olmayan ülkede açıkça "bu dosyayla beyanname doldurulmamalı" yazar.
+
+AB tarafı ön değerlendirmede `archive_only=True` ile sorgulanır, yani **ücretli Apify aktörü tetiklenmez**; arşivde satır yoksa kademe düşürülür ve kullanıcıya tek kod için ücretli canlı sorguyu kendi başlatma seçeneği (Uzman paketi `foreign_tariff` kilidi) verilir.
+
+İhracatta Türk ithalat vergileri (GV, İGV, EMY, KDV, ÖTV, KKDF, gözetim, damping) hesaplanmaz ve gösterilmez; `deterministic_cost` `null`'dır. İş akışı 18 adımlık ihracat listesine döner (`tr-export-workflow-v1`). İhracatçı birliği kaydı, ihracı yasak/ön izne bağlı mallar, ikili kullanım listeleri ve KDV iadesi **indekslenmemiştir**; bu adımlar her dosyada "bekliyor" kalır ve "kapsam dışıdır" denmez.
+
+Menşe/dolaşım belgeleri `countries.py` kayıt defterinden türetilir ama ifade tersine çevrilir: ithalatta belge *ibraz edilir*, ihracatta Türkiye *düzenler* (AB'de fasıla göre A.TR veya EUR.1, Birleşik Krallık ve Kore'de fatura üzeri menşe beyanı, BAE ve Katar'da anlaşmaya özgü belge, tercihsiz ülkede menşe şahadetnamesi). Hedef pazar uygunluk ipuçları (CE/UKCA, tekstil etiketleme, LVD/EMC, ISPM-15) **kullanıcının onayladığı görsel evsaflardan** türetilir ve her ipucu hangi alandan çıktığını gösterir; bunlar ipucudur, bulgu değildir.
+
 ### Abonelik, kota ve kanıt dosyaları
 
 Google hesabıyla giriş yapan kullanıcılar Başlangıç, Uzman, Ekip ve Kurumsal paketlerini; aylık kullanım sayaçlarını ve sunucuda saklanan kanıt dosyalarını **Hesabım** alanında görür. Paketler kotanın yanında **özellik kilitleri** de taşır (`account_service.PLANS` → `capabilities`; katalog `FEATURES`): Uzman paketi menşe senaryosu karşılaştırma, detaylı sorgu ve PDF raporu; Ekip paketi buna ek olarak toplu hesap, tarih bazlı sorgu ve uyum uyarılarını; Kurumsal paket ayrıca API erişimini açar. PRD katman adları (Essentials/Pro/Premium/Premium+) yalnız iç takma addır (`PLAN_ALIASES`); paket kodları ve Stripe fiyat kimlikleri değişmez. Kilitli bir uç `403 feature_required` ve özelliği içeren paket listesiyle yanıt verir; Google girişi yapılandırılmamış kurulumlarda kilitler açıktır. Kullanıcı rolleri `user | consultant | editor | admin` olarak `users.role` sütununda tutulur; yönetici e-posta listesi her zaman önceliklidir, editör rolü veri inceleme kuyruğunu görür. Rol yönetim panelindeki kullanıcı tablosundan atanır (`PUT /api/admin/users/{sub}/role`, denetim günlüğüne yazılır). Yönetici e-postaları (`ADMIN_EMAILS`) aylık kotalardan muaftır; kullanım yine sayaçlara yazılır, yalnız sınır uygulanmaz. Kotası dolan kullanıcıya dönen `429 quota_exceeded` yanıtı hangi işlemin dolduğunu (`operation`) ve bir üst paketlerin kodunu, adını, aylık/yıllık fiyatını, o işlem için kotasını ve doğrudan satın alınabilir olup olmadığını (`upgrade[]`, `account_service.upgrade_options`) taşır; arayüz bu bilgiyle somut paketi ve "Paketi yükselt" düğmesini gösterir, ödeme dönüşünde hesap yeniden okunduğu için yeni kota anında geçerli olur. Görsel kalıcı olarak saklanmaz. Kanıt dosyası analiz sonucunu; kontrol zamanı, GTİP, menşe, yürürlük referansı, resmî URL’ler ve etkin tarife/kontrol snapshot SHA-256 değerleriyle birlikte JSON olarak saklar ve dışa aktarır. Yönetici adresleri virgülle ayrılmış `ADMIN_EMAILS` değişkeninden alınır; `/admin` paket/durum değişikliklerini denetim günlüğüne yazar.

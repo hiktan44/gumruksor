@@ -271,3 +271,20 @@ class BuildTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CountriesRouteTierTests(unittest.TestCase):
+    """Arayüz kota harcamadan uyarabilsin diye kademe ülke listesinde geliyor."""
+
+    def test_route_exposes_the_export_tier_for_every_country(self) -> None:
+        from starlette.testclient import TestClient
+        import app as web_app
+
+        with TestClient(web_app.app, base_url="https://gumruksor.com") as client:
+            body = client.get("/api/tariff/countries").json()
+        items = {item["name"]: item for item in body["items"]}
+        self.assertTrue(all("export_data_tier" in item for item in body["items"]))
+        self.assertEqual(items["Almanya"]["export_data_tier"], "rates")
+        self.assertEqual(items["İsviçre"]["export_data_tier"], "nomenclature")
+        self.assertEqual(items["Çin"]["export_data_tier"], "agreement_only")
+        self.assertIn("vergi oranı verimiz yok", items["Çin"]["export_data_note"])

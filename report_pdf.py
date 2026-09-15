@@ -153,12 +153,22 @@ def render_precheck_report_html(
         legal_lines.append(notice)
     legal = "".join(f"<p>{_esc(line)}</p>" for line in legal_lines if line)
     dispatch = f" · sevk: {_esc(identity['dispatch'])}" if identity["dispatch"] else ""
+    is_export = getattr(result, "direction", "import") == "export"
+    # Başlık yönü söylemeli: ihracat dosyasında "İthalat raporu" yazması aktif olarak yanıltıcıdır.
+    title = REPORT_TITLE.replace(
+        "Ön değerlendirme", "İhracat ön değerlendirme" if is_export else "İthalat ön değerlendirme"
+    )
+    destination = getattr(getattr(result, "inquiry", None), "destination_country", None)
+    destination_line = (
+        f"<p class=\"meta\">Hedef ülke: {_esc(str(destination))}</p>" if is_export and destination else ""
+    )
     return f"""<!doctype html>
-<html lang="tr"><head><meta charset="utf-8"><title>{_esc(REPORT_TITLE)}</title><style>{_REPORT_CSS}</style></head>
+<html lang="tr"><head><meta charset="utf-8"><title>{_esc(title)}</title><style>{_REPORT_CSS}</style></head>
 <body>
 <p class="kicker">{_esc(BRAND)} · Ticaret Bilgi Masası</p>
-<h1>{_esc(REPORT_TITLE)}</h1>
+<h1>{_esc(title)}</h1>
 <p class="meta">Ürün: {_esc(identity['product'])}</p>
+{destination_line}
 <p class="meta">GTİP / aday kod: <code>{_esc(identity['gtip'])}</code> · menşe: {_esc(identity['origin'])}{dispatch} · durum: {_esc(identity['status'])}</p>
 <p class="meta">Kaynak tarihi (as_of): {_esc(result.as_of)} · Hazırlanan: {_esc(generated_for)} · Oluşturma: {_esc(generated_at)}</p>
 <p class="summary">{_esc(result.summary)}</p>

@@ -76,7 +76,9 @@ class ReportHtmlTests(unittest.TestCase):
         self.assertIn(report_pdf.DECISION_SUPPORT_SENTENCE, html)
         self.assertIn("Nihai tarife tespiti bağlayıcı karar yerine geçmez", html)
         self.assertIn(html_escape(_legal_notice(AS_OF)), html)
-        self.assertIn(report_pdf.REPORT_TITLE.replace("'", "&#x27;"), html)
+        # Başlık artık yönü taşır; ihracat dosyasında "İthalat raporu" yazması yanıltıcı olurdu.
+        expected = report_pdf.REPORT_TITLE.replace("Ön değerlendirme", "İthalat ön değerlendirme")
+        self.assertIn(expected.replace("'", "&#x27;"), html)
         self.assertNotIn("<script", html.lower())
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
         # Source ledger: id, authority, title, url, retrieved_at, short sha256.

@@ -203,6 +203,25 @@
 
         <form class="customs-form" id="customsForm">
           <div class="intake-card">
+            <fieldset class="direction-switch" id="directionSwitch">
+              <legend>Bu işlem ithalat mı, ihracat mı?</legend>
+              <label class="direction-card">
+                <input type="radio" name="tradeDirection" value="import" checked>
+                <span><b>İthalat</b><small>Türkiye'ye getiriyorum — gümrük vergisi, İGV, KDV, TAREKS, menşe belgesi</small></span>
+              </label>
+              <label class="direction-card">
+                <input type="radio" name="tradeDirection" value="export">
+                <span><b>İhracat</b><small>Türkiye'den gönderiyorum — hedef ülke beyannamesi, dolaşım belgesi, KDV istisnası</small></span>
+              </label>
+            </fieldset>
+
+            <div class="destination-picker" id="destinationPicker" hidden>
+              <label class="field field-wide"><span>Hedef ülke <b>*</b></span>
+                <input id="destinationCountry" list="countryList" autocomplete="off" maxlength="100" placeholder="Ürünün gideceği ülke — örn. Almanya">
+              </label>
+              <p class="destination-tier" id="destinationTier" data-tier="" aria-live="polite">Ülke seçtiğinizde o ülke için hangi veriye sahip olduğumuzu burada göreceksiniz.</p>
+            </div>
+
             <div class="section-heading"><span>01</span><div><h2>Ürün dosyası</h2><p>Doğru sınıflandırma için ticari isimden fazlası gerekir.</p></div></div>
 
             <label class="field field-wide"><span>Sorunuz <b>*</b></span><textarea id="customsQuestion" maxlength="1500" required placeholder="Örn. Çin menşeli bu çocuk şortunu ithal etmek için TAREKS gerekir mi; vergi ve belge riskleri nelerdir?"></textarea></label>
@@ -259,7 +278,7 @@
                       <div class="autocomplete-dropdown" id="candidateGtipDropdown" hidden></div>
                     </div>
                   </label>
-                  <label class="field"><span>Menşe ülke <b>*</b></span><input id="originCountry" list="countryList" autocomplete="off" maxlength="100" required placeholder="Örn. Çin"></label>
+                  <label class="field" data-direction-label><span data-label-import="Menşe ülke *" data-label-export="Eşyanın menşei">Menşe ülke <b>*</b></span><input id="originCountry" list="countryList" autocomplete="off" maxlength="100" required placeholder="Örn. Çin"></label>
                 </div>
                 <section class="gtip-suggestions" id="gtipSuggestions" hidden aria-live="polite">
                   <header><b>En yakın tarife adayları</b><small id="gtipSuggestionStatus">Evsaf onayından sonra hazırlanır.</small></header>
@@ -352,9 +371,9 @@
               <div class="advanced-grid">
                 <label class="field"><span>Kullanım amacı</span><input id="intendedUse" maxlength="300" placeholder="Tüketici, sanayi girdisi, çocuk kullanımı…"></label>
                 <label class="field"><span>Hedef kullanıcı (cinsiyet / yaş)</span><input id="targetUser" maxlength="300" placeholder="Örn. kız çocuk, 8–12 yaş"></label>
-                <label class="field"><span>İthalatta beyan edilecek ürün türü</span><input id="declaredProductType" maxlength="300" placeholder="Örn. pijama takımı veya günlük giyim takımı"></label>
-                <label class="field"><span>Sevk ülkesi</span><input id="dispatchCountry" list="countryList" autocomplete="off" maxlength="100" placeholder="Menşeden farklıysa"></label>
-                <label class="field"><span>A.TR dolaşım belgesi</span><select id="assistAtr"><option value="">Belirtilmedi</option><option value="true">İbraz edilecek</option><option value="false">Yok</option></select></label>
+                <label class="field" data-direction-label><span data-label-import="İthalatta beyan edilecek ürün türü" data-label-export="İhracat beyannamesinde beyan edilecek ürün türü">İthalatta beyan edilecek ürün türü</span><input id="declaredProductType" maxlength="300" placeholder="Örn. pijama takımı veya günlük giyim takımı"></label>
+                <label class="field" data-direction="import"><span>Sevk ülkesi</span><input id="dispatchCountry" list="countryList" autocomplete="off" maxlength="100" placeholder="Menşeden farklıysa"></label>
+                <label class="field" data-direction-label><span data-label-import="A.TR dolaşım belgesi" data-label-export="A.TR düzenlenecek mi">A.TR dolaşım belgesi</span><select id="assistAtr"><option value="">Belirtilmedi</option><option value="true">İbraz edilecek</option><option value="false">Yok</option></select></label>
                 <label class="field"><span>Ürün durumu</span><select id="productCondition"><option value="unknown">Belirtilmedi</option><option value="new">Yeni</option><option value="used">Kullanılmış</option></select></label>
                 <label class="field"><span>Teslim şekli</span><input id="incoterm" maxlength="20" placeholder="EXW, FOB, CIF…"></label>
                 <label class="field"><span>Ödeme şekli</span><input id="paymentMethod" maxlength="80" placeholder="Peşin, mal mukabili, vadeli akreditif…"></label>
@@ -362,7 +381,7 @@
             </details>
 
             <details class="advanced-fields cost-fields optional-later" id="costDetails">
-              <summary><span>Maliyet hesabı <em class="optional-tag">isteğe bağlı · sonra doldurabilirsiniz</em></span><small>Fatura · döviz · navlun · sigorta</small></summary>
+              <summary><span data-label-import="Maliyet hesabı" data-label-export="İhracat bedeli ve sevkiyat">Maliyet hesabı</span><em class="optional-tag">isteğe bağlı · sonra doldurabilirsiniz</em><small>Fatura · döviz · navlun · sigorta</small></summary>
               <p class="box-purpose">Bu kutu <b>yalnızca TL maliyet toplamı</b> içindir. Boş bırakırsanız GTİP, vergi oranları,
                 TAREKS kapsamı ve belge listesi yine de çıkar; sadece toplam tutar hesaplanmaz. Kodunuz kesinleştikten sonra
                 geri dönüp doldurabilirsiniz.</p>
@@ -373,25 +392,25 @@
                 <label class="field"><span>Diğer tescil öncesi gider</span><input id="otherCosts" type="text" inputmode="decimal" data-number data-min="0" placeholder="0,00 (örn. 1.234,56)"></label>
                 <label class="field"><span>Miktar / adet</span><input id="quantity" type="text" inputmode="decimal" data-number data-min="0.0001" placeholder="Birim maliyet için"></label>
                 <label class="field"><span>Para birimi</span><select id="currency"><option>USD</option><option>EUR</option><option>TRY</option><option>GBP</option><option>CNY</option></select></label>
-                <label class="field verified-rate"><span>Doğrulanmış gümrük vergisi %</span><input id="customsDutyRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Bilmiyorsanız boş"></label>
-                <label class="field verified-rate"><span>Doğrulanmış İGV / ek vergi %</span><input id="additionalDutyRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Bilmiyorsanız boş"></label>
-                <label class="field verified-rate"><span>Ek mali yükümlülük %</span><input id="additionalFinancialLiabilityRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Yoksa doğrulayıp 0"></label>
-                <label class="field verified-rate"><span>KKDF %</span><input id="kkdfRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Yoksa doğrulayıp 0"></label>
-                <label class="field verified-rate"><span>Doğrulanmış KDV %</span><input id="vatRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Bilmiyorsanız boş"></label>
-                <label class="field verified-rate"><span>Damping / sübvansiyon toplamı</span><input id="antiDumpingAmount" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-                <label class="field verified-rate"><span>ÖTV toplamı</span><input id="sctAmount" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-                <label class="field verified-rate"><span>Gözetim birim kıymeti</span><input id="surveillanceUnitValue" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-                <label class="field verified-rate"><span>Gözetim belgesi</span><select id="hasSurveillanceCertificate"><option value="">Belirtilmedi</option><option value="true">Var</option><option value="false">Yok</option></select></label>
-                <label class="field verified-rate"><span>TRT bandrol %</span><input id="assistTrtBandrolRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Uygulanıyorsa oran"></label>
+                <label class="field verified-rate" data-direction="import"><span>Doğrulanmış gümrük vergisi %</span><input id="customsDutyRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Bilmiyorsanız boş"></label>
+                <label class="field verified-rate" data-direction="import"><span>Doğrulanmış İGV / ek vergi %</span><input id="additionalDutyRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Bilmiyorsanız boş"></label>
+                <label class="field verified-rate" data-direction="import"><span>Ek mali yükümlülük %</span><input id="additionalFinancialLiabilityRate" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Yoksa doğrulayıp 0"></label>
+                <label class="field verified-rate" data-direction="import"><span>KKDF %</span><input id="kkdfRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Yoksa doğrulayıp 0"></label>
+                <label class="field verified-rate" data-direction="import"><span>Doğrulanmış KDV %</span><input id="vatRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Bilmiyorsanız boş"></label>
+                <label class="field verified-rate" data-direction="import"><span>Damping / sübvansiyon toplamı</span><input id="antiDumpingAmount" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+                <label class="field verified-rate" data-direction="import"><span>ÖTV toplamı</span><input id="sctAmount" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+                <label class="field verified-rate" data-direction="import"><span>Gözetim birim kıymeti</span><input id="surveillanceUnitValue" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+                <label class="field verified-rate" data-direction="import"><span>Gözetim belgesi</span><select id="hasSurveillanceCertificate"><option value="">Belirtilmedi</option><option value="true">Var</option><option value="false">Yok</option></select></label>
+                <label class="field verified-rate" data-direction="import"><span>TRT bandrol %</span><input id="assistTrtBandrolRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Uygulanıyorsa oran"></label>
                 <label class="field"><span>Kur (1 döviz = TL)</span><input id="assistExchangeRate" type="text" inputmode="decimal" data-number data-min="0.0001" placeholder="TCMB satış, tescil günü"></label>
                 <label class="field"><span>Kur tarihi</span><input id="assistExchangeRateDate" type="date"></label>
             <button type="button" class="fx-fetch" data-prefix="assist">TCMB kurunu getir</button>
             <small id="assistFxNote" class="fx-note" hidden></small>
-                <label class="field"><span>Damga vergisi (TL)</span><input id="assistStampDutyTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Beyanname maktu tutarı"></label>
-                <label class="field"><span>Liman / ardiye (TL)</span><input id="assistPortStorageTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Tescil öncesi, KDV matrahına dahil"></label>
-                <label class="field"><span>GEKAP (TL)</span><input id="assistGekapTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Beyanla ödenir"></label>
+                <label class="field" data-direction="import"><span>Damga vergisi (TL)</span><input id="assistStampDutyTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Beyanname maktu tutarı"></label>
+                <label class="field" data-direction="import"><span>Liman / ardiye (TL)</span><input id="assistPortStorageTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Tescil öncesi, KDV matrahına dahil"></label>
+                <label class="field" data-direction="import"><span>GEKAP (TL)</span><input id="assistGekapTry" type="text" inputmode="decimal" data-number data-min="0" placeholder="Beyanla ödenir"></label>
               </div>
-              <p class="rate-warning">Her mali kalem resmî kaynaktan veya müşavirinizden doğrulanmalıdır. Uygulanmayan kaleme boş bırakmak yerine doğruladıktan sonra 0 yazın; boş kalan kalem toplam maliyeti bilinçli olarak durdurur.</p>
+              <p class="rate-warning" data-direction="import">Her mali kalem resmî kaynaktan veya müşavirinizden doğrulanmalıdır. Uygulanmayan kaleme boş bırakmak yerine doğruladıktan sonra 0 yazın; boş kalan kalem toplam maliyeti bilinçli olarak durdurur.</p>
             </details>
 
             <div class="consent-line"><span aria-hidden="true">!</span><p>Fotoğraf yalnızca evsaf çıkarır; kesin GTİP sayılmaz. Güvenlik sorulu Tarife Arama Motoru otomatik aşılmaz ve yalnızca manuel doğrulama bağlantısı olarak gösterilir.</p></div>
@@ -399,11 +418,15 @@
               <div class="next-step-text">
                 <span class="step-badge">Son adım · 4</span>
                 <b>Resmî kaynakları tara ve dosyayı çıkar</b>
-                <small>Bu düğme seçtiğiniz GTİP için <b>resmî tarife satırını</b>, gümrük vergisi ve İGV oranlarını,
+                <small data-direction="import">Bu düğme seçtiğiniz GTİP için <b>resmî tarife satırını</b>, gümrük vergisi ve İGV oranlarını,
                   <b>TAREKS / ürün güvenliği kapsamını</b>, damping-gözetim gibi ticaret politikası önlemlerini, gereken
                   belgeleri ve (maliyet kutusunu doldurduysanız) TL toplam maliyeti tek dosyada toplar.</small>
+                <small data-direction="export">Bu düğme <b>hedef ülkede açılacak ithalat beyannamesi</b> için gereken kalemleri
+                  toplar: o ülkenin tarife kodu, elimizde varsa gümrük vergisi ve tercihli oran, düzenlemeniz gereken
+                  <b>menşe/dolaşım belgesi</b>, hedef pazar uygunluk şartları ve Türkiye tarafı ihracat işlemleri.
+                  <b>Emin olmadığımız her kalem ayrıca işaretlenir.</b></small>
               </div>
-              <button class="analyse-button" id="analyseButton" type="submit"><span>Vergi, TAREKS ve belgeleri araştır</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14 0M14 6l6 6-6 6"/></svg></button>
+              <button class="analyse-button" id="analyseButton" type="submit"><span data-label-import="Vergi, TAREKS ve belgeleri araştır" data-label-export="Hedef ülke beyanname şartlarını çıkar">Vergi, TAREKS ve belgeleri araştır</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14 0M14 6l6 6-6 6"/></svg></button>
             </div>
           </div>
 
@@ -412,10 +435,13 @@
             <ul id="readinessList">
               <li data-check="vision"><i></i><span><b>Görsel evsaf onayı</b><small>Fotoğraf varsa zorunlu</small></span></li>
               <li data-check="description"><i></i><span><b>Teknik ürün tanımı</b><small>İşlev, malzeme, model</small></span></li>
-              <li data-check="origin"><i></i><span><b>Menşe ülke</b><small>Vergi ve önlem için</small></span></li>
+              <li data-check="origin" data-direction="import"><i></i><span><b>Menşe ülke</b><small>Vergi ve önlem için</small></span></li>
+              <li data-check="destination" data-direction="export"><i></i><span><b>Hedef ülke</b><small>Beyanname ve belge şartı için</small></span></li>
               <li data-check="gtip"><i></i><span><b>Aday tarife kodu</b><small>6, 8, 10 veya 12 hane</small></span></li>
-              <li data-check="cost"><i></i><span><b>Kıymet bilgileri</b><small>Fatura, navlun, sigorta</small></span></li>
-              <li data-check="payment"><i></i><span><b>Ödeme ve teslim</b><small>KKDF ve kıymet için</small></span></li>
+              <li data-check="cost" data-direction="import"><i></i><span><b>Kıymet bilgileri</b><small>Fatura, navlun, sigorta</small></span></li>
+              <li data-check="payment" data-direction="import"><i></i><span><b>Ödeme ve teslim</b><small>KKDF ve kıymet için</small></span></li>
+              <li data-check="exportvalue" data-direction="export"><i></i><span><b>Bedel ve navlun</b><small>Fatura, navlun, sigorta</small></span></li>
+              <li data-check="exportterms" data-direction="export"><i></i><span><b>Teslim ve ödeme</b><small>Incoterm ve ödeme şekli</small></span></li>
             </ul>
             <div class="source-stack"><span>Kaynak katmanları</span><div><b>TR</b><p>Ticaret · TAREKS · TSE · GİB · Çevre</p></div><div><b>EU</b><p>EBTI · CLASS · CN · TARIC</p></div><small>AB verisi Türk GTİP12 veya Türk vergi oranı değildir.</small></div>
           </aside>
@@ -470,13 +496,13 @@
             <label class="field"><span>Diğer tescil öncesi gider</span><input id="tariffOtherCosts" type="text" inputmode="decimal" data-number data-min="0" placeholder="Döviz cinsinden"></label>
             <label class="field"><span>Miktar / adet</span><input id="tariffQuantity" type="text" inputmode="decimal" data-number data-min="0.0001" placeholder="Birim maliyet için"></label>
             <label class="field"><span>Doğrulanmış KDV %</span><input id="tariffVat" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Bilinmiyorsa boş"></label>
-            <label class="field verified-rate"><span>Ek mali yükümlülük %</span><input id="tariffEmy" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Yoksa doğrulayıp 0"></label>
-            <label class="field verified-rate"><span>KKDF %</span><input id="tariffKkdf" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Boşsa ödeme şeklinden önerilir"></label>
-            <label class="field verified-rate"><span>Damping / sübvansiyon toplamı</span><input id="tariffAntiDumping" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-            <label class="field verified-rate"><span>ÖTV toplamı</span><input id="tariffSct" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-            <label class="field verified-rate"><span>Gözetim birim kıymeti</span><input id="tariffSurveillance" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
-            <label class="field verified-rate"><span>Gözetim belgesi</span><select id="tariffSurveillanceCertificate"><option value="">Belirtilmedi</option><option value="true">Var</option><option value="false">Yok</option></select></label>
-            <label class="field verified-rate"><span>TRT bandrol %</span><input id="tariffTrtBandrolRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Uygulanıyorsa oran"></label>
+            <label class="field verified-rate" data-direction="import"><span>Ek mali yükümlülük %</span><input id="tariffEmy" type="text" inputmode="decimal" data-number data-min="0" data-max="1000" placeholder="Yoksa doğrulayıp 0"></label>
+            <label class="field verified-rate" data-direction="import"><span>KKDF %</span><input id="tariffKkdf" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Boşsa ödeme şeklinden önerilir"></label>
+            <label class="field verified-rate" data-direction="import"><span>Damping / sübvansiyon toplamı</span><input id="tariffAntiDumping" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+            <label class="field verified-rate" data-direction="import"><span>ÖTV toplamı</span><input id="tariffSct" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+            <label class="field verified-rate" data-direction="import"><span>Gözetim birim kıymeti</span><input id="tariffSurveillance" type="text" inputmode="decimal" data-number data-min="0" placeholder="Yoksa doğrulayıp 0"></label>
+            <label class="field verified-rate" data-direction="import"><span>Gözetim belgesi</span><select id="tariffSurveillanceCertificate"><option value="">Belirtilmedi</option><option value="true">Var</option><option value="false">Yok</option></select></label>
+            <label class="field verified-rate" data-direction="import"><span>TRT bandrol %</span><input id="tariffTrtBandrolRate" type="text" inputmode="decimal" data-number data-min="0" data-max="100" placeholder="Uygulanıyorsa oran"></label>
             <label class="field"><span>Kur (1 döviz = TL)</span><input id="tariffExchangeRate" type="text" inputmode="decimal" data-number data-min="0.0001" placeholder="TCMB satış, tescil günü"></label>
             <label class="field"><span>Kur tarihi</span><input id="tariffExchangeRateDate" type="date"></label>
             <button type="button" class="fx-fetch" data-prefix="tariff">TCMB kurunu getir</button>

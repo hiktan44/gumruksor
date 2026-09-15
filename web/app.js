@@ -1307,6 +1307,79 @@ document.addEventListener("change", (event) => {
     : "Cevabınız kaydedildi; hesabı yeniden çalıştırdığınızda gönderilir.");
 });
 
+const CERTAINTY_LABELS = {
+  verified: "Doğrulandı",
+  check_required: "Kontrol gerekir",
+  unavailable: "Veri yok",
+};
+
+function renderDeclarationField(field) {
+  // Hedef ulkede acilacak beyanname yanlis doldurulursa ciddi zarar dogar. Bu yuzden
+  // her satir degerin YANINDA nereden geldigini ve ne kadar emin oldugumuzu tasir.
+  const state = field.certainty || "check_required";
+  const value = field.value
+    ? `<b>${escapeHtml(field.value)}</b>`
+    : `<i class="field-empty">—</i>`;
+  const source = field.source_url
+    ? `<a href="${escapeHtml(field.source_url)}" target="_blank" rel="noopener noreferrer">kaynak</a>${field.source_date ? ` · ${escapeHtml(formatDate(field.source_date))}` : ""}`
+    : "";
+  return `<tr data-certainty="${escapeHtml(state)}">
+    <td>${escapeHtml(field.label)}${field.mandatory === false ? ' <small class="optional-tag">koşullu</small>' : ""}</td>
+    <td>${value}</td>
+    <td><span class="certainty-badge" data-certainty="${escapeHtml(state)}">${escapeHtml(CERTAINTY_LABELS[state] || state)}</span></td>
+    <td><small>${escapeHtml(field.note || "")}${source ? ` ${source}` : ""}</small></td>
+  </tr>`;
+}
+
+function renderExportRequirements(req) {
+  if (!req) return "";
+  const dest = req.destination || {};
+  const readiness = req.readiness || {};
+  const name = dest.country_name || dest.country_input || "Hedef ülke";
+  const fields = (req.declaration_fields || []).map(renderDeclarationField).join("");
+
+  const gate = readiness.status
+    ? `<div class="declaration-gate" data-status="${escapeHtml(readiness.status)}">
+        <b>${escapeHtml({ ready: "Beyanname alanları doğrulandı", needs_check: "Beyanname öncesi kontrol gerekiyor", blocked: "Bu dosyayla beyanname doldurulmamalı" }[readiness.status] || readiness.status)}</b>
+        <p>${escapeHtml(readiness.summary || "")}</p>
+        ${(readiness.blocking || []).length ? `<ul class="missing-list">${readiness.blocking.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      </div>`
+    : "";
+
+  const onDemand = req.on_demand_lookup
+    ? `<p class="box-purpose">AB TARIC canlı sorgusu ücretlidir ve otomatik çalıştırılmaz.
+        <button type="button" class="secondary-action" id="exportFetchEuTaric"
+          data-gtip="${escapeHtml(req.on_demand_lookup.gtip || "")}"
+          data-origin="${escapeHtml(req.on_demand_lookup.origin || "TR")}">Bu kod için canlı AB sorgusu çalıştır</button></p>
+       <div class="tool-output" id="exportEuTaricOutput" aria-live="polite"></div>`
+    : "";
+
+  const documents = (list, title) => (list || []).length
+    ? `<section class="answer-section"><h3>${escapeHtml(title)}</h3><ul class="missing-list">${list.map((item) => `<li><b>${escapeHtml(item.name)}</b> — ${escapeHtml(item.applicability)}${item.note ? ` <small>${escapeHtml(item.note)}</small>` : ""}${item.source_url ? ` <a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">kaynak</a>` : ""}</li>`).join("")}</ul></section>`
+    : "";
+
+  const hints = (req.market_hints || []).length
+    ? `<section class="answer-section"><h3>Hedef pazar uygunluk ipuçları</h3>
+        <p class="box-purpose">Bunlar <b>onayladığınız evsaftan</b> türetilmiş ipuçlarıdır, bulgu değildir; her biri ayrıca doğrulanmalıdır.</p>
+        <ul class="missing-list">${req.market_hints.map((hint) => `<li><b>${escapeHtml(hint.title)}</b> — ${escapeHtml(hint.detail)} <small>kaynak alan: ${escapeHtml(hint.trigger_field)}${hint.trigger_value ? ` · "${escapeHtml(hint.trigger_value)}"` : ""}</small>${hint.source_url ? ` <a href="${escapeHtml(hint.source_url)}" target="_blank" rel="noopener noreferrer">kaynak</a>` : ""}</li>`).join("")}</ul></section>`
+    : "";
+
+  return `<section class="answer-section export-block">
+      <h3>Hedef ülke: ${escapeHtml(name)}</h3>
+      <p class="destination-tier" data-tier="${escapeHtml(dest.tier || "")}">${escapeHtml(dest.badge_text || "")}</p>
+      ${dest.pending_note ? `<div class="result-caution">${escapeHtml(dest.pending_note)}</div>` : ""}
+      ${gate}
+      <h4>Hedef ülke beyannamesine girecek kalemler</h4>
+      <table class="evidence-table declaration-table"><thead><tr><th>Alan</th><th>Değer</th><th>Durum</th><th>Not / kaynak</th></tr></thead><tbody>${fields}</tbody></table>
+      ${onDemand}
+    </section>
+    ${documents(req.proof_documents, "Düzenlenecek menşe / dolaşım belgesi")}
+    ${(req.commercial_documents || []).length ? `<section class="answer-section"><h3>Ticari ve taşıma belgeleri</h3><ul class="missing-list">${req.commercial_documents.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
+    ${documents(req.turkish_procedure, "Türkiye tarafı ihracat işlemleri")}
+    ${hints}
+    ${(req.caveats || []).length ? `<div class="result-caution">${req.caveats.map((item) => escapeHtml(item)).join(" ")}</div>` : ""}`;
+}
+
 function renderCustomsResult(data) {
   setFlowStep(4);
   exportStore.precheck = data;
@@ -1334,10 +1407,11 @@ function renderCustomsResult(data) {
     <article class="answer-sheet">
       <header class="answer-head">
         <span class="answer-status${warningStatus ? " warning" : ""}">${escapeHtml(statusLabels[data.status] || data.status)}</span>
-        <div><h2>İthalat ön değerlendirme dosyası</h2><p>${escapeHtml(data.summary)}</p></div>
+        <div><h2>${data.direction === "export" ? "İhracat" : "İthalat"} ön değerlendirme dosyası</h2><p>${escapeHtml(data.summary)}</p></div>
         <time>${escapeHtml(formatDate(data.as_of, true))}</time>
       </header>
       <section class="answer-section"><h3>Aday GTİP / CN kodları</h3>${candidates}</section>
+      ${renderExportRequirements(data.export_requirements)}
       ${data.tariff_lookup ? `<section class="answer-section"><h3>Resmî tarife snapshot eşleşmesi</h3>${tariffMatchSummary(data.tariff_lookup)}${renderMeasureCoverage(data.tariff_lookup.measure_coverage)}${renderTradeMeasures(data.tariff_lookup.trade_measures)}${renderExciseTax(data.tariff_lookup.excise_tax)}<table class="evidence-table"><thead><tr><th>GTİP / Önlem</th><th>Oran</th><th>Menşe sütunu</th><th>Kaynak satırı</th><th>Kanıt</th></tr></thead><tbody>${tariffRows(data.tariff_lookup.measures)}</tbody></table>${exportBar("precheck", [{ table: "measures", label: "Tarife satırları" }, ...(data.deterministic_cost ? [{ table: "cost", label: "Maliyet taslağı" }] : [])])}${applyRatesButton(data.tariff_lookup, "precheck")}${(data.tariff_lookup.warnings || []).length ? `<div class="result-caution">${data.tariff_lookup.warnings.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}</section>` : ""}
       ${data.origin_documents ? `<section class="answer-section"><h3>Menşe belgeleri · ${escapeHtml(data.origin_documents.regime_name)}</h3><ul class="missing-list">${(data.origin_documents.documents || []).map((item) => `<li><b>${escapeHtml(item.name)}</b> — ${escapeHtml(item.applicability)}${item.note ? ` <small>${escapeHtml(item.note)}</small>` : ""}</li>`).join("")}</ul><div class="result-caution">${escapeHtml((data.origin_documents.caveats || []).join(" "))}</div></section>` : ""}
       ${data.control_lookup ? `<section class="answer-section"><h3>Resmî kontrol tebliği Ek-1 eşleşmeleri</h3>${renderControlTool(data.control_lookup)}</section>` : ""}
@@ -1345,7 +1419,7 @@ function renderCustomsResult(data) {
       <section class="answer-section"><h3>TAREKS · TSE · kimyasal · laboratuvar kontrolleri</h3>${renderFindings(data.controls, sourceMap)}</section>
       <section class="answer-section"><h3>Gerekli belge ve izinler</h3>${renderFindings(data.required_documents, sourceMap)}</section>
       <section class="answer-section"><h3>Vergi ve mali yükümlülük bulguları</h3>${renderFindings(data.taxes, sourceMap, "tax")}</section>
-      <section class="answer-section"><h3>Kullanıcı oranlarıyla maliyet taslağı</h3>${renderCost(data.deterministic_cost)}</section>
+      ${data.direction === "export" ? "" : `<section class="answer-section"><h3>Kullanıcı oranlarıyla maliyet taslağı</h3>${renderCost(data.deterministic_cost)}</section>`}
       ${data.image_observation ? `<section class="answer-section"><h3>Fotoğrafta görülenler</h3><p class="missing-list">${escapeHtml(data.image_observation)}</p></section>` : ""}
       ${renderExpertReviewPacket(data.expert_review_packet)}
       <section class="answer-section"><h3>Sonraki güvenli adımlar</h3><ol class="next-list">${(data.next_steps || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></section>
@@ -1406,6 +1480,9 @@ function updateReadiness() {
     gtip: state.customsGtipSelectionConfirmed && [6, 8, 10, 12].includes(tariffCode.length),
     cost: ["#invoiceValue", "#freight", "#insurance"].every((selector) => $(selector).value !== ""),
     payment: Boolean($("#paymentMethod").value.trim() && $("#incoterm").value.trim()),
+    destination: Boolean($("#destinationCountry")?.value.trim()),
+    exportvalue: ["#invoiceValue", "#freight", "#insurance"].every((selector) => $(selector).value !== ""),
+    exportterms: Boolean($("#paymentMethod").value.trim() && $("#incoterm").value.trim()),
   };
   Object.entries(checks).forEach(([key, ready]) => {
     $(`[data-check="${key}"]`)?.classList.toggle("ready", ready);
@@ -1438,6 +1515,65 @@ function setVisionState(status, message, provider = "") {
   );
   updateVisionAnalyseButton(status);
   updateReadiness();
+}
+
+function applyDirectionMode(direction) {
+  // Yön tüm formu belirler. Gorunurluk CSS ile (data-direction), JS yalnizca
+  // CSS'in yapamadigini yapar: required gecisleri, etiket metni, on doldurma.
+  const mode = direction === "export" ? "export" : "import";
+  state.tradeDirection = mode;
+  document.body.dataset.tradeDirection = mode;
+  const isExport = mode === "export";
+
+  const origin = $("#originCountry");
+  const destination = $("#destinationCountry");
+  if (origin) origin.required = !isExport;
+  if (destination) destination.required = isExport;
+  const picker = $("#destinationPicker");
+  if (picker) picker.hidden = !isExport;
+  // İhracatta menşe varsayılan olarak Türkiye'dir ama kullanıcı değiştirebilir:
+  // eşya üçüncü ülke menşeli olabilir ve tercihli oranı bu belirler.
+  if (isExport && origin && !origin.value.trim()) origin.value = "Türkiye";
+
+  $$("[data-label-import]").forEach((node) => {
+    const label = isExport ? node.dataset.labelExport : node.dataset.labelImport;
+    if (label) node.textContent = label;
+  });
+
+  const hero = $("#customsWorkspace .customs-hero .eyebrow");
+  if (hero) {
+    hero.textContent = isExport
+      ? "Kanıt-temelli ihracat ön değerlendirmesi"
+      : "Kanıt-temelli ithalat ön değerlendirmesi";
+  }
+  renderDestinationTier();
+  updateReadiness();
+}
+
+function renderDestinationTier() {
+  // Kullanici ulkeyi yazar yazmaz, KOTA HARCAMADAN o ulke icin ne verimiz
+  // oldugunu gormeli. Kademe /api/tariff/countries yanitinda geliyor.
+  const panel = $("#destinationTier");
+  const input = $("#destinationCountry");
+  if (!panel || !input) return;
+  const typed = input.value.trim();
+  if (!typed) {
+    panel.dataset.tier = "";
+    panel.textContent = "Ülke seçtiğinizde o ülke için hangi veriye sahip olduğumuzu burada göreceksiniz.";
+    return;
+  }
+  const key = typed.toLocaleLowerCase("tr");
+  const match = (state.countryList || []).find((item) => {
+    if (String(item.name || "").toLocaleLowerCase("tr") === key) return true;
+    return (item.aliases || []).some((alias) => String(alias).toLocaleLowerCase("tr") === key);
+  });
+  if (!match) {
+    panel.dataset.tier = "none";
+    panel.textContent = `"${typed}" kayıtlı ülke listemizde yok. Ülke adını kontrol edin.`;
+    return;
+  }
+  panel.dataset.tier = match.export_data_tier || "";
+  panel.textContent = match.export_data_note || "";
 }
 
 function setConfirmButtons(label, disabled) {
@@ -1934,8 +2070,30 @@ async function setProductImage(file) {
   );
 }
 
+// İhracatta gönderilmeyen Türk ithalat kalemleri. Alanlar CSS ile gizlenir ama DOM'da
+// kalır; yön değiştiren kullanıcı yoksa bir ihracat dosyasına Türk KDV oranı gönderirdi.
+const EXPORT_NULLED_LEVIES = {
+  customs_duty_rate: null,
+  additional_duty_rate: null,
+  additional_financial_liability_rate: null,
+  anti_dumping_amount: null,
+  kkdf_rate: null,
+  vat_rate: null,
+  sct_amount: null,
+  surveillance_unit_value: null,
+  has_surveillance_certificate: null,
+  trt_bandrol_rate: null,
+  stamp_duty_try: null,
+  port_storage_try: null,
+  gekap_try: null,
+  dispatch_country: null,
+};
+
 function customsRequestBody() {
-  return {
+  const isExport = state.tradeDirection === "export";
+  const body = {
+    direction: isExport ? "export" : "import",
+    destination_country: isExport ? ($("#destinationCountry")?.value.trim() || null) : null,
     question: $("#customsQuestion").value.trim(),
     product_description: $("#productDescription").value.trim(),
     candidate_gtip: $("#candidateGtip").value.trim() || null,
@@ -1985,6 +2143,7 @@ function customsRequestBody() {
     has_surveillance_certificate: $("#hasSurveillanceCertificate").value === "" ? null : $("#hasSurveillanceCertificate").value === "true",
     ...liraFields("assist"),
   };
+  return isExport ? { ...body, ...EXPORT_NULLED_LEVIES } : body;
 }
 
 function liraFields(prefix) {
@@ -3272,6 +3431,28 @@ $("#euTaricLookup")?.addEventListener("click", async () => {
   }
 });
 
+// İhracat sonucundaki ücretli AB sorgusu: mevcut uçla ve mevcut çizimle, tek kod için.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("#exportFetchEuTaric");
+  if (!button) return;
+  const output = $("#exportEuTaricOutput");
+  if (!output) return;
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const params = new URLSearchParams({
+    gtip: button.dataset.gtip || "",
+    origin: button.dataset.origin || "TR",
+  });
+  button.disabled = true;
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>AB TARIC sorgulanıyor</b><span>Bu tek kod için resmî ham veri çözümleniyor…</span></div></div>';
+  try {
+    output.innerHTML = renderEuTaric(await fetchJson(`/api/foreign/eu-taric?${params.toString()}`));
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "AB TARIC sorgusu tamamlanamadı."))}</p></div>`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#ebtiSearch")?.addEventListener("click", async () => {
   const output = $("#ebtiOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
@@ -4036,7 +4217,14 @@ $("#themeToggle").addEventListener("click", () => {
 
 loadCatalogStatus();
 loadAuthState();
-loadCountryList();
+loadCountryList().then(renderDestinationTier);
+
+$$('input[name="tradeDirection"]').forEach((radio) => {
+  radio.addEventListener("change", (event) => applyDirectionMode(event.target.value));
+});
+$("#destinationCountry")?.addEventListener("input", renderDestinationTier);
+$("#destinationCountry")?.addEventListener("change", updateReadiness);
+applyDirectionMode("import");
 async function fetchCustomsRate(prefix) {
   const currencyEl = $(prefix === "tariff" ? "#tariffCurrency" : "#currency");
   const dateEl = $(`#${prefix}ExchangeRateDate`);
