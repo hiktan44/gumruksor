@@ -623,7 +623,8 @@ _LLM_ENV_KEYS = (
     "ZAI_VISION_THINKING", "LLM_FALLBACK_TO_OPENROUTER", "OPENROUTER_FALLBACK_MODELS",
     "LLM_REQUEST_TIMEOUT_SECONDS", "LLM_TOTAL_DEADLINE_SECONDS", "LLM_PRIMARY_BUDGET_SECONDS",
     "GEMINI_API_KEY", "GEMINI_MODELS", "GEMINI_REASONING_EFFORT", "LLM_PRIMARY_PROVIDER", "LLM_FALLBACK_TO_GEMINI",
-    "LLM_FALLBACK_TO_ZAI",
+    "LLM_FALLBACK_TO_ZAI", "KIE_API_KEY", "LLM_FALLBACK_TO_KIE",
+    "OPENROUTER_VISION_MODELS", "OPENROUTER_CUSTOMS_MODELS",
 )
 
 
@@ -660,6 +661,79 @@ def _mock_client_factory(handler):
         return _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), timeout=kwargs.get("timeout"))
 
     return factory
+
+
+class KieProviderTests(unittest.IsolatedAsyncioTestCase):
+    """kie.ai: OpenAI uyumlu gövde, fakat model başına ayrı URL yolu."""
+
+    def test_key_selects_kie_base_url_and_default_models(self) -> None:
+        with patch.dict(os.environ, _llm_env(KIE_API_KEY="kie-key"), clear=True):  # gitleaks:allow
+            self.assertEqual(_llm_base_url(), "https://api.kie.ai")
+            self.assertEqual(_llm_provider(), "kie")
+            self.assertEqual(_llm_api_key_value(), "kie-key")
+            self.assertEqual(
+                customs_advisor._openrouter_models("OPENROUTER_VISION_MODELS"),
+                ["gemini-3-8-flash-openai", "gpt-5-2"],
+            )
+
+    def test_gemini_key_still_wins_as_primary(self) -> None:
+        env = _llm_env(GEMINI_API_KEY="gem-key", KIE_API_KEY="kie-key")  # gitleaks:allow
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(_llm_provider(), "gemini")
+            # kie birincil degilse yedek zincirde Z.ai'den once gelir.
+            chains = customs_advisor._fallback_providers("gemini", vision=True)
+            self.assertEqual([name for name, _, _, _ in chains], ["kie"])
+
+    def test_completions_url_is_built_per_model(self) -> None:
+        build = customs_advisor._kie_completions_url
+        self.assertEqual(
+            build("https://api.kie.ai", "gpt-5-2"),
+            "https://api.kie.ai/gpt-5-2/v1/chat/completions",
+        )
+        # Kullanici sonundaki yollari da yazmis olabilir; tekrarlanmamali.
+        self.assertEqual(
+            build("https://api.kie.ai/v1", "gpt-5-2"),
+            "https://api.kie.ai/gpt-5-2/v1/chat/completions",
+        )
+        self.assertEqual(
+            build("https://api.kie.ai/v1/chat/completions", "gpt-5-2"),
+            "https://api.kie.ai/gpt-5-2/v1/chat/completions",
+        )
+
+    async def test_live_call_uses_model_path_and_json_object_mode(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=_chat_response('{"a": 5}', "gemini-3-8-flash-openai"))
+
+        env = _llm_env(KIE_API_KEY="kie-key")  # gitleaks:allow
+        with patch.dict(os.environ, env, clear=True), patch(
+            "customs_advisor.httpx.AsyncClient", new=_mock_client_factory(handler)
+        ):
+            text, model = await customs_advisor._openrouter_chat(
+                api_key="kie-key",
+                models=["gemini-3-8-flash-openai"],
+                messages=[{"role": "user", "content": "Ürün"}],
+                response_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+                schema_name="test_schema",
+                max_tokens=4000,
+            )
+        self.assertEqual((text, model), ('{"a": 5}', "gemini-3-8-flash-openai"))
+        request = seen[0]
+        self.assertEqual(
+            str(request.url), "https://api.kie.ai/gemini-3-8-flash-openai/v1/chat/completions"
+        )
+        self.assertEqual(request.headers["authorization"], "Bearer kie-key")
+        body = json.loads(request.content)
+        # OpenRouter'a ozgu alanlar kie'ye gonderilmemeli.
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertNotIn("provider", body)
+        self.assertNotIn("thinking", body)
+        self.assertEqual(body["max_tokens"], 4000)
+        self.assertEqual(body["model"], "gemini-3-8-flash-openai")
+        # Sema sistem mesajinda bildirilir.
+        self.assertIn("test_schema", json.dumps(body["messages"], ensure_ascii=False))
 
 
 class ZaiProviderConfigTests(unittest.TestCase):
@@ -1393,7 +1467,10 @@ class LlmDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             report = await customs_advisor.diagnose_llm_providers(vision=True, timeout_seconds=5)
         self.assertEqual(report["mode"], "vision")
         self.assertEqual(report["primary"], "zai")
-        self.assertEqual(report["keys"], {"zai": True, "gemini": True, "openrouter": True})
+        # kie anahtari bu senaryoda tanimli degil; rapor yine de her saglayiciyi listeler.
+        self.assertEqual(
+            report["keys"], {"zai": True, "gemini": True, "kie": False, "openrouter": True}
+        )
         self.assertEqual(report["chains"]["primary"], ["glm-5v-turbo", "glm-4.6v"])
         self.assertEqual([fb["provider"] for fb in report["chains"]["fallbacks"]], ["gemini", "openrouter"])
         self.assertTrue(report["healthy"])
