@@ -640,6 +640,7 @@ def declaration_fields(
     destination_duty: dict[str, Any] | None = None,
     duty_source: dict[str, str] | None = None,
     proof_documents: list[ExportDocument] | None = None,
+    destination_vat: dict[str, Any] | None = None,
 ) -> list[DeclarationField]:
     """Hedef ülke ithalat beyannamesine girecek kalemler, her biri emin olma düzeyiyle.
 
@@ -798,17 +799,39 @@ def declaration_fields(
         )
     )
 
-    # Hedef ülkenin KDV/tüketim vergisi hiçbir veri kaynağımızda yok — asla tahmin edilmez.
-    fields.append(
-        field(
-            "destination_vat",
-            "Hedef ülke KDV / iç vergi oranı",
-            None,
-            "unavailable",
-            "Hedef ülkenin KDV ve iç vergi oranları veri kaynaklarımızda yok; ithalatçınızdan veya hedef "
-            "ülkenin vergi idaresinden doğrulanmalıdır.",
+    # Hedef ülke KDV'si: AB-27 için tohum veriden gelir, kalan ülkelerde veri yoktur.
+    # ASLA "verified" olamaz — hangi oranın gerçekten uygulanacağını üye devletin kendi
+    # mevzuatı belirler ve tohum satırları doğrulanmamıştır. Bu, oranın beyannameye
+    # kontrolsüz girmesini engelleyen yapısal güvencedir.
+    if destination_vat and destination_vat.get("standard") is not None:
+        standard = destination_vat["standard"]
+        applicable = destination_vat.get("applicable")
+        if destination_vat.get("applicable_basis") == "chapter_rule" and applicable != standard:
+            vat_value = f"Standart %{standard} · bu fasıl için indirimli %{applicable} uygulanabilir"
+        else:
+            vat_value = f"Standart %{standard}"
+        fields.append(
+            field(
+                "destination_vat",
+                "Hedef ülke KDV oranı",
+                vat_value,
+                "check_required",
+                str(destination_vat.get("note") or ""),
+                url=destination_vat.get("authority_url") or destination_vat.get("source_url"),
+            )
         )
-    )
+    else:
+        fields.append(
+            field(
+                "destination_vat",
+                "Hedef ülke KDV / iç vergi oranı",
+                None,
+                "unavailable",
+                str(destination_vat.get("note")) if destination_vat else
+                "Hedef ülkenin KDV ve iç vergi oranları veri kaynaklarımızda yok; ithalatçınızdan veya hedef "
+                "ülkenin vergi idaresinden doğrulanmalıdır.",
+            )
+        )
     fields.append(
         field(
             "incoterm",
@@ -915,6 +938,7 @@ def build_export_requirements(
     destination_duty: dict[str, Any] | None = None,
     duty_source: dict[str, str] | None = None,
     on_demand_lookup: dict[str, str] | None = None,
+    destination_vat: dict[str, Any] | None = None,
 ) -> ExportRequirements:
     """Hedef ülke bloğunu birleştirir. ``destination_duty`` yalnız ``rates`` düzeyinde kabul edilir."""
     data = inquiry_like if isinstance(inquiry_like, dict) else getattr(inquiry_like, "__dict__", {}) or {}
@@ -935,6 +959,7 @@ def build_export_requirements(
         destination_duty=destination_duty,
         duty_source=duty_source,
         proof_documents=documents,
+        destination_vat=destination_vat,
     )
     readiness = assess_readiness(fields, profile)
 
