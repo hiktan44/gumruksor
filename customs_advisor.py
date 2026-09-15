@@ -204,6 +204,35 @@ class CustomsInquiry(BaseModel):
     stamp_duty_try: float | None = Field(None, ge=0, le=1_000_000_000)
     port_storage_try: float | None = Field(None, ge=0, le=1_000_000_000)
     gekap_try: float | None = Field(None, ge=0, le=1_000_000_000)
+    # FAZ 8.1 — Beyanname taslağı (Tek İdari Belge / BİLGE kutuları).
+    # Hepsi varsayılanlı: göç öncesi kaydedilmiş 48 anahtarlı gövdeler ve mevcut MCP
+    # istemcileri aynen doğrulanmaya devam eder. Bu alanlar hesaba **girmez**; yalnız
+    # beyanname taslağının doldurulmasında kullanılır.
+    declarant_tax_id: str | None = Field(None, max_length=40, description="Beyan sahibi/temsilci vergi kimlik numarası (kutu 14).")
+    customs_office_code: str | None = Field(None, max_length=20, description="Beyannamenin tescil edileceği gümrük idaresi kodu.")
+    consignor_name: str | None = Field(None, max_length=200, description="Gönderici/ihracatçı unvanı (kutu 2).")
+    consignor_address: str | None = Field(None, max_length=400)
+    consignee_name: str | None = Field(None, max_length=200, description="Alıcı/ithalatçı unvanı (kutu 8).")
+    consignee_address: str | None = Field(None, max_length=400)
+    consignee_tax_id: str | None = Field(
+        None,
+        max_length=40,
+        description="Alıcı/ithalatçı kimlik numarası (VKN, AB'de EORI). Sistem bu numarayı üretemez; "
+        "beyannameyi açacak taraftan alınır.",
+    )
+    delivery_place: str | None = Field(None, max_length=200, description="Teslim yeri (kutu 20).")
+    transport_mode: str | None = Field(None, max_length=60, description="Sınırdaki taşıma şekli (kutu 25).")
+    transport_identity: str | None = Field(None, max_length=200, description="Taşıtın kimliği ve kayıtlı olduğu ülke (kutu 18/21).")
+    container_numbers: str | None = Field(None, max_length=300, description="Konteyner numaraları (kutu 19/31).")
+    border_customs_office: str | None = Field(None, max_length=120, description="Çıkış/giriş gümrük idaresi (kutu 29).")
+    package_count: int | None = Field(None, ge=0, le=1_000_000, description="Toplam kap adedi (kutu 6/31).")
+    package_kind: str | None = Field(None, max_length=80, description="Kapların cinsi (kutu 31).")
+    package_marks: str | None = Field(None, max_length=300, description="Ambalaj marka ve numaraları (kutu 31).")
+    gross_weight_kg: float | None = Field(None, ge=0, le=1_000_000_000, description="Brüt ağırlık (kutu 35).")
+    net_weight_kg: float | None = Field(None, ge=0, le=1_000_000_000, description="Net ağırlık (kutu 38).")
+    invoice_number: str | None = Field(None, max_length=60, description="Ticari fatura numarası (kutu 44).")
+    invoice_date: str | None = Field(None, max_length=20, description="Fatura tarihi (kutu 44).")
+    payment_method_code: str | None = Field(None, max_length=60, description="Ödeme şekli kodu (kutu 28).")
     # PRD Faz 2.3: kullanıcının interaktif karar sorularına verdiği cevaplar
     # (soru kimliği -> seçilen seçenek değeri). Oranlar yalnız bu cevaplarla hesaba girer.
     decision_answers: dict[str, str] = Field(default_factory=dict)

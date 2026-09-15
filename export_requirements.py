@@ -106,6 +106,11 @@ class DeclarationField(BaseModel):
     value: str | None = None
     certainty: Certainty
     mandatory: bool = True
+    # Yalnız beyan sahibinin bilebileceği kalemler (eşya tanımı, menşe beyanı, fatura,
+    # alıcı kimliği) makine tarafından doğrulanamaz. Hazırlık kapısı bunları "dolu mu"
+    # diye sorar, "resmî kaynaktan okundu mu" diye değil — bu ayrım olmadan hiçbir dosya
+    # asla 'hazır' olamazdı ve kapı anlamsız bir süsten ibaret kalırdı.
+    user_supplied: bool = False
     note: str = ""
     source_url: str | None = None
     source_date: str | None = None
@@ -671,6 +676,7 @@ def declaration_fields(
         note: str = "",
         *,
         mandatory: bool = True,
+        user_supplied: bool = False,
         url: str | None = None,
     ) -> DeclarationField:
         return DeclarationField(
@@ -679,6 +685,7 @@ def declaration_fields(
             value=_text(value) or None if certainty != "unavailable" else None,
             certainty=certainty,
             mandatory=mandatory,
+            user_supplied=user_supplied,
             note=note,
             source_url=url or (source_url if certainty == "verified" else None),
             source_date=source_date if certainty == "verified" else None,
@@ -711,6 +718,7 @@ def declaration_fields(
             _duty_text(destination_duty, "goods_description") or _text(data.get("declared_product_type")) or _text(data.get("product_description"))[:180],
             "check_required",
             "Beyannamedeki tanım eşyanın ticari adını ve ayırt edici evsafını taşımalı; fatura ile birebir uyumlu olmalıdır.",
+            user_supplied=True,
         )
     )
     fields.append(
@@ -720,6 +728,7 @@ def declaration_fields(
             _text(data.get("origin_country")) or "Türkiye",
             "check_required",
             "Menşe, üretimin gerçekleştiği ülkedir ve tercihli oranı belirler; menşe kuralı ürün bazlıdır.",
+            user_supplied=True,
         )
     )
     fields.append(
@@ -756,6 +765,9 @@ def declaration_fields(
                 if preferential
                 else profile.badge_text
             ),
+            # Tercih talep etmek ihracatçının seçimidir; talep edilmezse MFN oranı uygulanır.
+            # Bu yüzden zorunlu kutu değildir.
+            mandatory=False,
         )
     )
     additional = destination_duty.get("additional_duties") if destination_duty else None
@@ -782,6 +794,8 @@ def declaration_fields(
             ", ".join(str(item) for item in required_docs) if isinstance(required_docs, list) and required_docs else None,
             "verified" if required_docs and not stale else ("check_required" if destination_duty else "unavailable"),
             stale_note or ("" if required_docs else "Belge şartı kod ve menşe bazlıdır; hedef ülkenin tarife ekranından doğrulayın."),
+            # Boş liste de geçerli bir cevaptır (kod için belge şartı olmayabilir); kapıyı kilitlemez.
+            mandatory=False,
         )
     )
 
@@ -795,6 +809,7 @@ def declaration_fields(
             "Belge türü anlaşma ve fasıl kuralından türetildi; oda/gümrük vizesi şartı ve menşe kuralı ürün bazlıdır."
             if proof
             else "Hedef ülke ile tercihli anlaşma verimiz yok.",
+            mandatory=False,
             url=TICARET_FTA_URL,
         )
     )
@@ -817,6 +832,7 @@ def declaration_fields(
                 vat_value,
                 "check_required",
                 str(destination_vat.get("note") or ""),
+                mandatory=False,
                 url=destination_vat.get("authority_url") or destination_vat.get("source_url"),
             )
         )
@@ -830,6 +846,7 @@ def declaration_fields(
                 str(destination_vat.get("note")) if destination_vat else
                 "Hedef ülkenin KDV ve iç vergi oranları veri kaynaklarımızda yok; ithalatçınızdan veya hedef "
                 "ülkenin vergi idaresinden doğrulanmalıdır.",
+                mandatory=False,
             )
         )
     fields.append(
@@ -839,6 +856,7 @@ def declaration_fields(
             _text(data.get("incoterm")),
             "check_required" if _text(data.get("incoterm")) else "unavailable",
             "Incoterm, beyannamedeki istatistiki kıymeti ve navlun/sigorta sorumluluğunu belirler; sözleşmeyle uyumlu olmalıdır.",
+            user_supplied=True,
         )
     )
     invoice = data.get("invoice_value")
@@ -849,26 +867,50 @@ def declaration_fields(
             f"{invoice} {_text(data.get('currency')) or ''}".strip() if invoice not in (None, "") else None,
             "check_required" if invoice not in (None, "") else "unavailable",
             "Kıymet beyanı faturaya dayanır; hedef ülke kıymeti kendi kurallarına göre yeniden hesaplayabilir.",
+            user_supplied=True,
         )
     )
+    # Alıcının kayıt numarasını sistem üretemez — ama kullanıcı girebilir. Alan bu numara
+    # girilene kadar ``unavailable`` kalır; girildiğinde ``check_required`` olur ve hazırlık
+    # kapısı artık yapısal olarak kilitli kalmaz.
+    consignee_tax_id = _text(data.get("consignee_tax_id"))
     fields.append(
         field(
             "importer_identity",
             "Alıcı / ithalatçı kimlik numarası (EORI vb.)",
-            None,
-            "unavailable",
-            "İthalatçının hedef ülkedeki kayıt numarası bizde yok; beyannameyi açacak taraftan alınmalıdır.",
+            consignee_tax_id,
+            "check_required" if consignee_tax_id else "unavailable",
+            "Numara alıcıdan alındığı gibi yazıldı; hedef ülkenin kayıt sisteminde geçerli olduğunu "
+            "alıcınıza teyit ettirin."
+            if consignee_tax_id
+            else "İthalatçının hedef ülkedeki kayıt numarası bizde yok; beyannameyi açacak taraftan alınmalıdır.",
+            user_supplied=True,
         )
     )
     return fields[:24]
 
 
+def _is_blocking(item: DeclarationField) -> bool:
+    """Zorunlu bir alanın hazırlık kapısını kilitleyip kilitlemediği.
+
+    İki farklı ölçüt, çünkü iki farklı alan türü var:
+
+    * **Resmî veriden gelmesi gereken alan** (hedef ülke kodu, üçüncü ülke vergisi):
+      ``verified`` olmalıdır — kuraldan türetilmiş ya da bayat bir değer yeterli değildir.
+    * **Yalnız beyan sahibinin bilebileceği alan** (eşya tanımı, menşe beyanı, fatura,
+      alıcının kayıt numarası): makine tarafından doğrulanamaz; ölçüt "dolu mu"dur.
+    """
+    if item.user_supplied:
+        return not item.value
+    return item.certainty != "verified"
+
+
 def assess_readiness(fields: list[DeclarationField], profile: DestinationProfile) -> DeclarationReadiness:
-    """Dosya yalnız her ZORUNLU alan doğrulanmışsa 'beyannameye hazır' sayılır."""
+    """Dosya yalnız her ZORUNLU alan karşılanmışsa 'beyannameye hazır' sayılır."""
     verified = sum(1 for item in fields if item.certainty == "verified")
     checks = sum(1 for item in fields if item.certainty == "check_required")
     missing = sum(1 for item in fields if item.certainty == "unavailable")
-    blocking = [item.label for item in fields if item.mandatory and item.certainty != "verified"]
+    blocking = [item.label for item in fields if item.mandatory and _is_blocking(item)]
 
     if not blocking:
         status: Literal["ready", "needs_check", "blocked"] = "ready"

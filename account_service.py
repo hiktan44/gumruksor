@@ -62,12 +62,13 @@ FEATURES: dict[str, str] = {
     "bulk_costing": "Toplu beyanname hesabı (CSV/XLSX)",
     "temporal_query": "Tarih bazlı mevzuat sorgusu (geçmiş yürürlük)",
     "change_alerts": "Uyum uyarıları ve değişiklik özeti",
+    "declaration_draft": "Beyanname taslağı (Tek İdari Belge alan eşlemesi)",
     "api_access": "Kurumsal API / ajan erişimi",
     "data_review": "Veri inceleme kuyruğu (editoryal onay)",
 }
 
 _PRO_CAPABILITIES = frozenset({"detailed_query", "scenario_compare", "pdf_report", "foreign_tariff"})
-_PREMIUM_CAPABILITIES = _PRO_CAPABILITIES | {"bulk_costing", "temporal_query", "change_alerts"}
+_PREMIUM_CAPABILITIES = _PRO_CAPABILITIES | {"bulk_costing", "temporal_query", "change_alerts", "declaration_draft"}
 _PREMIUM_PLUS_CAPABILITIES = _PREMIUM_CAPABILITIES | {"api_access"}
 
 PLANS: dict[str, Plan] = {
@@ -86,7 +87,7 @@ PLANS: dict[str, Plan] = {
     "team": Plan(
         "team", "Ekip", 2_490, 24_900,
         {"vision": 500, "classification": 1_500, "precheck": 750, "dossier": 5_000},
-        ("Ekip kotası", "5.000 kanıt dosyası", "Öncelikli kullanım", "Toplu hesap ve tarih bazlı sorgu"),
+        ("Ekip kotası", "5.000 kanıt dosyası", "Öncelikli kullanım", "Toplu hesap, tarih bazlı sorgu ve beyanname taslağı"),
         tier="premium", tier_name="Premium", capabilities=_PREMIUM_CAPABILITIES,
     ),
     "institutional": Plan(
@@ -347,6 +348,8 @@ class AccountService:
             # eski kanıt dosyaları aynen açılmaya devam eder.
             self._ensure_column(connection, "dossiers", "direction", "TEXT NOT NULL DEFAULT 'import'")
             self._ensure_column(connection, "dossiers", "destination_country", "TEXT")
+            # FAZ 8.1: beyanname taslağı dosyanın yanında saklanır; göç öncesi dosyalarda NULL kalır.
+            self._ensure_column(connection, "dossiers", "draft_json", "TEXT")
         self.db_path.chmod(0o600)
 
     # ------------------------------------------------------------------ watchlist
@@ -666,6 +669,7 @@ class AccountService:
         self, user: dict[str, Any], *, title: str, product_name: str, gtip: str | None,
         origin_country: str | None, effective_date: str | None, checked_at: str,
         payload: dict[str, Any], evidence: dict[str, Any],
+        draft: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Yön doğrudan sonucun kendisinden okunur; istemci ayrıca göndermek zorunda değil.
         direction = "export" if str(payload.get("direction") or "").strip() == "export" else "import"
@@ -689,15 +693,18 @@ class AccountService:
         safe_evidence["destination_country"] = destination
         payload_json = _json(payload, max_bytes=750_000)
         evidence_json = _json(safe_evidence, max_bytes=250_000)
+        # Beyanname taslağı çağıran tarafından (saf fonksiyonla) üretilir; bu modül
+        # alan adlarını bilmez ve yalnız saklar.
+        draft_json = _json(draft, max_bytes=200_000) if isinstance(draft, dict) and draft else None
         self.consume(user, "dossier", dossier_id=dossier_id)
         try:
             with self._connect() as connection:
                 connection.execute(
-                    "INSERT INTO dossiers(id,google_sub,title,product_name,gtip,origin_country,effective_date,checked_at,payload_json,evidence_json,created_at,updated_at,direction,destination_country) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO dossiers(id,google_sub,title,product_name,gtip,origin_country,effective_date,checked_at,payload_json,evidence_json,created_at,updated_at,direction,destination_country,draft_json) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (dossier_id, str(user["sub"]), title, product_name, gtip_digits,
                      safe_evidence["origin_country"], safe_evidence["effective_date"], checked_at,
-                     payload_json, evidence_json, now, now, direction, destination),
+                     payload_json, evidence_json, now, now, direction, destination, draft_json),
                 )
         except Exception:
             with self._connect() as connection:
@@ -724,6 +731,12 @@ class AccountService:
         result = dict(row)
         result["payload"] = json.loads(result.pop("payload_json"))
         result["evidence"] = json.loads(result.pop("evidence_json"))
+        raw_draft = result.pop("draft_json", None)
+        try:
+            result["draft"] = json.loads(raw_draft) if raw_draft else None
+        except (TypeError, ValueError):
+            # Bozuk kayıt dosyanın tamamını kilitlemesin; taslak yeniden üretilebilir.
+            result["draft"] = None
         return result
 
     def delete_dossier(self, user: dict[str, Any], dossier_id: str) -> bool:

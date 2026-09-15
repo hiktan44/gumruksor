@@ -1124,6 +1124,143 @@ function renderMeasureCoverage(coverage) {
   return `<div class="measure-coverage">${entries.map(([key, item]) => `<article data-state="${escapeHtml(item.status)}"><b>${escapeHtml(labels[key] || key)}</b><span>${escapeHtml(statusLabels[item.status] || item.status)}</span><p>${escapeHtml(item.note)}</p></article>`).join("")}</div>`;
 }
 
+// --- Beyanname taslağı (FAZ 8.1) ---------------------------------------------------------
+// Taslak sunucuda saf bir fonksiyonla üretilir; arayüz yalnız gelen kutuları basar.
+// Hiçbir kutu burada doldurulmaz, tahmin edilmez veya birleştirilmez.
+
+const DRAFT_CERTAINTY_LABELS = {
+  verified: "Resmî kaynaktan doğrulandı",
+  check_required: "Kontrol gerekir",
+  unavailable: "Veri yok",
+};
+
+const DRAFT_READINESS_LABELS = {
+  ready: "Kutular tamam",
+  needs_check: "Eksik kutular var",
+  blocked: "Aktarıma uygun değil",
+};
+
+function renderDeclarationDraftPanel() {
+  return `
+    <section class="answer-section" id="declarationDraftPanel">
+      <h3>Beyanname taslağı · Tek İdari Belge kutuları</h3>
+      <p class="missing-list">Ön değerlendirmedeki bilgiler beyanname kutularına eşlenir. <b>Doldurmadığınız kutu
+        boş kalır ve "veri yok" olarak işaretlenir</b> — hiçbir kutu sistem tarafından uydurulmaz. Taslak
+        beyanname yerine geçmez; tescil sorumluluğu beyan sahibindedir.</p>
+      <div class="result-actions"><button id="buildDeclarationDraft" type="button">Beyanname taslağını çıkar</button></div>
+      <div id="declarationDraftBody"></div>
+    </section>`;
+}
+
+function draftFieldRow(field) {
+  const certainty = DRAFT_CERTAINTY_LABELS[field.certainty] || field.certainty;
+  const source = field.source_url
+    ? `<a href="${safeUrl(field.source_url)}" target="_blank" rel="noreferrer">kaynak</a>`
+    : "";
+  return `
+    <tr class="draft-row draft-${escapeHtml(field.certainty)}">
+      <td>${field.box ? escapeHtml(field.box) : "—"}</td>
+      <td><b>${escapeHtml(field.label)}</b>${field.mandatory ? ' <em class="source-badge">zorunlu</em>' : ""}</td>
+      <td>${field.value ? escapeHtml(field.value) : '<span class="missing-list">—</span>'}</td>
+      <td>${escapeHtml(certainty)}${source ? ` · ${source}` : ""}</td>
+      <td><small>${escapeHtml(field.note || "")}</small></td>
+    </tr>`;
+}
+
+function renderDeclarationDraft(draft) {
+  const readiness = draft.readiness || {};
+  const label = DRAFT_READINESS_LABELS[readiness.status] || readiness.status || "";
+  const blocking = (readiness.blocking || []).length
+    ? `<ul class="missing-list">${readiness.blocking.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : "";
+  const sections = (draft.sections || []).map((section) => `
+    <details class="draft-section" open>
+      <summary><span>${escapeHtml(section.title)}</span><small>${(section.fields || []).length} kutu</small></summary>
+      <table class="evidence-table"><thead><tr><th>Kutu</th><th>Alan</th><th>Değer</th><th>Durum</th><th>Not</th></tr></thead>
+        <tbody>${(section.fields || []).map(draftFieldRow).join("")}</tbody></table>
+    </details>`).join("");
+  return `
+    <div class="draft-summary">
+      <span class="answer-status${readiness.status === "ready" ? "" : " warning"}">${escapeHtml(label)}</span>
+      <p>${escapeHtml(readiness.summary || "")}</p>
+      <small>Rejim ${escapeHtml(draft.regime_code || "")} · ${escapeHtml(draft.regime_label || "")} ·
+        ${readiness.verified || 0} doğrulandı · ${readiness.check_required || 0} kontrol · ${readiness.unavailable || 0} veri yok</small>
+      ${blocking}
+    </div>
+    ${sections}
+    <div class="result-caution">${(draft.caveats || []).map((item) => escapeHtml(item)).join(" · ")}</div>
+    <div class="legal-banner"><strong>Önemli:</strong> ${escapeHtml(draft.legal_notice || "")}</div>
+    <div class="result-actions">
+      <button type="button" data-draft-format="csv">CSV olarak indir</button>
+      <button type="button" data-draft-format="xml">XML olarak indir</button>
+    </div>`;
+}
+
+async function loadDeclarationDraft() {
+  const result = state.currentCustomsResult;
+  const body = $("#declarationDraftBody");
+  const button = $("#buildDeclarationDraft");
+  if (!result || !body) { showToast("Taslak için ön değerlendirme sonucu bulunamadı."); return; }
+  if (button) { button.disabled = true; button.textContent = "Taslak hazırlanıyor…"; }
+  try {
+    const draft = await fetchJson("/api/customs/declaration-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result }),
+    });
+    state.declarationDraft = draft;
+    body.innerHTML = renderDeclarationDraft(draft);
+  } catch (error) {
+    if (error.code === "feature_required") {
+      await ensurePlanCatalog();
+      body.innerHTML = featureUpsellHtml("declaration_draft");
+    } else {
+      body.innerHTML = `<div class="result-caution">${escapeHtml(error.message || "Beyanname taslağı oluşturulamadı.")}</div>`;
+    }
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "Beyanname taslağını yenile"; }
+  }
+}
+
+async function downloadDeclarationDraft(format, button) {
+  const result = state.currentCustomsResult;
+  if (!result) { showToast("İndirilecek taslak bulunamadı."); return; }
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Hazırlanıyor…";
+  try {
+    let response;
+    try {
+      response = await fetch("/api/customs/declaration-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result, format }),
+      });
+    } catch (_) {
+      throw new Error("Sunucuya ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.");
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Beyanname taslağı indirilemedi.");
+    }
+    const blob = await response.blob();
+    const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : `beyanname-taslagi.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (error) {
+    showToast(error.message || "Beyanname taslağı indirilemedi.");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 function renderExpertReviewPacket(packet) {
   if (!packet) return "";
   const labels = { BTB: "Bağlayıcı Tarife Bilgisi", "gümrük_müşaviri": "Yetkili gümrük müşaviri", "yetkili_kurum": "Yetkili kurum" };
@@ -1421,6 +1558,7 @@ function renderCustomsResult(data) {
       <section class="answer-section"><h3>Vergi ve mali yükümlülük bulguları</h3>${renderFindings(data.taxes, sourceMap, "tax")}</section>
       ${data.direction === "export" ? "" : `<section class="answer-section"><h3>Kullanıcı oranlarıyla maliyet taslağı</h3>${renderCost(data.deterministic_cost)}</section>`}
       ${data.image_observation ? `<section class="answer-section"><h3>Fotoğrafta görülenler</h3><p class="missing-list">${escapeHtml(data.image_observation)}</p></section>` : ""}
+      ${renderDeclarationDraftPanel()}
       ${renderExpertReviewPacket(data.expert_review_packet)}
       <section class="answer-section"><h3>Sonraki güvenli adımlar</h3><ol class="next-list">${(data.next_steps || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></section>
       <section class="answer-section"><h3>Resmî kanıt defteri · ${(data.sources || []).length} kaynak</h3><div class="source-ledger">${sources}</div></section>
@@ -1434,6 +1572,11 @@ function renderCustomsResult(data) {
     if (!value) return;
     $("#customsQuestion").value = value;
     $("#customsForm").requestSubmit();
+  });
+  $("#buildDeclarationDraft")?.addEventListener("click", () => loadDeclarationDraft());
+  $("#declarationDraftPanel")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-draft-format]");
+    if (target) downloadDeclarationDraft(target.dataset.draftFormat, target);
   });
   $("#saveScenario")?.addEventListener("click", async () => {
     saveLocalScenario(data);
@@ -2142,8 +2285,37 @@ function customsRequestBody() {
     surveillance_unit_value: nullableNumber("#surveillanceUnitValue"),
     has_surveillance_certificate: $("#hasSurveillanceCertificate").value === "" ? null : $("#hasSurveillanceCertificate").value === "true",
     ...liraFields("assist"),
+    ...declarationFields(),
   };
   return isExport ? { ...body, ...EXPORT_NULLED_LEVIES } : body;
+}
+
+// FAZ 8.1 — Beyanname taslağı kutuları. Bu alanlar hesaba girmez; yalnız taslağı besler.
+// Doldurulmayan alan `null` gider ve taslakta "veri yok" olarak görünür; hiçbir kutu uydurulmaz.
+function declarationFields() {
+  const text = (selector, limit) => ($(selector)?.value || "").trim().slice(0, limit) || null;
+  return {
+    declarant_tax_id: text("#declarantTaxId", 40),
+    customs_office_code: text("#customsOfficeCode", 20),
+    consignor_name: text("#consignorName", 200),
+    consignor_address: text("#consignorAddress", 400),
+    consignee_name: text("#consigneeName", 200),
+    consignee_address: text("#consigneeAddress", 400),
+    consignee_tax_id: text("#consigneeTaxId", 40),
+    delivery_place: text("#deliveryPlace", 200),
+    transport_mode: text("#transportMode", 60),
+    transport_identity: text("#transportIdentity", 200),
+    container_numbers: text("#containerNumbers", 300),
+    border_customs_office: text("#borderCustomsOffice", 120),
+    package_count: nullableNumber("#packageCount") == null ? null : Math.round(nullableNumber("#packageCount")),
+    package_kind: text("#packageKind", 80),
+    package_marks: text("#packageMarks", 300),
+    gross_weight_kg: nullableNumber("#grossWeightKg"),
+    net_weight_kg: nullableNumber("#netWeightKg"),
+    invoice_number: text("#invoiceNumber", 60),
+    invoice_date: text("#invoiceDate", 20),
+    payment_method_code: text("#paymentMethodCode", 60),
+  };
 }
 
 function liraFields(prefix) {

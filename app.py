@@ -65,6 +65,7 @@ from mevzuat_mcp_server import (
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
 from countries import COUNTRIES, PENDING_AGREEMENTS
+from declaration_draft import build_declaration_draft, draft_to_csv, draft_to_xml
 from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
 from scenarios import build_origin_scenarios
@@ -753,6 +754,20 @@ async def web_delete_account(request: Request):
         return JSONResponse({"error": f"Abonelik iptal edilemedi; hesap silinmedi. {exc}"}, status_code=502)
 
 
+def _safe_declaration_draft(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Kanıt dosyasıyla birlikte saklanacak beyanname taslağı.
+
+    Taslak üretimi saf ve ağsızdır, ama bozuk/eksik bir gövde yüzünden dosya kaydının
+    tamamı düşmemelidir: taslak üretilemezse dosya taslaksız kaydedilir ve kullanıcı
+    onu sonradan ``/api/customs/declaration-draft`` ile yeniden üretebilir.
+    """
+    try:
+        return build_declaration_draft(payload).model_dump(mode="json")
+    except Exception:
+        logger.warning("Beyanname taslağı kanıt dosyası için üretilemedi", exc_info=True)
+        return None
+
+
 def _dossier_evidence() -> dict[str, Any]:
     tariff_status = tariff_engine.status().model_dump(mode="json")
     control_status = control_engine.status().model_dump(mode="json")
@@ -812,6 +827,7 @@ async def web_create_dossier(request: Request):
             checked_at=datetime.now(UTC).isoformat(timespec="seconds"),
             payload=payload,
             evidence=_dossier_evidence(),
+            draft=_safe_declaration_draft(payload),
         )
         return JSONResponse(dossier, status_code=201, headers={"Cache-Control": "no-store"})
     except SecurityViolation as exc:
@@ -2330,6 +2346,89 @@ async def web_customs_report_pdf(request: Request):
     except Exception:
         logger.exception("PDF ön değerlendirme raporu üretilemedi")
         return JSONResponse({"error": "PDF raporu şu anda oluşturulamadı; kısa süre sonra yeniden deneyin."}, status_code=503)
+
+
+@mcp.custom_route("/api/customs/declaration-draft", methods=["POST"])
+async def web_customs_declaration_draft(request: Request):
+    """Ön değerlendirme sonucundan gümrük beyannamesi taslağı (Tek İdari Belge kutuları).
+
+    Gövde: ``{"dossier_id": "..."}`` (kullanıcının kayıtlı dosyası) veya
+    ``{"result": {...}}`` (API'nin döndürdüğü ön değerlendirme sonucu). ``format``
+    alanı ``json`` (varsayılan), ``csv`` veya ``xml`` olabilir.
+
+    Kota tüketilmez: taslak, hâlihazırda ödenmiş bir analizin sunumudur. Üretim saf ve
+    ağsızdır; hiçbir kutu uydurulmaz, eksik kutu değer taşımaz.
+    """
+    limited = _rate_limit_response(request, "customs-declaration-draft", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        require_feature(request, "declaration_draft")
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    try:
+        declared = int(request.headers.get("content-length", "0") or 0)
+        raw = b"" if declared > REPORT_PDF_MAX_BODY_BYTES else await request.body()
+        if declared > REPORT_PDF_MAX_BODY_BYTES or len(raw) > REPORT_PDF_MAX_BODY_BYTES:
+            raise ValueError("Analiz verisi 2 MB sınırını aşıyor.")
+        body = json.loads(raw or b"{}")
+        if not isinstance(body, dict):
+            raise ValueError("Beyanname taslağı isteği bir nesne olmalıdır.")
+        fmt = str(body.get("format") or "json").strip().lower()
+        if fmt not in {"json", "csv", "xml"}:
+            raise ValueError("Biçim json, csv veya xml olmalıdır.")
+        dossier_id = str(body.get("dossier_id") or "").strip()
+        if dossier_id:
+            payload = account_service.get_dossier(user, dossier_id)["payload"]
+            draft_id = re.sub(r"[^a-z0-9]", "", dossier_id.lower())[:8] or "dosya"
+        else:
+            payload = body.get("result")
+            if not isinstance(payload, dict):
+                raise ValueError("Taslak için analiz sonucu eksik.")
+            guard_data(payload, path="Beyanname taslağı")
+            draft_id = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()[:8]
+        # Gövdeyi modele doğrulatıyoruz ki taslak yalnız gerçek bir ön değerlendirme
+        # sonucundan üretilsin; uydurma alanlar buradan geçemez.
+        result = CustomsPrecheckResult.model_validate(payload)
+        draft = build_declaration_draft(result)
+        if fmt == "json":
+            return JSONResponse(draft.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+        if fmt == "csv":
+            content, media, suffix = draft_to_csv(draft), "text/csv; charset=utf-8", "csv"
+        else:
+            content, media, suffix = draft_to_xml(draft), "application/xml; charset=utf-8", "xml"
+        return Response(
+            content.encode("utf-8"),
+            media_type=media,
+            headers={
+                "Content-Disposition": f'attachment; filename="beyanname-taslagi-{draft_id}.{suffix}"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Analiz verisi doğrulanamadı.")
+        return JSONResponse({"error": f"Analiz verisi doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Beyanname taslağı isteği çözümlenemedi."}, status_code=422)
+    except Exception:
+        logger.exception("Beyanname taslağı üretilemedi")
+        return JSONResponse(
+            {"error": "Beyanname taslağı şu anda oluşturulamadı; kısa süre sonra yeniden deneyin."},
+            status_code=503,
+        )
 
 
 @mcp.custom_route("/api/tariff/countries", methods=["GET"])
