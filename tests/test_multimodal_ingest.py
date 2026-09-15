@@ -88,6 +88,10 @@ def _png_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def _image_data_url() -> str:
+    return f"data:image/png;base64,{base64.b64encode(_png_bytes()).decode('ascii')}"
+
+
 def _vision_patch(mock: AsyncMock):
     return patch("customs_advisor._request_openrouter_vision_analysis", new=mock)
 
@@ -295,6 +299,81 @@ class PdfPagesQuotaTests(unittest.TestCase):
         self.assertEqual(exhausted.status_code, 429)
         self.assertEqual(exhausted.json()["code"], "quota_exceeded")
         self.assertEqual(self.vision.await_count, 1, "kota dolunca model çağrılmaz")
+
+
+class DescribeImageRouteTests(unittest.TestCase):
+    """Ana görsel rotasının sözleşmesi: arayüz bu ``code`` alanlarına göre mesaj seçer.
+
+    Canlıda kullanıcı "görsel analizi çalışmıyor" diye bildirdi; gerçek sebep dolmuş
+    ``vision`` kotasıydı (429) ama arayüz bunu genel bir "işlenemedi" metnine çeviriyordu.
+    Bu testler sunucunun sebebi doğru kodla bildirdiğini kilitler.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        data_dir = Path(self.temp.name)
+        self.auth = GoogleAuthService(
+            client_id="test-client", client_secret="test-secret",
+            session_secret="test-session-secret-that-is-long-enough", data_dir=data_dir,
+        )
+        self.accounts = AccountService(data_dir, admin_emails="admin@example.com")
+        self.user = {"sub": "img-sub", "email": "img@example.com", "name": "img", "picture": ""}
+        with sqlite3.connect(self.accounts.db_path) as connection:
+            connection.execute(
+                "INSERT INTO users(google_sub,email,name,picture,created_at,last_login_at) VALUES(?,?,?,?,1,1)",
+                (self.user["sub"], self.user["email"], self.user["name"], self.user["picture"]),
+            )
+        self.original = (web_app.google_auth, web_app.account_service, web_app.rate_limiter)
+        web_app.google_auth, web_app.account_service, web_app.rate_limiter = (
+            self.auth, self.accounts, web_app.FixedWindowRateLimiter(),
+        )
+        self.addCleanup(lambda: setattr(web_app, "google_auth", self.original[0]))
+        self.addCleanup(lambda: setattr(web_app, "account_service", self.original[1]))
+        self.addCleanup(lambda: setattr(web_app, "rate_limiter", self.original[2]))
+        self.client = TestClient(web_app.app, base_url=PUBLIC_ORIGIN)
+        self.addCleanup(self.client.close)
+        self.describe = AsyncMock(return_value=(dict(RAW_VISION_REPLY), "glm-4.6v"))
+        for patcher in (
+            _vision_patch(self.describe),
+            patch("customs_advisor._openrouter_api_key", return_value="test-key"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _post(self, *, signed: bool):
+        headers = {"Origin": PUBLIC_ORIGIN}
+        if signed:
+            headers["Cookie"] = f"{self.auth.session_cookie}={self.auth.create_session(self.user)}"
+        return self.client.post(
+            "/api/customs/describe-image", json={"image_data_url": _image_data_url()}, headers=headers
+        )
+
+    def test_anonymous_request_is_rejected_with_authentication_code(self) -> None:
+        response = self._post(signed=False)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["code"], "authentication_required")
+        self.describe.assert_not_awaited()
+
+    def test_exhausted_vision_quota_reports_quota_exceeded(self) -> None:
+        limit = self.accounts.account(self.user)["quotas"]["vision"]["limit"]
+        for _ in range(limit):
+            self.accounts.consume(self.user, "vision")
+        response = self._post(signed=True)
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["code"], "quota_exceeded")
+        self.assertIn("kota", response.json()["error"].lower())
+        self.describe.assert_not_awaited()
+
+    def test_rate_limit_reports_retry_after_without_quota_code(self) -> None:
+        # Dakikalik gorsel hiz siniri: kota degil, bekleme gerektirir.
+        for _ in range(20):
+            web_app.rate_limiter.check("customs-vision:testclient", limit=20, window_seconds=60)
+        response = self._post(signed=True)
+        self.assertEqual(response.status_code, 429)
+        body = response.json()
+        self.assertNotEqual(body.get("code"), "quota_exceeded")
+        self.assertGreaterEqual(int(body["retry_after"]), 1)
 
 
 class BrandModelMatchTests(unittest.TestCase):
