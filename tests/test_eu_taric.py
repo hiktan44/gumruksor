@@ -171,6 +171,24 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(sent["direction"], "import")
         self.assertEqual(sent["snapshotMonth"], "latest")
 
+    def test_archive_only_never_runs_the_paid_actor_on_a_miss(self):
+        # Ön değerlendirme yolu dakikada 20 istekle açıktır. Arşiv ıskasında ücretli aktörü
+        # tetiklemek TARIC bütçesini sınırsız hâle getirirdi; bu test o kapıyı kilitler.
+        engine = self._engine()
+        result = asyncio.run(engine.lookup("610910001000", origin="TR", archive_only=True))
+        self.assertEqual(result.status, "archive_miss")
+        self.assertEqual(self.calls, [], "arşiv ıskasında aktöre istek gitmemeli")
+        self.assertTrue(any("ücretli canlı sorgu" in note.lower() for note in result.warnings))
+
+    def test_archive_only_still_serves_an_archived_row(self):
+        engine = self._engine()
+        asyncio.run(engine.lookup("610910001000", origin="TR"))
+        before = len(self.calls)
+        result = asyncio.run(engine.lookup("610910001000", origin="TR", archive_only=True))
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.from_archive)
+        self.assertEqual(len(self.calls), before, "arşiv isabetinde yeni istek olmamalı")
+
     def test_second_lookup_is_served_from_archive_without_paying_again(self):
         engine = self._engine()
         asyncio.run(engine.lookup("610910001000", origin="TR"))

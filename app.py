@@ -64,6 +64,7 @@ from mevzuat_mcp_server import (
 )
 from bulk_costing import MAX_FILE_BYTES as BULK_MAX_FILE_BYTES, calculate_rows as bulk_calculate_rows, rows_from_upload as bulk_rows_from_upload, template_csv as bulk_template_csv
 from countries import COUNTRIES, PENDING_AGREEMENTS
+from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
 from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
@@ -2340,19 +2341,25 @@ async def web_tariff_countries(request: Request):
         "eu": "AB (Gümrük Birliği)", "efta": "EFTA", "fta": "STA", "pta": "Tercihli Ticaret Anlaşması",
         "kktc": "KKTC", "mfn": "Tercihsiz",
     }
-    items = [
-        {
-            "key": country.key,
-            "name": country.name,
-            "iso2": country.iso2,
-            "regime": country.regime,
-            "regime_label": regime_labels.get(country.regime, country.regime),
-            "aliases": list(country.aliases),
-            "agreement": country.agreement or None,
-            "pending_note": PENDING_AGREEMENTS.get(country.key),
-        }
-        for country in sorted(COUNTRIES, key=lambda item: item.name.casefold())
-    ]
+    # İhracat veri düzeyi burada da verilir ki arayüz, kullanıcı ülkeyi yazar yazmaz
+    # "bu ülke için oran verimiz yok" diyebilsin — kota harcayan bir istek gerekmeden.
+    items = []
+    for country in sorted(COUNTRIES, key=lambda item: item.name.casefold()):
+        profile = destination_profile(country.name)
+        items.append(
+            {
+                "key": country.key,
+                "name": country.name,
+                "iso2": country.iso2,
+                "regime": country.regime,
+                "regime_label": regime_labels.get(country.regime, country.regime),
+                "aliases": list(country.aliases),
+                "agreement": country.agreement or None,
+                "pending_note": PENDING_AGREEMENTS.get(country.key),
+                "export_data_tier": profile.tier,
+                "export_data_note": profile.badge_text,
+            }
+        )
     response = JSONResponse({"items": items, "count": len(items)})
     response.headers["Cache-Control"] = "public, max-age=3600"
     return response

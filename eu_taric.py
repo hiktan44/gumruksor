@@ -327,7 +327,7 @@ def resolve_rates(item: dict[str, Any], partner: str | None) -> dict[str, Any]:
 class EuTaricResult:
     goods_code: str
     partner_country: str | None
-    status: str  # ok | disabled | unavailable
+    status: str  # ok | disabled | unavailable | archive_miss
     summary: dict[str, Any] = field(default_factory=dict)
     fetched_at: str | None = None
     from_archive: bool = False
@@ -599,7 +599,15 @@ class EuTaricEngine:
                     "AB verisi o tarihten sonra değişmiş olabilir."
                 )
 
-    async def lookup(self, gtip: str, *, origin: str = "TR", refresh: bool = False) -> EuTaricResult:
+    async def lookup(
+        self, gtip: str, *, origin: str = "TR", refresh: bool = False, archive_only: bool = False
+    ) -> EuTaricResult:
+        """``archive_only=True`` ücretli aktörü ASLA çalıştırmaz; yalnız yerel arşivi okur.
+
+        Ön değerlendirme yolu bunu kullanır: ``/api/customs/precheck`` dakikada 20 istekle
+        açıktır ve aktörü oradan tetiklemek TARIC bütçesini sınırsız hâle getirirdi. Arşivde
+        satır yoksa ``status="archive_miss"`` döner ve çağıran dürüst bir kademe düşürmesi yapar.
+        """
         code = normalise_goods_code(gtip)
         partner = (str(origin or "TR").strip().upper() or "TR")[:4]
         if len(_digits(gtip)) < 6:
@@ -610,6 +618,13 @@ class EuTaricEngine:
             if archived is not None:
                 self._apply_archive(result, archived)
                 return result
+        if archive_only:
+            result.status = "archive_miss"
+            result.warnings.append(
+                "Bu kod arşivde yok. Ücretli canlı sorgu ön değerlendirme akışından tetiklenmez; "
+                "gerekirse yurt dışı tarife aracından ayrıca çalıştırılabilir."
+            )
+            return result
         if not self.enabled or not self._token:
             result.status = "disabled"
             result.warnings.append(

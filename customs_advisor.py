@@ -31,6 +31,14 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from control_engine import ImportControlEngine, ImportControlLookupResult
 from customs_workflow import WorkflowStep, build_workflow
+from export_requirements import (
+    DestinationProfile,
+    ExportRequirements,
+    archive_miss_note,
+    build_export_requirements,
+    destination_profile,
+    downgrade_profile,
+)
 from decision_questions import DecisionQuestion, apply_decision_answers, build_decision_questions
 from classification_evidence import ClassificationEvidenceEngine, ClassificationEvidenceHit
 from origin_documents import OriginDocumentRequirements, origin_document_requirements
@@ -124,6 +132,10 @@ class ClassificationAnswer(BaseModel):
 
 class CustomsInquiry(BaseModel):
     question: str = Field(..., min_length=3, max_length=1500)
+    direction: Literal["import", "export"] = Field(
+        "import",
+        description="İşlem yönü. Varsayılan ithalattır; eski kayıtlar ve mevcut istemciler bozulmaz.",
+    )
     product_description: str = Field("", max_length=2000)
     candidate_gtip: str | None = Field(None, max_length=30)
     tariff_selection_confirmed: bool = False
@@ -137,8 +149,16 @@ class CustomsInquiry(BaseModel):
     ] | None = None
     classification_confidence_score: int | None = Field(None, ge=0, le=100)
     classification_models: list[str] = Field(default_factory=list, max_length=3)
-    origin_country: str | None = Field(None, max_length=100)
+    origin_country: str | None = Field(
+        None,
+        max_length=100,
+        description="Eşyanın menşei. İhracatta da menşe anlamını korur: hedef ülkenin tercihli oranını ve "
+        "Türkiye'nin EUR.1/A.TR düzenleyip düzenleyemeyeceğini bu belirler.",
+    )
     dispatch_country: str | None = Field(None, max_length=100)
+    destination_country: str | None = Field(
+        None, max_length=100, description="İhracatta eşyanın gideceği ülke; ithalatta kullanılmaz."
+    )
     atr_certificate: bool | None = Field(None, description="Sevk AB'den ise A.TR ibraz edilecek mi (teyit edilmeden serbest dolaşım sütunu uygulanmaz).")
     intended_use: str | None = Field(None, max_length=300)
     target_user: str | None = Field(None, max_length=300)
@@ -211,6 +231,26 @@ class CustomsInquiry(BaseModel):
         if normalised and not _SELECTED_TARIFF_RE.fullmatch(normalised):
             raise ValueError("Tarife kodu 6, 8, 10 veya 12 rakam olmalıdır.")
         return normalised
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalise_direction(cls, data: Any) -> Any:
+        """Yöne ait olmayan alanları girişte temizler.
+
+        İhracatta ``dispatch_country`` (sevk ülkesi) anlamsızdır ve Türk ithalat sütununu
+        çözen motorlara sızmamalıdır; ithalatta ``destination_country`` hiç kullanılmaz.
+        Arayüz de aynı kuralı uygular; buradaki asıl iş MCP ve API çağrılarını korumaktır.
+        """
+        if not isinstance(data, dict):
+            return data
+        direction = str(data.get("direction") or "import").strip().lower()
+        if direction == "export":
+            if not str(data.get("destination_country") or "").strip():
+                raise ValueError("İhracat modunda hedef ülke zorunludur.")
+            data = {**data, "dispatch_country": None}
+        else:
+            data = {**data, "destination_country": None}
+        return data
 
     @model_validator(mode="after")
     def validate_tariff_confirmation(self) -> "CustomsInquiry":
@@ -400,6 +440,10 @@ class CustomsModelResult(BaseModel):
 
 class CustomsPrecheckResult(BaseModel):
     status: Literal["preliminary", "needs_information", "insufficient_evidence", "evidence_only"]
+    # Yön üst düzeyde de yankılanır: iş akışı kurucusu, arayüz ve PDF raporu inquiry'yi
+    # açmadan dallanabilsin ve göç öncesi kaydedilmiş dosyalar okunabilir kalsın.
+    direction: Literal["import", "export"] = "import"
+    export_requirements: ExportRequirements | None = None
     as_of: str
     model: str | None = None
     summary: str

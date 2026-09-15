@@ -50,6 +50,69 @@ from customs_advisor import (
 )
 
 
+class InquiryDirectionTests(unittest.TestCase):
+    """İthalat/ihracat yönü: eski istemciler bozulmamalı, yöne ait olmayan alan sızmamalı."""
+
+    def test_existing_payload_without_direction_stays_import(self) -> None:
+        # Göç öncesi kaydedilmiş dosyalar ve mevcut istemciler aynen doğrulanmaya devam eder.
+        inquiry = customs_advisor.CustomsInquiry(
+            question="Çin menşeli çocuk şortu için TAREKS gerekir mi?",
+            origin_country="Çin",
+            dispatch_country="Almanya",
+        )
+        self.assertEqual(inquiry.direction, "import")
+        self.assertIsNone(inquiry.destination_country)
+        self.assertEqual(inquiry.dispatch_country, "Almanya")
+
+    def test_export_requires_a_destination_country(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            customs_advisor.CustomsInquiry(question="İhracat sorusu", direction="export")
+        self.assertIn("hedef ülke zorunludur", str(ctx.exception))
+
+    def test_export_clears_dispatch_country(self) -> None:
+        # Sevk ülkesi ihracatta anlamsızdır ve Türk ithalat sütununu çözen motorlara sızmamalıdır.
+        inquiry = customs_advisor.CustomsInquiry(
+            question="Almanya'ya ihracat şartları nelerdir?",
+            direction="export",
+            destination_country="Almanya",
+            dispatch_country="Çin",
+        )
+        self.assertIsNone(inquiry.dispatch_country)
+        self.assertEqual(inquiry.destination_country, "Almanya")
+
+    def test_export_keeps_origin_country_as_the_origin_of_the_goods(self) -> None:
+        inquiry = customs_advisor.CustomsInquiry(
+            question="Almanya'ya ihracat şartları nelerdir?",
+            direction="export",
+            destination_country="Almanya",
+            origin_country="Türkiye",
+        )
+        self.assertEqual(inquiry.origin_country, "Türkiye")
+
+    def test_import_drops_a_stray_destination_country(self) -> None:
+        inquiry = customs_advisor.CustomsInquiry(
+            question="İthalat sorusu", destination_country="Almanya", origin_country="Çin"
+        )
+        self.assertIsNone(inquiry.destination_country)
+
+    def test_result_defaults_keep_old_dossiers_readable(self) -> None:
+        result = customs_advisor.CustomsPrecheckResult(
+            status="evidence_only",
+            as_of="2026-09-15",
+            summary="özet",
+            legal_notice="uyarı",
+            inquiry=customs_advisor.CustomsInquiry(question="soru soru"),
+            expert_review_packet=customs_advisor.ExpertReviewPacket(
+                risk_level="moderate",
+                escalation_required=False,
+                generated_at="2026-09-15T00:00:00Z",
+                legal_notice="uyarı",
+            ),
+        )
+        self.assertEqual(result.direction, "import")
+        self.assertIsNone(result.export_requirements)
+
+
 class CustomsAdvisorSafetyTests(unittest.TestCase):
     def test_user_answers_and_textile_context_are_preserved_for_classification(self) -> None:
         answer = ClassificationAnswer(

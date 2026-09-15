@@ -3258,6 +3258,8 @@ async def prepare_customs_precheck(
     stamp_duty_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Beyanname damga vergisi (TL, maktu)."),
     port_storage_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Tescile kadar liman/ardiye/tahmil-tahliye giderleri (TL)."),
     gekap_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="GEKAP tutarı (TL, beyanla ödenir)."),
+    direction: Literal["import", "export"] = Field("import", description="İşlem yönü; varsayılan ithalattır."),
+    destination_country: Optional[str] = Field(None, max_length=100, description="İhracatta eşyanın gideceği ülke; ihracat modunda zorunludur."),
 ) -> CustomsEvidencePack:
     """Prepare the evidence required for a cautious product-specific import answer.
 
@@ -3311,6 +3313,8 @@ async def prepare_customs_precheck(
         stamp_duty_try=stamp_duty_try,
         port_storage_try=port_storage_try,
         gekap_try=gekap_try,
+        direction=direction,
+        destination_country=destination_country,
     )
     guard_data(inquiry.model_dump(mode="json"), path="MCP gümrük sorusu")
     return await customs_advisor_service.evidence_pack(inquiry)
