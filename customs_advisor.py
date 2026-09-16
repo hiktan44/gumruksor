@@ -96,10 +96,15 @@ _ALLOWED_SOURCE_HOSTS = {
     "csb.gov.tr",
     "europa.eu",
     "ec.europa.eu",
-    # Yurt dışı tarife karşılaştırma kaynakları (PRD Faz 4).
+    # Yurt dışı tarife karşılaştırma kaynakları (PRD Faz 4 ve 8.7).
+    # Bu listede olmayan alan adındaki kaynak kaydı `OfficialSourceRegistry` tarafından
+    # sessizce atılır; ABD kaynakları eklenmezse USITC künyesi hiç görünmezdi.
     "trade-tariff.service.gov.uk",
     "gov.uk",
     "admin.ch",
+    "hts.usitc.gov",
+    "usitc.gov",
+    "rulings.cbp.gov",
 }
 _DISCLAIMER = (
     "Bu ön değerlendirme, {as_of} itibarıyla erişilebilen yürürlükteki resmî metinler "
@@ -2679,8 +2684,10 @@ class CustomsAdvisor:
                             "origin": EXPORTER_ISO2,
                             "feature": "foreign_tariff",
                         }
-                elif profile.engine in {"foreign_tariff_uk", "foreign_tariff_ch"} and self.foreign_tariff_engine is not None:
-                    jurisdiction = "uk" if profile.engine == "foreign_tariff_uk" else "ch"
+                elif profile.engine in {
+                    "foreign_tariff_uk", "foreign_tariff_ch", "foreign_tariff_us"
+                } and self.foreign_tariff_engine is not None:
+                    jurisdiction = profile.engine.rsplit("_", 1)[-1]
                     outcome = await self.foreign_tariff_engine.lookup(
                         code, origin=EXPORTER_ISO2, jurisdiction=jurisdiction
                     )
@@ -2701,12 +2708,15 @@ class CustomsAdvisor:
                             "retrieved_at": str(found.retrieved_at or ""),
                             "sha256": str(found.sha256 or ""),
                         }
-                    elif jurisdiction == "uk":
+                    elif jurisdiction in {"uk", "us"}:
+                        # İsviçre `nomenclature` kademesindedir (oran zaten beklenmiyor);
+                        # BK ve ABD `rates` kademesinde olduğu için ıskada dürüstçe düşer.
                         note = next(iter(getattr(found, "notes", []) or []), "") if found is not None else ""
+                        label = "Birleşik Krallık" if jurisdiction == "uk" else "ABD"
                         profile = downgrade_profile(
                             profile,
-                            reason="uk_miss",
-                            note=note or "Birleşik Krallık tarife verisi bu kod için okunamadı; resmî ekrandan doğrulayın.",
+                            reason=f"{jurisdiction}_miss",
+                            note=note or f"{label} tarife verisi bu kod için okunamadı; resmî ekrandan doğrulayın.",
                         )
             except Exception:  # motor arızası dosyayı düşürmemeli; kademe dürüstçe düşer
                 logger.exception("Hedef ülke tarife sorgusu başarısız")
