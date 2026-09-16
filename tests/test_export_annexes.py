@@ -147,13 +147,21 @@ class SingleDocumentAnnexTests(unittest.TestCase):
             extract_attachment_scope(b"0" * (50 * 1024 * 1024 + 1), extension=".csv")
 
 
+def shipped_rule(code: str) -> dict:
+    config = json.loads(Path("control_sources.json").read_text(encoding="utf-8"))
+    return next(rule for rule in config["rules"] if rule["code"] == code)
+
+
 class InlineTableTests(unittest.TestCase):
-    """Ozon tebliğinin yasak listesi madde gövdesindedir, ekinde değil."""
+    """Ozon tebliğinin yasak listesi madde gövdesindedir, ekinde değil.
+
+    Elle yazılmış desen yerine **sevk edilen yapılandırma** ölçülür; aksi hâlde test
+    yeşil kalırken canlıda başka bir şey çalışırdı.
+    """
 
     def _rows(self):
-        return extract_scope_table(
-            OZON_TEXT, r"İhracat\s+kısıtlamaları", r"Tebliğde\s+yer\s+almayan\s+hususlar"
-        )
+        table = shipped_rule("IHR/OZON")["scope_table"]
+        return extract_scope_table(OZON_TEXT, table["start_pattern"], table["end_pattern"])
 
     def test_the_prohibited_table_is_extracted_from_the_article_body(self) -> None:
         codes = [row.gtip_prefix for row in self._rows()]
@@ -164,6 +172,16 @@ class InlineTableTests(unittest.TestCase):
     def test_the_table_stops_before_the_next_article(self) -> None:
         # Madde 6'nın içine taşarsa sonraki tebliğ atıflarını yasak sayardık.
         self.assertNotIn("MADDE 6", "".join(row.source_line for row in self._rows()))
+
+    def test_the_permission_paragraph_is_left_out_of_the_prohibition_list(self) -> None:
+        """Madde 5/2'deki 8424.10 YASAK DEĞİL, izne tabidir — yasak listesine girmemeli.
+
+        Canlı metinde ölçüldü: segment Madde 6'ya kadar uzatılırsa 17 kod çıkıyor ve
+        17'ncisi 8424.10 oluyor. Bu, izne tabi bir eşyayı "ihracatı yasak" diye
+        etiketlemek olurdu — üretebileceğimiz en pahalı yanlış.
+        """
+        codes = [row.gtip_prefix for row in self._rows()]
+        self.assertFalse([c for c in codes if c.startswith("8424")], codes)
 
     def test_rows_default_to_scope_until_the_engine_labels_them(self) -> None:
         # Saf ayrıştırıcı iddia gücünü bilmez; onu yapılandırma söyler.
@@ -229,6 +247,8 @@ class ShippedConfigTests(unittest.TestCase):
         table = self.exports["IHR/OZON"]["scope_table"]
         rows = extract_scope_table(OZON_TEXT, table["start_pattern"], table["end_pattern"])
         self.assertTrue(rows)
+        # Sevk edilen desen izin fıkrasını dışarıda bırakmalı (yukarıdaki gerekçe).
+        self.assertFalse([r for r in rows if r.gtip_prefix.startswith("8424")])
 
     def test_the_flower_bulb_annex_is_downloaded_not_read_from_the_body(self) -> None:
         rule = self.exports["IHR/CICEK-SOGANI"]

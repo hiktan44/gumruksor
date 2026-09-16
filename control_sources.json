@@ -189,7 +189,7 @@
       "optional": true,
       "title": "Ozon Tabakasını İncelten Maddelerin ve Florlu Sera Gazlarının İhracına İlişkin Tebliğ",
       "category": "ihracatta izne tabi maddeler",
-      "annex_note": "Madde 5/1 tablosu: sayılan maddelerin ve bunları içeren Ek-3/A, Ek-3/B mallarının ihracatı yasaktır. Madde 5/2 uyarınca 2903.76.10.00.00 ve 2903.76.20.00.00 içeren 8424.10 GTİP'li mallar ise izne tabidir; bu ayrım resmî metinden teyit edilmelidir.",
+      "annex_note": "Madde 5/1 tablosu: sayılan maddelerin ve bunları içeren Ek-3/A, Ek-3/B mallarının ihracatı yasaktır; indekslenen 16 satır bu tablodur. Madde 5/2 uyarınca 2903.76.10.00.00 ve 2903.76.20.00.00 içeren 8424.10 GTİP'li mallar yasak değil, Çevre, Şehircilik ve İklim Değişikliği Bakanlığı iznine tabidir; bu kod bilerek yasak listesine alınmaz ve resmî metinden teyit edilmelidir.",
       "discovery": {
         "terms": [
           "İhracına",
@@ -201,7 +201,7 @@
       },
       "scope_table": {
         "start_pattern": "İhracat\\s+kısıtlamaları",
-        "end_pattern": "Tebliğde\\s+yer\\s+almayan\\s+hususlar",
+        "end_pattern": "^\\(2\\)\\s",
         "list_kind": "prohibited"
       }
     },
