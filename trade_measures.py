@@ -42,6 +42,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from change_ledger import batch_id_for
+from security_firewall import validate_outbound_url
 
 from countries import find_country
 from trusted_certificates import GEOTRUST_TLS_RSA_CA_G1_PEM
@@ -52,6 +53,14 @@ ROOT = Path(__file__).resolve().parent
 SEED_DIR = ROOT / "data" / "official"
 DEFAULT_SYNC_INTERVAL = int(os.environ.get("TRADE_MEASURES_SYNC_INTERVAL_SECONDS", "86400"))
 USER_AGENT = "Mozilla/5.0 (compatible; MevzuatMCP/1.5; +https://gumruksor.com/)"
+
+# İndirilen adreslerin bir kısmı bakanlık sayfasından KAZINAN HTML'den gelir
+# (`discover_workbook_link`, `discover_quota_documents`), yani üçüncü tarafın
+# değiştirebileceği bir girdidir. Bu yüzden her istek — ve her yönlendirme adımı —
+# resmî host izin listesine karşı yeniden doğrulanır.
+_OFFICIAL_HOSTS = ("ticaret.gov.tr", "mevzuat.gov.tr")
+_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+_MAX_REDIRECTS = 6
 
 ANTIDUMPING_PAGE = "https://ticaret.gov.tr/ithalat/ticaret-politikasi-savunma-araclari/damping-ve-subvansiyon"
 SAFEGUARD_PAGE = "https://ticaret.gov.tr/ithalat/ticaret-politikasi-savunma-araclari/korunma-onlemleri/yururlukteki-onlemler"
@@ -1462,9 +1471,39 @@ class TradeMeasureEngine:
             return outcomes
 
     async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
-        response = await self._client().get(url, **kwargs)
-        response.raise_for_status()
-        return response
+        """Resmî kaynaktan indirir; her yönlendirme adımı yeniden doğrulanır.
+
+        Yönlendirme istemciye bırakılmaz: izin listesine giren bir adres, izin
+        listesi dışına yönlendirebilirdi. Boyut da okunurken sınırlanır, çünkü
+        `content-length` başlığı sunucunun iddiasıdır, ölçüm değil.
+        """
+        client = self._client()
+        current = url
+        for _ in range(_MAX_REDIRECTS):
+            validate_outbound_url(current, allowed_hosts=_OFFICIAL_HOSTS)
+            async with client.stream("GET", current, follow_redirects=False, **kwargs) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise ValueError("Resmî kaynak hedefsiz yönlendirme döndürdü.")
+                    current = urljoin(str(response.url), location)
+                    continue
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MAX_DOWNLOAD_BYTES:
+                        raise ValueError("Resmî kaynak dosyası 50 MB güvenlik sınırını aşıyor.")
+                    chunks.append(chunk)
+                buffered = httpx.Response(
+                    status_code=response.status_code,
+                    headers=response.headers,
+                    content=b"".join(chunks),
+                    request=response.request,
+                )
+            buffered.raise_for_status()
+            return buffered
+        raise ValueError("Resmî kaynak çok fazla yönlendirme yaptı.")
 
     async def _sync_antidumping(self) -> SyncOutcome:
         page = await self._get(ANTIDUMPING_PAGE)
@@ -1527,6 +1566,10 @@ class TradeMeasureEngine:
         return SyncOutcome("communiques", True, "güncellendi", len(entries), diff, source)
 
     async def _mevzuat_search(self, title: str) -> list[dict[str, Any]]:
+        # Bu iki adres sabittir (kazınan girdi değil) ama izin listesi tek bir
+        # yerde tutulsun diye burada da doğrulanır.
+        validate_outbound_url(MEVZUAT_HOME, allowed_hosts=_OFFICIAL_HOSTS)
+        validate_outbound_url(MEVZUAT_DATATABLE, allowed_hosts=_OFFICIAL_HOSTS)
         client = self._client()
         home = await client.get(MEVZUAT_HOME)
         home.raise_for_status()
