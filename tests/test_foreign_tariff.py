@@ -210,7 +210,7 @@ class LinkCatalogTests(unittest.TestCase):
     def setUp(self):
         self.catalog = ft.load_link_catalog()
 
-    def test_catalog_has_three_jurisdictions(self):
+    def test_catalog_has_all_jurisdictions(self):
         self.assertEqual(set(self.catalog), set(ft.JURISDICTIONS))
 
     def test_eu_links_carry_code_and_date(self):
@@ -428,7 +428,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(payload["hs6"], "851713")
         self.assertEqual(payload["origin_code"], "TR")
         results = {item["jurisdiction"]: item for item in payload["results"]}
-        self.assertEqual(set(results), {"uk", "eu", "ch"})
+        self.assertEqual(set(results), {"uk", "eu", "ch", "us"})
 
         uk = results["uk"]
         self.assertEqual(uk["data_kind"], "api")
@@ -442,6 +442,12 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(results[code]["data_kind"], "links")
             self.assertIsNone(results[code]["third_country_duty"])
             self.assertTrue(results[code]["links"])
+
+        # ABD henüz bu testte eşitlenmedi (fikstürde snapshot yok); dürüstçe "unavailable" döner.
+        us = results["us"]
+        self.assertEqual(us["data_kind"], "api")
+        self.assertEqual(us["match_quality"], "unavailable")
+        self.assertIsNone(us["third_country_duty"])
 
     def test_group_membership_matches_preference(self):
         engine = self._engine()
@@ -473,9 +479,11 @@ class EngineTests(unittest.TestCase):
             asyncio.run(engine.lookup("8517"))
 
     def test_unknown_jurisdiction_rejected(self):
+        # "us" artık desteklenen bir yargı alanı (aşağıdaki UsHtsTests); gerçekten
+        # tanınmayan bir kod kullanılmalı.
         engine = self._engine()
         with self.assertRaises(ValueError):
-            asyncio.run(engine.lookup("851713000000", jurisdiction="us"))
+            asyncio.run(engine.lookup("851713000000", jurisdiction="zz"))
 
     def test_sync_activates_first_snapshot_and_is_idempotent(self):
         engine = self._engine()
@@ -586,10 +594,35 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(status["swiss_ready"], "hiç eşitlenmemiş veri seti hemen çekilmeli")
 
     def test_recent_stamp_skips_resync(self):
-        engine = self._engine()
+        # Bu testin paylaşılan `_transport()` fikstürü USITC ucunu tanımıyor; ABD
+        # kaynağı bu yüzden hiç aktif anlık görüntü kazanamaz ve tasarım gereği her
+        # `sync()` çağrısında yeniden denenir ("hiç eşitlenmemiş veri seti hemen
+        # çekilir"). Bu testin ölçtüğü şey (taze olan kaynaklar yeniden çekilmiyor)
+        # ABD ile karışmasın diye burada ABD ucu da moklanır.
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            self.calls.append(path)
+            if path.endswith("/chapters"):
+                return httpx.Response(200, json=_chapters())
+            if "/goods_nomenclatures/section/" in path:
+                return httpx.Response(200, json=_section(int(path.rsplit("/", 1)[-1])))
+            if "TN_STRUCTURE" in path:
+                return httpx.Response(200, content=_ch_csv().encode("utf-8"), headers={"content-type": "text/csv"})
+            if "exportList" in path:
+                return httpx.Response(200, json=_us_export_list())
+            return httpx.Response(404, json={"error": "not found"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        engine = ft.ForeignTariffEngine(
+            self._tmp.name, http=client, review_policy=ReviewPolicy(),
+            base_url="https://www.trade-tariff.service.gov.uk/api/v2",
+        )
+        engine.measures_delay_seconds = 0.0
+        self.addCleanup(lambda: asyncio.run(engine.close()))
+
         asyncio.run(engine.sync(force=True))
         before = len(self.calls)
-        asyncio.run(engine.sync())  # force YOK, ikisi de taze
+        asyncio.run(engine.sync())  # force YOK, hepsi taze
         self.assertEqual(len(self.calls), before, "aralık dolmadan yeniden indirilmemeli")
 
     def test_swiss_corpus_rows_included(self):
@@ -669,13 +702,265 @@ class EngineTests(unittest.TestCase):
         engine = self._engine()
         engine.ledger = FakeLedger()
         asyncio.run(engine.sync(force=True))
-        # Her veri seti kendi defter kaydını yazar.
+        # Her veri seti kendi defter kaydını yazar (bu testin taklit sunucusu USITC
+        # ucunu tanımıyor, 404 döner; ABD eşitlemesi bu yüzden hata verir ve deftere yazmaz).
         self.assertEqual(
             {item["source_id"] for item in recorded},
             {ft.UK_DATASET, ft.UK_NOMENCLATURE_DATASET, ft.CH_DATASET},
         )
         self.assertTrue(all(item["kind"] == "foreign_tariff" for item in recorded))
         self.assertTrue(all(item["review_status"] == "approved" for item in recorded))
+
+
+def _us_export_list(extra_rows: int = 10010) -> list[dict]:
+    """USITC ``exportList`` gövdesinin kırpılmış, gerçekçi bir taklidi.
+
+    Akıllı telefon satırı General/Special/Other/ek vergi/kota alanlarının hepsini
+    doldurur; ``6109`` yalnız pozisyon düzeyinde bir başlıktır (oranı yok); geri
+    kalanı ``_sync_us_hts``'in "10.000 satırdan küçükse reddet" eşiğini geçmek
+    için oranı olmayan dolgu satırlarıdır.
+    """
+    rows = [
+        {
+            "htsno": "8517.13.0000",
+            "indent": "2",
+            "description": "Smartphones",
+            "superior": None,
+            "units": ["No."],
+            "general": "Free",
+            "special": "Free (A+,AU,BH,CL,CO,D,E,IL,JO,KR,MA,OM,P,PA,PE,S,SG)",
+            "other": "35%",
+            "additionalDuties": "See U.S. note 20 to this subchapter",
+            "quotaQuantity": "2,000 dozen",
+            "footnotes": [{"value": "See chapter 99 for additional duties"}],
+        },
+        {
+            "htsno": "6109",
+            "indent": "0",
+            "description": "T-shirts, singlets and other vests, knitted or crocheted",
+            "superior": None,
+            "units": [],
+            "general": "",
+            "special": "",
+            "other": "",
+            "additionalDuties": "",
+            "quotaQuantity": "",
+            "footnotes": [],
+        },
+    ]
+    for index in range(extra_rows):
+        rows.append(
+            {
+                "htsno": f"97{index:08d}",
+                "indent": "0",
+                "description": f"Filler item {index}",
+                "units": [],
+                "general": "",
+                "special": "",
+                "other": "",
+                "additionalDuties": "",
+                "quotaQuantity": "",
+                "footnotes": [],
+            }
+        )
+    return rows
+
+
+def _us_transport(calls: list[str], payload: list | dict, *, status: int = 200) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if "exportList" in request.url.path:
+            if status != 200:
+                return httpx.Response(status, json={"error": "down"})
+            return httpx.Response(200, json=payload, headers={"content-type": "application/json"})
+        return httpx.Response(404, json={"error": "not found"})
+
+    return httpx.MockTransport(handler)
+
+
+class UsSpecialProgramIndicatorTests(unittest.TestCase):
+    def test_extracts_codes_from_parenthesised_group(self):
+        codes = ft.parse_us_special_program_indicators(
+            "Free (A+,AU,BH,CL,CO,D,E,IL,JO,KR,MA,OM,P,PA,PE,S,SG)"
+        )
+        self.assertIn("KR", codes)
+        self.assertIn("A+", codes)
+        self.assertEqual(len(codes), len(set(codes)), "yinelenen kod olmamalı")
+
+    def test_empty_or_missing_value_yields_no_codes(self):
+        self.assertEqual(ft.parse_us_special_program_indicators(""), [])
+        self.assertEqual(ft.parse_us_special_program_indicators(None), [])
+        self.assertEqual(ft.parse_us_special_program_indicators("Free"), [])
+
+
+class UsHtsRowParserTests(unittest.TestCase):
+    def test_general_special_other_and_spi_are_extracted(self):
+        rows = ft.parse_us_hts_rows(_us_export_list(extra_rows=0))
+        smartphone = next(row for row in rows if row["code"] == "8517130000")
+        self.assertEqual(smartphone["general"], "Free")
+        self.assertEqual(smartphone["other"], "35%")
+        self.assertIn("KR", smartphone["special_program_indicators"])
+        self.assertTrue(smartphone["has_rate"])
+        self.assertEqual(smartphone["additional_duties"], "See U.S. note 20 to this subchapter")
+        self.assertEqual(smartphone["quota_quantity"], "2,000 dozen")
+
+    def test_heading_row_without_rate_columns_is_kept_but_not_rated(self):
+        rows = ft.parse_us_hts_rows(_us_export_list(extra_rows=0))
+        heading = next(row for row in rows if row["code"] == "6109")
+        self.assertFalse(heading["has_rate"])
+
+    def test_rejects_non_list_payload(self):
+        with self.assertRaises(ValueError):
+            ft.parse_us_hts_rows({"not": "a list"})
+
+    def test_rows_without_code_or_description_are_skipped(self):
+        rows = ft.parse_us_hts_rows(
+            [
+                {"htsno": "", "description": "Kod yok"},
+                {"htsno": "1234.56.7890", "description": ""},
+                {"htsno": "1111.11.1111", "description": "Geçerli satır"},
+            ]
+        )
+        self.assertEqual([row["code"] for row in rows], ["1111111111"])
+
+    def test_duplicate_codes_are_deduplicated(self):
+        rows = ft.parse_us_hts_rows(
+            [
+                {"htsno": "1111.11.1111", "description": "İlk"},
+                {"htsno": "1111.11.1111", "description": "Yinelenen"},
+            ]
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["description"], "İlk")
+
+
+class UsHtsTests(unittest.TestCase):
+    """USITC HTS eşitlemesi, oran arşivi ve sorgu dalları."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.calls: list[str] = []
+
+    def _engine(self, *, payload=None, policy: ReviewPolicy | None = None, status: int = 200) -> ft.ForeignTariffEngine:
+        body = _us_export_list() if payload is None else payload
+        client = httpx.AsyncClient(transport=_us_transport(self.calls, body, status=status))
+        engine = ft.ForeignTariffEngine(
+            self._tmp.name, http=client, review_policy=policy or ReviewPolicy(),
+            base_url="https://www.trade-tariff.service.gov.uk/api/v2",
+        )
+        engine.measures_delay_seconds = 0.0
+        self.addCleanup(lambda: asyncio.run(engine.close()))
+        return engine
+
+    def test_sync_requests_the_usitc_host_not_the_uk_base_url(self):
+        # Gerileme kilidi: _sync_us_hts önceden yanlışlıkla self.base_url (BK) kullanıyordu.
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        self.assertTrue(any("hts.usitc.gov" in url for url in self.calls))
+
+    def test_sync_commits_snapshot_and_stores_rate_rows(self):
+        engine = self._engine()
+        status = asyncio.run(engine.sync(force=True))
+        self.assertTrue(status["us_ready"])
+        self.assertGreaterEqual(status["us_code_count"], 10000)
+        active = engine.store.active_snapshot(ft.US_DATASET)
+        self.assertIsNotNone(active)
+        candidates = engine.store.us_rate_candidates(active["id"], "851713")
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0]["code"], "8517130000")
+
+    def test_sync_rejects_a_suspiciously_small_response(self):
+        engine = self._engine(payload=_us_export_list(extra_rows=5))
+        status = asyncio.run(engine.sync(force=True))
+        self.assertFalse(status["us_ready"])
+        self.assertTrue(status["errors"])
+
+    def test_sync_is_idempotent_for_the_us_dataset(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        first = engine.store.active_snapshot(ft.US_DATASET)["id"]
+        asyncio.run(engine.sync(force=True))
+        second = engine.store.active_snapshot(ft.US_DATASET)["id"]
+        self.assertEqual(first, second, "aynı sha yeni anlık görüntü üretmemeli")
+
+    def test_strict_review_mode_holds_the_us_snapshot_pending(self):
+        engine = self._engine(policy=ReviewPolicy(mode="strict"))
+        status = asyncio.run(engine.sync(force=True))
+        self.assertFalse(status["us_ready"])
+        pending = engine.pending_reviews()
+        us_pending = next(item for item in pending if item["source_id"] == ft.US_DATASET)
+        engine.review_snapshot(us_pending["snapshot_id"], "approve", reviewed_by="editor@example.com")
+        self.assertTrue(engine.status()["us_ready"])
+
+    def test_lookup_exact_hs6_returns_all_measure_kinds_and_the_tr_note(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        result = asyncio.run(engine.lookup("851713000000", origin="TR", jurisdiction="us"))
+        us = result.results[0]
+        self.assertEqual(us.data_kind, "api")
+        self.assertEqual(us.match_quality, "exact_hs6")
+        self.assertEqual(us.matched_code, "8517130000")
+        self.assertEqual(us.third_country_duty, "Free")
+        self.assertEqual(
+            {measure["kind"] for measure in us.measures},
+            {"column2_duty", "additional_duty_note", "quota"},
+        )
+        self.assertTrue(any("General" in note and "NTR/MFN" in note for note in us.notes))
+        self.assertIsNone(us.origin_preference, "TR dalı SPI'yi tercih olarak sunmaz")
+
+    def test_lookup_non_tr_origin_surfaces_raw_spi_codes(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        result = asyncio.run(engine.lookup("851713000000", origin="Güney Kore", jurisdiction="us"))
+        us = result.results[0]
+        self.assertIsNotNone(us.origin_preference)
+        self.assertIn("KR", us.origin_preference["special_program_indicators"])
+        self.assertTrue(any("ISO ülke" in note for note in us.notes))
+
+    def test_lookup_falls_back_to_heading_description_without_rate(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        result = asyncio.run(engine.lookup("610900000000", jurisdiction="us"))
+        us = result.results[0]
+        self.assertEqual(us.match_quality, "heading_only")
+        self.assertIn("T-shirts", us.description or "")
+        self.assertIsNone(us.matched_code)
+        self.assertIsNone(us.third_country_duty)
+
+    def test_lookup_unknown_heading_is_not_found(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        us = asyncio.run(engine.lookup("999999000000", jurisdiction="us")).results[0]
+        self.assertEqual(us.match_quality, "not_found")
+        self.assertIsNone(us.matched_code)
+
+    def test_lookup_before_any_sync_is_honestly_unavailable(self):
+        engine = self._engine()
+        us = asyncio.run(engine.lookup("851713000000", jurisdiction="us")).results[0]
+        self.assertEqual(us.match_quality, "unavailable")
+        self.assertIsNone(us.third_country_duty)
+        self.assertEqual(self.calls, [], "hiç eşitleme yapılmadıysa ağa çıkılmamalı")
+
+    def test_status_reports_us_ready_and_code_count(self):
+        engine = self._engine()
+        self.assertFalse(engine.status()["us_ready"])
+        asyncio.run(engine.sync(force=True))
+        status = engine.status()
+        self.assertTrue(status["us_ready"])
+        self.assertGreaterEqual(status["us_code_count"], 10000)
+        us_jurisdiction = next(item for item in status["jurisdictions"] if item["code"] == "us")
+        self.assertEqual(us_jurisdiction["data_kind"], "api")
+
+    def test_corpus_rows_include_us_hts_definitions_after_sync(self):
+        engine = self._engine()
+        asyncio.run(engine.sync(force=True))
+        rows = engine.corpus_rows()
+        us_rows = [row for row in rows if row["id"].startswith(f"{ft.US_DATASET}-")]
+        self.assertTrue(us_rows, "ABD HTS satırları hibrit indeks korpusuna girmeli")
+        smartphone = next(row for row in us_rows if row["id"] == f"{ft.US_DATASET}-8517130000")
+        self.assertEqual(smartphone["corpus"], "foreign_tariff")
+        self.assertIn("Smartphones", smartphone["text"])
 
 
 if __name__ == "__main__":

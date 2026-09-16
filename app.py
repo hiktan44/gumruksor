@@ -2818,7 +2818,7 @@ async def web_trade_measures_status(request: Request):
 
 @mcp.custom_route("/api/foreign/tariff", methods=["GET"])
 async def web_foreign_tariff(request: Request):
-    """Yurt dışı tarife karşılaştırma: BK açık API'sinden oran, AB/İsviçre için resmî sorgu bağlantısı."""
+    """Yurt dışı tarife karşılaştırma: BK/ABD açık API'lerinden oran, AB/İsviçre için resmî sorgu bağlantısı."""
     limited = _rate_limit_response(request, "foreign-tariff", limit=30, window_seconds=60)
     if limited:
         return limited
