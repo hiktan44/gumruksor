@@ -2968,6 +2968,26 @@ async def web_vat_rate(request: Request):
     return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
+@mcp.custom_route("/api/tariff/gts", methods=["GET"])
+async def web_gts_coverage(request: Request):
+    """Resmî GTS ülke listesi ve her satırın ülke kayıt defterinde çözülüp çözülmediği.
+
+    Çözülemeyen satır sessiz bir fazla-vergi riskidir (gerekçesi motorda yazılı),
+    bu yüzden liste dışarıya açıkça verilir.
+    """
+    limited = _rate_limit_response(request, "gts-coverage", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        report = tariff_engine.gts_coverage()
+    except Exception:
+        logger.exception("GTS coverage failed")
+        return JSONResponse({"error": "GTS ülke listesi şu anda okunamadı."}, status_code=502)
+    if str(request.query_params.get("unresolved") or "").strip() in {"1", "true", "yes"}:
+        report["countries"] = [item for item in report["countries"] if not item["resolved"]]
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/tariff/communiques", methods=["GET"])
 async def web_import_communiques(request: Request):
     """Ticaret Bakanlığı İthalat Tebliğleri dizini (resmî bağlantılarla)."""

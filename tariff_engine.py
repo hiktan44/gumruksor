@@ -1031,6 +1031,62 @@ class TariffEngine:
             sync_interval_seconds=self.sync_interval_seconds,
         )
 
+    # --- GTS (Genelleştirilmiş Tercihler Sistemi) kapsam teşhisi ----------------
+    def gts_coverage(self) -> dict[str, Any]:
+        """Report the official GTS country table and whether each row is reachable.
+
+        Bu tablo bugüne kadar hiçbir uçta görünmüyordu ve sessiz bir hata sınıfı
+        doğuruyordu: resmî ekte GTS'li olan bir ülkenin adı ``countries.py``
+        kayıt defterinde çözülemezse, kullanıcı o ülkenin yaygın bir yazımını
+        girdiğinde eşleşme olmaz ve sorgu "Diğer Ülkeler" sütununa düşer — yani
+        **olması gerekenden yüksek vergi** gösterilir. Hata, ürünün hiçbir yerinde
+        belirti vermez. Bu metot her satırı tek tek çözmeye çalışır ve
+        çözülemeyenleri açıkça listeler.
+
+        `resolved`, adın kayıt defterinde bir ülkeye bağlandığını gösterir; oranın
+        doğruluğunu değil. Resmî ekteki yazımla yapılan sorgu her hâlükârda
+        çalışır, çünkü tablo o yazımla anahtarlanmıştır.
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT metadata_json FROM tariff_snapshots WHERE active=1 ORDER BY source_id"
+            ).fetchall()
+        metadata: dict[str, Any] = {}
+        for row in rows:
+            metadata.update(json.loads(row["metadata_json"] or "{}"))
+        table = metadata.get("gts_countries", {}) or {}
+        countries: list[dict[str, Any]] = []
+        for key, item in sorted(table.items(), key=lambda pair: str(pair[1].get("name", ""))):
+            name = str(item.get("name", "") or "")
+            match = find_country(name)
+            countries.append({
+                "official_name": name,
+                "official_key": key,
+                "group": item.get("group"),
+                "exclusions": item.get("exclusions", ""),
+                "resolved": match is not None,
+                "registry_key": match.key if match else None,
+                "iso2": match.iso2 if match else None,
+            })
+        unresolved = [item["official_name"] for item in countries if not item["resolved"]]
+        return {
+            "total": len(countries),
+            "resolved": len(countries) - len(unresolved),
+            "unresolved": unresolved,
+            "groups": {
+                group: sum(1 for item in countries if item["group"] == group)
+                for group in ("EAGÜ", "ÖTDÜ", "GYÜ")
+            },
+            "sector_exclusion_rows": len(metadata.get("gts_sectors", {}) or {}),
+            "countries": countries,
+            "note": (
+                "GTS ülke listesi yürürlükteki İthalat Rejimi Kararı ekinden okunur. "
+                "‘resolved=false’ olan satır, adın ülke kayıt defterinde karşılığı olmadığını "
+                "gösterir: kullanıcı o ülkeyi farklı yazarsa sorgu ‘Diğer Ülkeler’ sütununa düşer "
+                "ve vergi olduğundan yüksek çıkar. Sektör istisnaları her sorguda ayrıca uyarı üretir."
+            ),
+        }
+
     @staticmethod
     def _matching_group(
         origin: str,
