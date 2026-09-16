@@ -487,6 +487,19 @@ Menşe/dolaşım belgeleri `countries.py` kayıt defterinden türetilir ama ifad
 
 **GTS (Genelleştirilmiş Tercihler Sistemi) kapsam teşhisi** (`GET /api/tariff/gts`): yürürlükteki İthalat Rejimi Kararı eki, gümrük vergisinden muaf veya indirimli GTS ülkelerini üç grupta sayar (EAGÜ, ÖTDÜ, GYÜ) ve motor bu tabloyu sorguda zaten kullanıyordu — ama tablo **hiçbir uçta görünmüyordu**. Bu, belirti vermeyen bir hata sınıfı doğuruyordu: resmî ekteki ülke adı `countries.py` kayıt defterinde çözülemiyorsa, kullanıcı o ülkeyi yaygın bir başka yazımla girdiğinde eşleşme olmaz, sorgu "Diğer Ülkeler" sütununa düşer ve vergi **olduğundan yüksek** çıkar. Fazla vergi eksik vergiden sessizdir: beyan reddedilmez, kimse şikâyet etmez, yalnız ithalatçı fazla öder.
 
+**İlk canlı ölçüm hatayı hemen buldu (16.09.2026):** resmî ekte **62** GTS ülkesi var, bunların **yalnız 9'u** kayıt defterinde çözülüyordu — **53'ü çözülmüyordu**. Zarar `gumruksor.com` üzerinde rakamla doğrulandı (GTİP `610910000000`):
+
+| Girilen menşe | Gümrük vergisi |
+|---|---|
+| `Burma/Myanmar` (resmî ekteki yazım) | **%0** |
+| `Myanmar` (kullanıcının yazacağı hâl) | **%12** |
+| `Kongo Demokratik Cum.` | %0 |
+| `Demokratik Kongo Cumhuriyeti` | %12 |
+| `Timor-Leste` | %0 |
+| `Doğu Timor` | %12 |
+
+Yani ekte muafiyeti olan bir menşe, adı farklı yazıldığı için **12 puan fazla** vergilendiriliyor ve hiçbir uyarı çıkmıyordu. Eksik 53 ülke `countries.py`'ye resmî yazımları ve yaygın Türkçe/İngilizce varyantlarıyla eklendi (94 → 147 kayıt). Hepsi düz `mfn` kaydıdır ve `column_1` açılmaz: bunlar anlaşma ülkesi değildir, tavizi Türkiye tek taraflı verir; GTS sütununu `gts_countries` tablosu seçer, kayıt yalnız adı çözer. Gerileme testi altı yazımın da aynı sütuna gittiğini kilitliyor.
+
 Uç artık her satırı adıyla verir ve her biri için `resolved` bayrağı taşır; `?unresolved=1` yalnız çözülemeyenleri süzer. Rapor ayrıca grup sayılarını ve sektör istisnası satır sayısını gösterir. `resolved` yalnız **adın kayıt defterine bağlandığını** gösterir, oranın doğruluğunu değil; resmî ekteki yazımla yapılan sorgu her hâlükârda çalışır, çünkü tablo o yazımla anahtarlanmıştır. Sektör istisnaları (ör. `S-11a`) yorumlanmaz, sorguda aynen uyarı olarak gösterilir.
 
 **İhracatta GSP (Form A / REX) için tablo tutulmuyor ve bu bilinçli bir karardır.** Bir ülkenin hangi ülkelere GSP tanıdığı o ülkenin *kendi* mevzuatıdır, ürün ve dönem bazında değişir ve Türkiye'de bunu gösteren resmî bir kayıt defteri yayımlanmaz. Elle derlenmiş bir yararlanıcı tablosu, doğrulanamayan yabancı hukuk iddiasını ürüne sokmak olurdu — deponun "oran/kural yalnız resmî kaynaktan" ilkesine aykırı. Bu yüzden tercihli ticaret anlaşması olmayan hedeflerde belge **koşullu** olarak listelenir ve teyidin alıcıdan veya hedef ülkenin gümrük idaresinden alınması gerektiği yazılır. Bu belge hiçbir dosyanın hazırlık durumunu kilitlemez.

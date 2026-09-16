@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from countries import find_country
 from tariff_engine import TariffEngine
 
 SNAPSHOT_SQL = (
@@ -153,6 +154,63 @@ class GtsLookupRegressionTests(unittest.TestCase):
     def test_a_country_missing_from_the_table_is_not_given_a_preference(self) -> None:
         group, _ = TariffEngine._matching_group("Çin", self.LABELS, {"gts_countries": {}}, "610910000000")
         self.assertEqual(group, "DÜ")
+
+
+
+class MissingGtsCountryRegressionTests(unittest.TestCase):
+    """Canlı ölçümle bulunan fazla-vergi hatasının gerileme kilidi.
+
+    16.09.2026 ölçümü: resmî ekteki 62 GTS ülkesinden 53'ü kayıt defterinde yoktu.
+    Sonuç, gumruksor.com üzerinde rakamla doğrulandı (GTİP 610910000000):
+
+        "Burma/Myanmar" (resmî yazım) → gümrük vergisi %0
+        "Myanmar"       (kullanıcının yazacağı hâl) → %12
+
+    Yani ekte muafiyeti olan bir menşe, adı farklı yazıldığı için 12 puan fazla
+    vergilendiriliyordu ve hiçbir uyarı çıkmıyordu.
+    """
+
+    LABELS = {"AB/BK", "EAGÜ", "ÖTDÜ", "GYÜ", "DÜ"}
+    METADATA = {
+        "gts_countries": {
+            "burma/myanmar": {"name": "Burma/Myanmar", "group": "EAGÜ", "exclusions": ""},
+            "timor-leste": {"name": "Timor-Leste", "group": "EAGÜ", "exclusions": ""},
+            "kongo demokratik cum.": {"name": "Kongo Demokratik Cum.", "group": "EAGÜ", "exclusions": ""},
+            "cape verde": {"name": "Cape Verde", "group": "EAGÜ", "exclusions": ""},
+        }
+    }
+
+    def _group(self, origin: str):
+        return TariffEngine._matching_group(origin, self.LABELS, self.METADATA, "610910000000")[0]
+
+    def test_a_common_variant_reaches_the_same_column_as_the_official_spelling(self) -> None:
+        for official, variant in (
+            ("Burma/Myanmar", "Myanmar"),
+            ("Timor-Leste", "Doğu Timor"),
+            ("Kongo Demokratik Cum.", "Demokratik Kongo Cumhuriyeti"),
+            ("Cape Verde", "Cabo Verde"),
+        ):
+            with self.subTest(variant=variant):
+                self.assertEqual(self._group(variant), self._group(official))
+                self.assertEqual(self._group(variant), "EAGÜ")
+
+    def test_english_names_resolve_too(self) -> None:
+        for name in ("east timor", "burma", "dr kongo"):
+            with self.subTest(name=name):
+                self.assertEqual(self._group(name), "EAGÜ")
+
+    def test_every_gts_beneficiary_added_here_stays_a_plain_mfn_entry(self) -> None:
+        # Bunlar anlaşma ülkesi DEĞİL; tavizi Türkiye tek taraflı verir. `column_1`
+        # açılırsa GTS'si olmayan listelerde de tercihli sütuna düşerlerdi.
+        for name in ("Myanmar", "Doğu Timor", "Senegal", "Zambiya", "Çad"):
+            country = find_country(name)
+            self.assertIsNotNone(country, name)
+            self.assertEqual(country.regime, "mfn", name)
+            self.assertFalse(country.column_1, name)
+            self.assertEqual(country.proof, "none", name)
+
+    def test_a_non_gts_country_is_unaffected(self) -> None:
+        self.assertEqual(self._group("Çin"), "DÜ")
 
 
 if __name__ == "__main__":  # pragma: no cover
