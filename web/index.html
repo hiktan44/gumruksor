@@ -697,6 +697,7 @@
         <button type="button" class="active" data-account-tab="summary">Özet</button>
         <button type="button" data-account-tab="dossiers">Kanıt dosyaları</button>
         <button type="button" data-account-tab="compliance">Uyum</button>
+        <button type="button" data-account-tab="api" id="apiTab" hidden>API anahtarları</button>
         <button type="button" data-account-tab="plans">Paketler</button>
       </nav>
       <section class="account-panel" data-account-panel="summary">
@@ -724,6 +725,23 @@
         <div class="compliance-components" id="complianceComponents"></div>
         <h4 class="compliance-alerts-title">Erken uyarılar</h4>
         <div class="compliance-alerts" id="complianceAlerts"><p>Uyarılar yüklendiğinde burada listelenir.</p></div>
+      </section>
+      <section class="account-panel" data-account-panel="api" hidden>
+        <header class="panel-section-head">
+          <div>
+            <h3>ERP / dış sistem API anahtarları</h3>
+            <p>Anahtar, <code>X-API-Key</code> başlığıyla gönderilir. Yalnız ön değerlendirme, beyanname taslağı, toplu hesap ve kanıt dosyası uçlarında geçerlidir; ödeme, hesap ve yönetim uçlarına erişemez ve yeni anahtar üretemez.</p>
+          </div>
+          <button type="button" id="refreshApiKeys">Yenile</button>
+        </header>
+        <form class="api-key-form" id="apiKeyForm">
+          <label for="apiKeyLabel">Anahtar etiketi</label>
+          <input id="apiKeyLabel" name="label" type="text" maxlength="100" placeholder="Örn. SAP üretim sunucusu" autocomplete="off">
+          <button type="submit">Yeni anahtar üret</button>
+        </form>
+        <div class="api-key-reveal" id="apiKeyReveal" hidden></div>
+        <div class="api-key-list" id="apiKeyList"><p>Anahtarlar yükleniyor.</p></div>
+        <p class="quota-note">Anahtarın açık değeri yalnızca üretildiği anda bir kez gösterilir; sunucuda geri çözülemeyen bir özet olarak saklanır. Kaybederseniz iptal edip yenisini üretin.</p>
       </section>
       <section class="account-panel" data-account-panel="plans" hidden>
         <div class="pricing-grid" id="pricingGrid"></div>

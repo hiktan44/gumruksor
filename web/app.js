@@ -742,13 +742,14 @@ async function loadAuthState() {
   }
 }
 
-const quotaLabels = { vision: "Görsel analiz", classification: "GTİP adayı", precheck: "Ön değerlendirme", dossier: "Kanıt dosyası" };
+const quotaLabels = { vision: "Görsel analiz", classification: "GTİP adayı", precheck: "Ön değerlendirme", dossier: "Kanıt dosyası", api_call: "API çağrısı" };
 
 function switchAccountTab(tab) {
   $$('[data-account-tab]').forEach((button) => button.classList.toggle("active", button.dataset.accountTab === tab));
   $$('[data-account-panel]').forEach((panel) => { panel.hidden = panel.dataset.accountPanel !== tab; });
   if (tab === "dossiers") loadDossiers();
   if (tab === "compliance") loadCompliance();
+  if (tab === "api") loadApiKeys();
 }
 
 const complianceStatusLabels = { good: "İyi durumda", watch: "Dikkat gerektiren noktalar var", risk: "Riskli: yüksek öncelikli uyarıları ele alın" };
@@ -812,6 +813,9 @@ function renderAccount(auth) {
   $("#currentPlanName").textContent = account.plan.name;
   $("#currentPlanStatus").textContent = `${account.period} kullanım dönemi · ${account.subscription.status}`;
   $("#adminLink").hidden = !account.is_admin;
+  // Sekme yalnız kilidi açık olan pakette görünür; aksi hâlde kullanıcıya
+  // üretemeyeceği bir anahtar vaat edilmiş olurdu.
+  $("#apiTab").hidden = !(account.capabilities || []).includes("api_access");
   $("#manageBilling").hidden = !(
     account.subscription.provider === "stripe"
     && ["active", "pending", "past_due"].includes(account.subscription.status)
@@ -820,6 +824,66 @@ function renderAccount(auth) {
     const percent = quota.limit == null ? 0 : Math.min(100, Math.round((quota.used / Math.max(1, quota.limit)) * 100));
     return `<article class="quota-card"><header><b>${escapeHtml(quotaLabels[key] || key)}</b><span>${quota.limit == null ? `${quota.used} / sınırsız` : `${quota.used} / ${quota.limit}`}</span></header><div class="quota-track"><i style="width:${percent}%"></i></div></article>`;
   }).join("");
+}
+
+function renderApiKeys(items) {
+  const list = $("#apiKeyList");
+  if (!items.length) {
+    list.innerHTML = "<p>Henüz API anahtarınız yok. Yukarıdan bir anahtar üretebilirsiniz.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => {
+    const used = item.last_used_at ? `Son kullanım: ${formatUnixDate(item.last_used_at)}` : "Hiç kullanılmadı";
+    const state = item.active
+      ? '<span class="api-key-state active">Etkin</span>'
+      : '<span class="api-key-state revoked">İptal edildi</span>';
+    const action = item.active
+      ? `<button type="button" data-revoke-key="${escapeHtml(item.id)}">İptal et</button>`
+      : "";
+    return `<article class="api-key-card"><header><b>${escapeHtml(item.label || "Etiketsiz anahtar")}</b>${state}</header>`
+      + `<code>gsk_${escapeHtml(item.prefix)}_…</code>`
+      + `<small>Oluşturma: ${formatUnixDate(item.created_at)} · ${escapeHtml(used)}</small>`
+      + `<div class="api-key-actions">${action}</div></article>`;
+  }).join("");
+  list.querySelectorAll("[data-revoke-key]").forEach((button) => {
+    button.addEventListener("click", () => revokeApiKey(button.dataset.revokeKey));
+  });
+}
+
+async function loadApiKeys() {
+  try {
+    const data = await fetchJson("/api/account/api-keys");
+    renderApiKeys(data.items || []);
+  } catch (error) {
+    $("#apiKeyList").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function createApiKey(event) {
+  event.preventDefault();
+  const label = $("#apiKeyLabel").value.trim();
+  try {
+    const created = await fetchJson("/api/account/api-keys", { method: "POST", body: JSON.stringify({ label }) });
+    // Açık değer yalnız burada görünür; sunucuda özet saklandığı için bir daha alınamaz.
+    const reveal = $("#apiKeyReveal");
+    reveal.hidden = false;
+    reveal.innerHTML = `<p><b>Anahtarınız bir kez gösteriliyor.</b> Kopyalayıp ERP tarafına kaydedin; bu pencereyi kapattığınızda geri alınamaz.</p>`
+      + `<code class="api-key-secret">${escapeHtml(created.secret)}</code>`;
+    $("#apiKeyLabel").value = "";
+    await loadApiKeys();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function revokeApiKey(keyId) {
+  if (!window.confirm("Bu anahtar iptal edilsin mi? İptal geri alınamaz ve anahtarı kullanan entegrasyonlar hemen durur.")) return;
+  try {
+    await fetchJson(`/api/account/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+    await loadApiKeys();
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function openAccount(tab = "summary") {
@@ -887,6 +951,8 @@ $("#appAccountButton").addEventListener("click", () => openAccount());
 $("#closeAccount").addEventListener("click", () => $("#accountDialog").close());
 $("#accountDialog").addEventListener("click", (event) => { if (event.target === $("#accountDialog")) $("#accountDialog").close(); });
 $$('[data-account-tab]').forEach((button) => button.addEventListener("click", () => switchAccountTab(button.dataset.accountTab)));
+$("#refreshApiKeys").addEventListener("click", loadApiKeys);
+$("#apiKeyForm").addEventListener("submit", createApiKey);
 $("#refreshDossiers").addEventListener("click", loadDossiers);
 $("#refreshCompliance").addEventListener("click", loadCompliance);
 $("#dossierList").addEventListener("click", async (event) => {

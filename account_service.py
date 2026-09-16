@@ -6,9 +6,11 @@ payment-card data.  All mutable records are scoped to the signed Google subject.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import secrets
 import sqlite3
 import time
 import uuid
@@ -92,8 +94,11 @@ PLANS: dict[str, Plan] = {
     ),
     "institutional": Plan(
         "institutional", "Kurumsal", 7_500, None,
-        {"vision": None, "classification": None, "precheck": None, "dossier": None},
-        ("Özel kota", "Kurumsal entegrasyon", "Özel destek"),
+        # `api_call` yalnız bu pakette tanımlıdır: API anahtarı `api_access` kilidine
+        # bağlı ve o kilit yalnız Kurumsal pakette açık. Diğer paketlerde anahtar
+        # üretilemediği için sayacın da karşılığı yok ve hesap panelinde görünmez.
+        {"vision": None, "classification": None, "precheck": None, "dossier": None, "api_call": None},
+        ("Özel kota", "Kurumsal entegrasyon", "API anahtarı ile ERP erişimi", "Özel destek"),
         tier="premium_plus", tier_name="Premium+", capabilities=_PREMIUM_PLUS_CAPABILITIES,
     ),
 }
@@ -119,7 +124,7 @@ _ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     "user": frozenset(),
 }
 
-_OPERATIONS = {"vision", "classification", "precheck", "dossier"}
+_OPERATIONS = {"vision", "classification", "precheck", "dossier", "api_call"}
 _OFFICIAL_SUFFIXES = (
     ".gov.tr", ".bel.tr", ".edu.tr", ".europa.eu",
 )
@@ -341,6 +346,17 @@ class AccountService:
                     kind TEXT NOT NULL, target_key TEXT NOT NULL, created_at INTEGER NOT NULL,
                     PRIMARY KEY (google_sub, kind, target_key)
                 );
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id TEXT PRIMARY KEY,
+                    google_sub TEXT NOT NULL REFERENCES users(google_sub) ON DELETE CASCADE,
+                    label TEXT NOT NULL DEFAULT '',
+                    prefix TEXT NOT NULL UNIQUE,
+                    key_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    last_used_at INTEGER,
+                    revoked_at INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS api_keys_owner ON api_keys(google_sub, created_at DESC);
                 """
             )
             self._ensure_column(connection, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
@@ -523,6 +539,135 @@ class AccountService:
                  _json({"role": role}, max_bytes=1_000), now),
             )
 
+    # ------------------------------------------------------------------ API anahtarlari
+    API_KEY_LIMIT = 10
+    API_KEY_PREFIX = "gsk"
+
+    @staticmethod
+    def _hash_api_key(raw: str) -> str:
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _api_key_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Anahtarin gosterilebilir künyesi. Gizli deger burada asla yer almaz."""
+        return {
+            "id": str(row["id"]),
+            "label": str(row["label"] or ""),
+            # Ön ek gizli değildir: anahtarı tanımak için vardır, tek başına yetki vermez.
+            "prefix": str(row["prefix"]),
+            "created_at": int(row["created_at"]),
+            "last_used_at": int(row["last_used_at"]) if row["last_used_at"] else None,
+            "revoked_at": int(row["revoked_at"]) if row["revoked_at"] else None,
+            "active": row["revoked_at"] is None,
+        }
+
+    def list_api_keys(self, user: dict[str, Any]) -> list[dict[str, Any]]:
+        google_sub = str(user["sub"])
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id,label,prefix,created_at,last_used_at,revoked_at FROM api_keys "
+                "WHERE google_sub=? ORDER BY created_at DESC",
+                (google_sub,),
+            ).fetchall()
+        return [self._api_key_row(row) for row in rows]
+
+    def create_api_key(self, user: dict[str, Any], *, label: str = "") -> dict[str, Any]:
+        """Yeni anahtar uretir; acik deger yalnizca bu donuste bir kez gorunur.
+
+        Veritabaninda sadece sha256 ozeti saklanir, yani bir veritabani kopyasi
+        calinsa bile anahtarlar geri uretilemez.
+        """
+        google_sub = str(user["sub"])
+        label = str(label or "").strip()[:100]
+        key_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if not connection.execute("SELECT 1 FROM users WHERE google_sub=?", (google_sub,)).fetchone():
+                raise AccountError("Kullanıcı bulunamadı.")
+            active = int(connection.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE google_sub=? AND revoked_at IS NULL", (google_sub,)
+            ).fetchone()[0])
+            if active >= self.API_KEY_LIMIT:
+                raise AccountError(
+                    f"En fazla {self.API_KEY_LIMIT} etkin API anahtarı tutabilirsiniz; "
+                    "yenisini üretmeden önce kullanmadığınız bir anahtarı iptal edin."
+                )
+            for _ in range(5):
+                prefix = secrets.token_hex(4)
+                if not connection.execute("SELECT 1 FROM api_keys WHERE prefix=?", (prefix,)).fetchone():
+                    break
+            else:  # pragma: no cover - 2^32 alanda bes carpisma pratikte imkansiz
+                raise AccountError("Anahtar üretilemedi, tekrar deneyin.")
+            secret = secrets.token_urlsafe(32)
+            raw = f"{self.API_KEY_PREFIX}_{prefix}_{secret}"
+            connection.execute(
+                "INSERT INTO api_keys(id,google_sub,label,prefix,key_hash,created_at,last_used_at,revoked_at) "
+                "VALUES(?,?,?,?,?,?,NULL,NULL)",
+                (key_id, google_sub, label, prefix, self._hash_api_key(raw), now),
+            )
+            connection.execute(
+                "INSERT INTO audit_log(actor_sub,actor_email,action,target_type,target_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (google_sub, str(user.get("email", ""))[:200], "api_key.create", "api_key", key_id,
+                 # Denetim kaydinda yalnizca etiket ve on ek durur; gizli deger hicbir gunluge yazilmaz.
+                 _json({"label": label, "prefix": prefix}, max_bytes=1_000), now),
+            )
+        return {"id": key_id, "label": label, "prefix": prefix, "created_at": now,
+                "last_used_at": None, "revoked_at": None, "active": True, "secret": raw}
+
+    def revoke_api_key(self, user: dict[str, Any], key_id: str) -> dict[str, Any]:
+        google_sub = str(user["sub"])
+        now = _now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT id,label,prefix,created_at,last_used_at,revoked_at FROM api_keys WHERE id=? AND google_sub=?",
+                (str(key_id), google_sub),
+            ).fetchone()
+            if row is None:
+                raise AccountError("API anahtarı bulunamadı.")
+            if row["revoked_at"] is None:
+                connection.execute("UPDATE api_keys SET revoked_at=? WHERE id=?", (now, str(key_id)))
+                connection.execute(
+                    "INSERT INTO audit_log(actor_sub,actor_email,action,target_type,target_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (google_sub, str(user.get("email", ""))[:200], "api_key.revoke", "api_key", str(key_id),
+                     _json({"prefix": str(row["prefix"])}, max_bytes=1_000), now),
+                )
+            updated = connection.execute(
+                "SELECT id,label,prefix,created_at,last_used_at,revoked_at FROM api_keys WHERE id=?", (str(key_id),)
+            ).fetchone()
+        return self._api_key_row(updated)
+
+    def authenticate_api_key(self, raw: str) -> dict[str, Any] | None:
+        """Ham anahtari sahibine cozer; gecersiz/iptal edilmis anahtarda None doner.
+
+        Ozet karsilastirmasi `compare_digest` ile yapilir, boylece yanit suresi
+        dogru on ek bulunduktan sonra anahtarin dogrulugunu ele vermez.
+        """
+        raw = str(raw or "").strip()
+        # `token_urlsafe` gizli değerin içine `_` ve `-` koyabilir; bu yüzden ayırma
+        # sayısı sınırlanır, aksi hâlde geçerli anahtarların bir kısmı reddedilirdi.
+        parts = raw.split("_", 2)
+        if len(parts) != 3 or parts[0] != self.API_KEY_PREFIX or not parts[1] or not parts[2]:
+            return None
+        prefix = parts[1]
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT k.id,k.google_sub,k.label,k.prefix,k.key_hash,k.created_at,k.last_used_at,k.revoked_at,"
+                "u.email,u.name FROM api_keys k JOIN users u ON u.google_sub=k.google_sub WHERE k.prefix=?",
+                (prefix,),
+            ).fetchone()
+            if row is None or row["revoked_at"] is not None:
+                return None
+            if not secrets.compare_digest(str(row["key_hash"]), self._hash_api_key(raw)):
+                return None
+            now = _now()
+            connection.execute("UPDATE api_keys SET last_used_at=? WHERE id=?", (now, str(row["id"])))
+        return {
+            "user": {"sub": str(row["google_sub"]), "email": str(row["email"] or ""), "name": str(row["name"] or "")},
+            "key": {"id": str(row["id"]), "label": str(row["label"] or ""), "prefix": prefix, "last_used_at": now},
+        }
+
     def record_audit(self, actor: dict[str, Any], action: str, target_type: str, target_id: str, details: dict[str, Any] | None = None) -> None:
         """Generic audit trail entry (used by the editorial review gate)."""
         with self._connect() as connection:
@@ -650,7 +795,9 @@ class AccountService:
                 "SELECT COALESCE(SUM(quantity),0) FROM credit_grants WHERE google_sub=? AND operation IN (?, 'all')",
                 (google_sub, operation),
             ).fetchone()[0])
-            base_limit = plan.quotas[operation]
+            # Pakette hiç tanımlanmamış bir işlem (ör. `api_call`) sıfır kota demektir;
+            # KeyError yerine yükseltme seçenekleriyle dürüst bir hata döner.
+            base_limit = plan.quotas.get(operation, 0)
             unlimited = self.is_admin(user)
             limit = None if (base_limit is None or unlimited) else (base_limit + extra)
             if limit is not None and used + quantity > limit:
