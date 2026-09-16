@@ -756,6 +756,9 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .dossier-item b { display: block; font-size: .7rem; }.dossier-item small { display: block; margin-top: 5px; color: var(--ink-3); font-size: .56rem; }
 .dossier-actions { display: flex; gap: 6px; }.dossier-actions a,.dossier-actions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); color: var(--teal); font-size: .58rem; font-weight: 700; text-decoration: none; }
 .dossier-actions button { color: var(--danger); }
+.cost-line-excluded td { color: var(--ink-3); background: var(--canvas); }
+.cost-line-excluded td:first-child small { color: var(--orange); font-weight: 700; }
+.cost-total { margin-top: 12px; padding: 12px; border: 1px solid var(--line); background: var(--canvas); font-size: .68rem; }
 .api-key-form { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; margin-bottom: 16px; }
 .api-key-form label { color: var(--ink-3); font-size: .62rem; font-weight: 700; }
 .api-key-form input { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: .65rem; }

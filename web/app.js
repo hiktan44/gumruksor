@@ -1534,6 +1534,34 @@ function renderDeclarationField(field) {
   </tr>`;
 }
 
+function renderExportCost(cost) {
+  if (!cost) return "";
+  // Hesaplanmadıysa sebebini yazarız; boş bırakmak "maliyet yok" gibi okunurdu.
+  if (cost.status !== "calculated") {
+    return `<section class="answer-section"><h3>Hedef ülkede gümrük yükü</h3>
+      <div class="result-caution">${escapeHtml(cost.reason || "Bu dosyada maliyet hesaplanamadı.")}</div>
+      <p class="legal-note">${escapeHtml(cost.legal_note || "")}</p></section>`;
+  }
+  const money = (value) => (value == null ? "—" : `${numberFormat.format(Math.round(value * 100) / 100)} ${escapeHtml(cost.currency || "")}`);
+  const rows = (cost.lines || []).map((line) => `<tr${line.included_in_total === false ? ' class="cost-line-excluded"' : ""}>
+      <td>${escapeHtml(line.label)}${line.included_in_total === false ? ' <small>(toplama dahil değil)</small>' : ""}</td>
+      <td>${money(line.amount)}</td>
+      <td>${line.rate_percent == null ? escapeHtml(line.basis || "") : `%${numberFormat.format(line.rate_percent)}`}</td>
+      <td>${escapeHtml(line.note || "")}${line.source_url ? ` <a href="${escapeHtml(line.source_url)}" target="_blank" rel="noopener noreferrer">kaynak</a>` : ""}</td>
+    </tr>`).join("");
+  const basis = cost.duty_basis === "preferential"
+    ? "Tercihli oran uygulandı (menşe ispat belgesi düzenlenecek)."
+    : "Üçüncü ülke oranı uygulandı (menşe ispatı teyit edilmedi).";
+  return `<section class="answer-section">
+      <h3>Hedef ülkede gümrük yükü</h3>
+      <p class="box-purpose">Bu kalemleri <b>alıcı</b> hedef ülkede öder; DDP teklif verecekseniz maliyetinize eklenir. ${escapeHtml(basis)}</p>
+      <table class="evidence-table"><thead><tr><th>Kalem</th><th>Tutar</th><th>Oran / dayanak</th><th>Not</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="cost-total"><b>Toplam gümrük yükü:</b> ${money(cost.total_duties)} · <b>KDV hariç varış maliyeti:</b> ${money(cost.landed_before_vat)}</p>
+      ${(cost.warnings || []).length ? `<div class="result-caution">${cost.warnings.map((item) => escapeHtml(item)).join(" ")}</div>` : ""}
+      <p class="legal-note">${escapeHtml(cost.legal_note || "")}</p>
+    </section>`;
+}
+
 function renderExportRequirements(req) {
   if (!req) return "";
   const dest = req.destination || {};
@@ -1567,6 +1595,8 @@ function renderExportRequirements(req) {
         <ul class="missing-list">${req.market_hints.map((hint) => `<li><b>${escapeHtml(hint.title)}</b> — ${escapeHtml(hint.detail)} <small>kaynak alan: ${escapeHtml(hint.trigger_field)}${hint.trigger_value ? ` · "${escapeHtml(hint.trigger_value)}"` : ""}</small>${hint.source_url ? ` <a href="${escapeHtml(hint.source_url)}" target="_blank" rel="noopener noreferrer">kaynak</a>` : ""}</li>`).join("")}</ul></section>`
     : "";
 
+  const cost = renderExportCost(req.cost);
+
   return `<section class="answer-section export-block">
       <h3>Hedef ülke: ${escapeHtml(name)}</h3>
       <p class="destination-tier" data-tier="${escapeHtml(dest.tier || "")}">${escapeHtml(dest.badge_text || "")}</p>
@@ -1578,6 +1608,7 @@ function renderExportRequirements(req) {
     </section>
     ${documents(req.proof_documents, "Düzenlenecek menşe / dolaşım belgesi")}
     ${(req.commercial_documents || []).length ? `<section class="answer-section"><h3>Ticari ve taşıma belgeleri</h3><ul class="missing-list">${req.commercial_documents.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
+    ${cost}
     ${documents(req.turkish_procedure, "Türkiye tarafı ihracat işlemleri")}
     ${hints}
     ${(req.caveats || []).length ? `<div class="result-caution">${req.caveats.map((item) => escapeHtml(item)).join(" ")}</div>` : ""}`;
@@ -2314,6 +2345,7 @@ function customsRequestBody() {
     origin_country: $("#originCountry").value.trim() || null,
     dispatch_country: $("#dispatchCountry").value.trim() || null,
     atr_certificate: $("#assistAtr")?.value || null,
+    export_preference_proof: isExport ? ($("#exportPreferenceProof")?.value || null) : null,
     intended_use: $("#intendedUse").value.trim() || null,
     target_user: $("#targetUser").value.trim() || null,
     declared_product_type: $("#declaredProductType").value.trim() || null,
