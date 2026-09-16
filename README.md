@@ -184,6 +184,40 @@ döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBR
 sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
 LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
 
+#### Geçmiş sürümlerde arama (`as_of`)
+
+Motor veritabanlarında geçmiş **zaten duruyordu** — her farklı sha256 ayrı bir anlık görüntü ve eski
+sürümler hiç silinmiyor — ama arama katmanı onu görmüyordu: `unified_search` yalnız `active=1` satırları
+sorguluyor, hibrit indeks besleme de yalnız aktif sürümü verdiği için her tazelemede eski sürümü indeksten
+siliyordu. Artık ikisi de zaman boyutunu taşıyor.
+
+`documents` tablosu korumalı `ALTER TABLE ... ADD COLUMN` ile `as_of_from`, `as_of_to` ve `snapshot_active`
+sütunlarını aldı; besleyiciler (`hybrid_corpora.control_documents`, `classification_documents`)
+`include_history=True` ile yürürlükten kalkmış sürümleri de veriyor. Belge kimliği zaten `snapshot_id`
+taşıdığı için eski sürüm **ayrı bir belge** olarak yaşıyor; kimlik şeması değişmediğinden mevcut belgeler
+yeniden gömülmüyor. Metin aynı kalıp yalnız yürürlük aralığı kapandığında belge yeniden gömülmez, yalnız
+zaman sütunları güncellenir (`refresh` sayacında `retimed`).
+
+Sorgu tarafında `as_of` **verilmezse davranış göç öncesiyle birebir aynıdır** (yalnız yürürlükteki sürüm);
+bu bir gerileme kilidi testiyle korunuyor. `as_of` verilirse o güne ait sürüm döner. Uçlar:
+`GET /api/search/unified`, `GET /api/tariff/autocomplete` ve `GET /api/search/hybrid` artık `as_of`
+parametresi alıyor; bugün dışı bir tarih mevcut **`temporal_query`** yetenek kilidine tabidir (Ekip ve
+üstü). MCP tarafında aynı yetenek `search_official_index` aracıyla kullanılabilir.
+
+**Kesinlik rayı burada da geçerli:** geçmiş sonuç, geldiği anlık görüntünün `snapshot_id`,
+`source_sha256` ve yürürlük aralığı künyesini taşır. Yürürlük aralığı bilinmeyen kayıt geçmiş
+sorgusunda **elenir** — tarihi doğrulanamayan bir satırı "o gün yürürlükteydi" diye göstermek kanıtsız bir
+iddia olurdu. AB sınıflandırma tüzüklerinde tablo `valid_from`/`valid_to` taşımadığı için sınırlar
+**gözlemlenen** sınır olarak türetilir (bir sürüm, sonrakinin indirildiği güne kadar yürürlükte sayılır);
+bu hukuki bir sınır iddiası değildir.
+
+**Bu kapsamda olmayanlar (açıkça):** tarife eşya tanımları korpusunda geçmiş açılmadı — kimliği
+`tariff:{gtip}` olduğu için geçmişi açmak ~20.000 belgenin kimliğini değiştirir ve tümünü yeniden gömmeye
+zorlar; nomenklatür metni sürümler arasında neredeyse hiç değişmediği için bu maliyetin karşılığı yok.
+Ayrıca **birleşik aramanın web arayüzü yoktur**: `/api/search/unified` uygulamada hiçbir yerden
+çağrılmıyor, bu yüzden "yürürlük tarihi" alanı iliştirilecek bir arama kutusu da yok. Yetenek bugün API ve
+MCP üzerinden kullanılabilir; arama sayfası ayrı bir iştir.
+
 **Yurt dışı tarife karşılaştırma** (`foreign_tariff.py`, PRD Faz 4): aynı eşya için Türk tarifesinin
 yanında Birleşik Krallık, Avrupa Birliği ve İsviçre tarifesi gösterilir. Üç ülke veriyi aynı biçimde
 yayımlamadığı için ürün bu farkı gizlemez:

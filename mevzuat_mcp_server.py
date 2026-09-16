@@ -227,6 +227,9 @@ async def hybrid_index_refresh_loop() -> None:
                 tariff_engine=tariff_engine,
                 foreign_tariff_engine=foreign_tariff_engine,
                 ebti_engine=ebti_engine,
+                # Geçmiş sürümler de beslenir: motor veritabanlarında zaten duran arşiv
+                # böylece arama katmanında da görünür ve `as_of` sorgulanabilir olur.
+                include_history=True,
             )
             counts = await hybrid_index.refresh(corpora)
             logger.info("Hybrid index refresh: %s", counts)
@@ -2642,6 +2645,43 @@ async def search_classification_evidence(
 ) -> ClassificationEvidenceSearchResult:
     """Retrieve official classification-regulation pages by code and product terms."""
     return await classification_engine.search(query, code_prefix=code_prefix, limit=limit)
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "Resmî kaynak indeksinde ara (geçmiş tarih dahil)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def search_official_index(
+    query: str = Field(..., min_length=2, max_length=300, description="Ürün tanımı, tebliğ adı veya arama terimleri."),
+    as_of: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            "Hangi güne ait sürüm aransın (YYYY-AA-GG). Boş bırakılırsa yalnız bugün yürürlükte "
+            "olan sürüm aranır."
+        ),
+    ),
+    gtip_prefix: Optional[str] = Field(None, max_length=20, description="Varsa GTİP ön eki; eşleşen kayıtlar öne alınır."),
+    limit: int = Field(10, ge=1, le=30),
+) -> dict[str, Any]:
+    """Search the versioned official corpora, optionally as they stood on a past date.
+
+    The archive keeps every distinct snapshot, so a past ``as_of`` returns the version that
+    was actually in force that day together with its provenance: ``snapshot_id``,
+    ``source_sha256`` and the ``as_of_from`` / ``as_of_to`` window it covered.
+
+    A record whose validity window is unknown is **excluded** from a past-dated search:
+    presenting an undated row as "in force that day" would be a claim without evidence.
+    Rates and control findings still come from the dedicated lookup tools; this tool
+    retrieves text, not decisions.
+    """
+    return await hybrid_index.search(query, limit=limit, gtip_prefix=gtip_prefix, as_of=as_of)
 
 
 @app.tool(

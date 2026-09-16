@@ -237,6 +237,24 @@ def merge_hybrid_cards(
     return results
 
 
+def _snapshot_filter(as_of: str | None, alias: str = "d") -> tuple[str, list[Any]]:
+    """Kontrol tebliği anlık görüntüsü için yürürlük filtresi.
+
+    ``as_of`` verilmezse üretilen SQL bugünküyle **birebir aynıdır** (``active=1``);
+    bu, gerileme kilidi testiyle doğrulanır. ``as_of`` verilirse o güne ait sürüm
+    seçilir ve ``valid_from`` boş olan satır elenir — tarihi doğrulanamayan bir kaydı
+    "o gün yürürlükteydi" diye göstermek kanıtsız bir iddia olurdu.
+    """
+    if not as_of:
+        return f"{alias}.active=1", []
+    return (
+        f"{alias}.valid_from IS NOT NULL AND {alias}.valid_from != '' "
+        f"AND substr({alias}.valid_from, 1, 10) <= ? "
+        f"AND ({alias}.valid_to IS NULL OR {alias}.valid_to = '' OR substr({alias}.valid_to, 1, 10) > ?)",
+        [as_of, as_of],
+    )
+
+
 class UnifiedSearchEngine:
     """Bütünleşik gümrük arama, otomatik tamamlama ve mevzuat fihristi."""
 
@@ -267,6 +285,7 @@ class UnifiedSearchEngine:
         query: str,
         limit: int = 12,
         hybrid: dict[str, Any] | None = None,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Arama kutusuna yazıldıkça (search-as-you-type) anında GTİP, tanım ve vergi önerileri sunar.
 
@@ -289,7 +308,7 @@ class UnifiedSearchEngine:
                 gtip = entry["gtip"]
                 if gtip not in seen_gtips:
                     seen_gtips.add(gtip)
-                    results.append(self._enrich_gtip_card(gtip, entry["title"], source="keyword"))
+                    results.append(self._enrich_gtip_card(gtip, entry["title"], source="keyword", as_of=as_of))
                     if len(results) >= bounded_limit:
                         return results
 
@@ -327,7 +346,7 @@ class UnifiedSearchEngine:
                     if gtip not in seen_gtips:
                         seen_gtips.add(gtip)
                         desc = r["description"] or ""
-                        results.append(self._enrich_gtip_card(gtip, desc, list_name=r["list_name"], source="tariff_db"))
+                        results.append(self._enrich_gtip_card(gtip, desc, list_name=r["list_name"], source="tariff_db", as_of=as_of))
                         if len(results) >= bounded_limit:
                             break
             except Exception:
@@ -340,21 +359,22 @@ class UnifiedSearchEngine:
             c_conn = self._connect_controls()
             if c_conn:
                 try:
+                    clause, clause_params = _snapshot_filter(as_of)
                     c_rows = c_conn.execute(
-                        """
+                        f"""
                         SELECT s.gtip_prefix, s.description, d.title, d.code
                         FROM control_scope s
                         JOIN control_snapshots d ON d.id=s.snapshot_id
-                        WHERE d.active=1 AND s.excluded=0 AND s.description LIKE ?
+                        WHERE {clause} AND s.excluded=0 AND s.description LIKE ?
                         LIMIT ?
                         """,
-                        (f"%{text}%", bounded_limit - len(results)),
+                        (*clause_params, f"%{text}%", bounded_limit - len(results)),
                     ).fetchall()
                     for cr in c_rows:
                         prefix = cr["gtip_prefix"]
                         if prefix not in seen_gtips:
                             seen_gtips.add(prefix)
-                            results.append(self._enrich_gtip_card(prefix, cr["description"], source="control_db"))
+                            results.append(self._enrich_gtip_card(prefix, cr["description"], source="control_db", as_of=as_of))
                             if len(results) >= bounded_limit:
                                 break
                 except Exception:
@@ -371,6 +391,7 @@ class UnifiedSearchEngine:
         description: str = "",
         list_name: str = "",
         source: str = "",
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Bir GTİP için fasıl adı, vergi rozetleri, TAREKS ve ÖTV durumunu toplar."""
         clean = re.sub(r"\D", "", gtip)
@@ -396,18 +417,19 @@ class UnifiedSearchEngine:
         c_conn = self._connect_controls()
         if c_conn:
             try:
+                clause, clause_params = _snapshot_filter(as_of)
                 c_rows = c_conn.execute(
-                    """
+                    f"""
                     SELECT DISTINCT d.code, d.system, d.title
                     FROM control_scope s
                     JOIN control_snapshots d ON d.id=s.snapshot_id
-                    WHERE d.active=1 AND s.excluded=0 AND (
+                    WHERE {clause} AND s.excluded=0 AND (
                         substr(?, 1, length(s.gtip_prefix)) = s.gtip_prefix
                         OR substr(s.gtip_prefix, 1, length(?)) = ?
                     )
                     LIMIT 3
                     """,
-                    (clean, clean, clean),
+                    (*clause_params, clean, clean, clean),
                 ).fetchall()
                 if c_rows:
                     has_tareks = True
@@ -443,6 +465,7 @@ class UnifiedSearchEngine:
         category: str = "all",
         limit: int = 25,
         hybrid: dict[str, Any] | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Tüm resmi kaynaklarda (Tarife, Kontroller, Önlemler, ÖTV, Mevzuat) kategorize arama.
 
@@ -451,7 +474,14 @@ class UnifiedSearchEngine:
         """
         text = str(query or "").strip()
         if not text:
-            return {"query": query, "total_count": 0, "categories": {}, "mode": "lexical"}
+            return {
+                "query": query,
+                "total_count": 0,
+                "categories": {},
+                "mode": "lexical",
+                "as_of": as_of,
+                "history": bool(as_of),
+            }
 
         results: dict[str, list[dict[str, Any]]] = {
             "tarife": [],
@@ -472,12 +502,14 @@ class UnifiedSearchEngine:
                 try:
                     wildcard = f"%{text}%"
                     digits = re.sub(r"\D", "", text)
+                    clause, clause_params = _snapshot_filter(as_of)
                     c_rows = c_conn.execute(
-                        """
-                        SELECT s.gtip_prefix, s.description, d.code, d.title, d.authority, d.system, d.source_url
+                        f"""
+                        SELECT s.gtip_prefix, s.description, d.code, d.title, d.authority, d.system, d.source_url,
+                               d.document_sha256, d.retrieved_at, d.valid_from, d.valid_to, d.active
                         FROM control_scope s
                         JOIN control_snapshots d ON d.id=s.snapshot_id
-                        WHERE d.active=1 AND s.excluded=0 AND (
+                        WHERE {clause} AND s.excluded=0 AND (
                             s.description LIKE ?
                             OR d.title LIKE ?
                             OR d.code LIKE ?
@@ -486,7 +518,7 @@ class UnifiedSearchEngine:
                         ORDER BY d.code ASC
                         LIMIT ?
                         """,
-                        (wildcard, wildcard, wildcard, digits, f"{digits}%", limit),
+                        (*clause_params, wildcard, wildcard, wildcard, digits, f"{digits}%", limit),
                     ).fetchall()
                     for cr in c_rows:
                         results["denetim"].append({
@@ -498,6 +530,13 @@ class UnifiedSearchEngine:
                             "authority": cr["authority"],
                             "system": cr["system"],
                             "source_url": cr["source_url"],
+                            # Geçmiş cevabın künyesi: hangi anlık görüntü, hangi aralık.
+                            # Bu alanlar olmadan "o gün şu yürürlükteydi" denemez.
+                            "source_sha256": cr["document_sha256"],
+                            "retrieved_at": cr["retrieved_at"],
+                            "valid_from": cr["valid_from"],
+                            "valid_to": cr["valid_to"],
+                            "snapshot_active": bool(cr["active"]),
                         })
                 except Exception:
                     logger.exception("Unified search in controls failed")
@@ -529,6 +568,9 @@ class UnifiedSearchEngine:
         return {
             "query": text,
             "mode": str((hybrid or {}).get("mode") or "lexical"),
+            # Geçmiş sorgusu mu: arayüz rozeti ve kullanıcıya "hangi güne bakıldı" bilgisi.
+            "as_of": as_of,
+            "history": bool(as_of),
             "total_count": total,
             "categories": results,
             "chapters": [

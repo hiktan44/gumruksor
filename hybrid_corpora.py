@@ -32,6 +32,35 @@ CORPUS_EBTI = "ebti"
 PAGE_CHUNK_CHARS = 1200
 
 
+def _day(value: Any) -> str:
+    """Yürürlük sınırını ``YYYY-MM-DD`` olarak normalleştirir; çözülemezse boş döner.
+
+    Boş dönmesi kasıtlı: tarihi bilinmeyen bir satır geçmiş sorgusunda **elenir**
+    (bkz. ``HybridIndex._validity_sql``). Tarihi doğrulanamayan bir kaydı "o gün
+    yürürlükteydi" diye göstermek kanıtsız bir iddia olurdu.
+    """
+    text = str(value or "").strip()
+    if len(text) < 10:
+        return ""
+    day = text[:10]
+    return day if day[4] == "-" and day[7] == "-" and day.replace("-", "").isdigit() else ""
+
+
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    """Tablodaki sütun adları. Eski/kısıtlı şemalarda eksik sütun yüzünden korpusun
+    tamamının sessizce düşmemesi için SELECT bu kümeye göre kurulur."""
+    try:
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def _optional(available: set[str], column: str, alias: str | None = None) -> str:
+    """Sütun varsa kendisini, yoksa boş dizgi sabitini seçer (adı korunur)."""
+    name = alias or column
+    return f"d.{column} AS {name}" if column in available else f"'' AS {name}"
+
+
 def _sha(*parts: Any) -> str:
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
@@ -44,20 +73,28 @@ def _open(path: Path) -> sqlite3.Connection | None:
     return connection
 
 
-def control_documents(control_engine: Any) -> list[dict[str, Any]]:
-    """Aktif ve onaylı ÜGD tebliğlerinin Ek kapsam satırları."""
+def control_documents(control_engine: Any, *, include_history: bool = False) -> list[dict[str, Any]]:
+    """ÜGD tebliğlerinin Ek kapsam satırları.
+
+    ``include_history`` verilirse yürürlükten kalkmış sürümler de beslenir. Belge kimliği
+    zaten ``snapshot_id`` taşıdığı için eski sürüm ayrı bir belge olarak yaşar; kimlik
+    şeması değişmez ve mevcut belgeler yeniden gömülmez.
+    """
     db_path = Path(getattr(control_engine, "db_path", ""))
     connection = _open(db_path)
     if connection is None:
         return []
     docs: list[dict[str, Any]] = []
+    where = "s.excluded=0" if include_history else "d.active=1 AND s.excluded=0"
+    available = _columns(connection, "control_snapshots")
     try:
         rows = connection.execute(
-            """
+            f"""
             SELECT s.snapshot_id, s.gtip_prefix, s.description, s.source_line, s.list_kind,
-                   d.code, d.title, d.authority, d.system, d.source_url, d.document_sha256
+                   d.code, d.title, d.authority, d.system, d.source_url, d.document_sha256, d.active,
+                   {_optional(available, "valid_from")}, {_optional(available, "valid_to")}
             FROM control_scope s JOIN control_snapshots d ON d.id=s.snapshot_id
-            WHERE d.active=1 AND s.excluded=0
+            WHERE {where}
             """
         ).fetchall()
     except sqlite3.OperationalError as exc:
@@ -79,49 +116,80 @@ def control_documents(control_engine: Any) -> list[dict[str, Any]]:
                 "source_url": row["source_url"] or "",
                 "source_sha256": _sha(row["document_sha256"], row["gtip_prefix"], description),
                 "snapshot_id": row["snapshot_id"],
+                "as_of_from": _day(row["valid_from"]),
+                "as_of_to": _day(row["valid_to"]),
+                "snapshot_active": bool(row["active"]),
             }
         )
     return docs
 
 
-def classification_documents(engine: Any, *, chunk_chars: int = PAGE_CHUNK_CHARS) -> list[dict[str, Any]]:
-    """AB sınıflandırma tüzüğü sayfaları, ~1.200 karakterlik parçalar hâlinde."""
+def classification_documents(
+    engine: Any, *, chunk_chars: int = PAGE_CHUNK_CHARS, include_history: bool = False
+) -> list[dict[str, Any]]:
+    """AB sınıflandırma tüzüğü sayfaları, ~1.200 karakterlik parçalar hâlinde.
+
+    Bu tabloda ``valid_from``/``valid_to`` sütunu yoktur; ``include_history`` verildiğinde
+    sınırlar **gözlemlenen** sınır olarak türetilir: bir sürüm, kendisinden sonraki sürümün
+    indirildiği güne kadar yürürlükte sayılır. Bu, deponun başka yerlerinde de kullanılan
+    ``observed`` dayanağının aynısıdır ve hukuki sınır iddiası taşımaz.
+    """
     db_path = Path(getattr(engine, "database_path", ""))
     connection = _open(db_path)
     if connection is None:
         return []
     docs: list[dict[str, Any]] = []
     try:
-        active = connection.execute("SELECT id, source_url, archive_sha256 FROM snapshots WHERE active=1 LIMIT 1").fetchone()
-        if not active:
+        available = _columns(connection, "snapshots")
+        retrieved = "retrieved_at" if "retrieved_at" in available else "''"
+        columns = f"id, source_url, archive_sha256, {retrieved} AS retrieved_at, active"
+        if include_history:
+            snapshots = connection.execute(
+                f"SELECT {columns} FROM snapshots ORDER BY retrieved_at ASC, id ASC"
+            ).fetchall()
+        else:
+            snapshots = connection.execute(
+                f"SELECT {columns} FROM snapshots WHERE active=1 LIMIT 1"
+            ).fetchall()
+        if not snapshots:
             return []
-        pages = connection.execute(
-            "SELECT id, page_number, codes_json, content FROM pages WHERE snapshot_id=? ORDER BY page_number",
-            (active["id"],),
-        ).fetchall()
+        pages_by_snapshot = {
+            snapshot["id"]: connection.execute(
+                "SELECT id, page_number, codes_json, content FROM pages WHERE snapshot_id=? ORDER BY page_number",
+                (snapshot["id"],),
+            ).fetchall()
+            for snapshot in snapshots
+        }
     except sqlite3.OperationalError as exc:
         logger.warning("Sınıflandırma sayfaları okunamadı: %s", exc)
         return []
     finally:
         connection.close()
-    for page in pages:
-        try:
-            codes = [normalise_gtip(code) for code in json.loads(page["codes_json"] or "[]")]
-        except ValueError:
-            codes = []
-        for index, chunk in enumerate(chunk_text(page["content"], size=chunk_chars), start=1):
-            docs.append(
-                {
-                    "id": f"eu-classification:{page['id']}:{index}",
-                    "corpus": CORPUS_CLASSIFICATION,
-                    "title": f"AB sınıflandırma tüzükleri – sayfa {page['page_number']} ({index})",
-                    "text": chunk,
-                    "gtip_codes": [code for code in codes if code][:40],
-                    "source_url": active["source_url"] or "",
-                    "source_sha256": _sha(active["archive_sha256"], page["page_number"], chunk),
-                    "snapshot_id": active["id"],
-                }
-            )
+    for position, snapshot in enumerate(snapshots):
+        successor = snapshots[position + 1] if position + 1 < len(snapshots) else None
+        valid_from = _day(snapshot["retrieved_at"])
+        valid_to = _day(successor["retrieved_at"]) if successor is not None else ""
+        for page in pages_by_snapshot.get(snapshot["id"], []):
+            try:
+                codes = [normalise_gtip(code) for code in json.loads(page["codes_json"] or "[]")]
+            except ValueError:
+                codes = []
+            for index, chunk in enumerate(chunk_text(page["content"], size=chunk_chars), start=1):
+                docs.append(
+                    {
+                        "id": f"eu-classification:{page['id']}:{index}",
+                        "corpus": CORPUS_CLASSIFICATION,
+                        "title": f"AB sınıflandırma tüzükleri – sayfa {page['page_number']} ({index})",
+                        "text": chunk,
+                        "gtip_codes": [code for code in codes if code][:40],
+                        "source_url": snapshot["source_url"] or "",
+                        "source_sha256": _sha(snapshot["archive_sha256"], page["page_number"], chunk),
+                        "snapshot_id": snapshot["id"],
+                        "as_of_from": valid_from,
+                        "as_of_to": valid_to,
+                        "snapshot_active": bool(snapshot["active"]),
+                    }
+                )
     return docs
 
 
@@ -322,11 +390,22 @@ def collect_all(
     foreign_tariff_engine: Any = None,
     ebti_engine: Any = None,
     sources_path: str | Path | None = None,
+    include_history: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Tüm korpusları toplar; tek bir kaynak hatası diğerlerini engellemez."""
+    """Tüm korpusları toplar; tek bir kaynak hatası diğerlerini engellemez.
+
+    ``include_history`` yürürlükten kalkmış sürümleri de besler. Yalnız belge kimliği
+    ``snapshot_id`` taşıyan korpuslarda etkilidir (kontrol tebliğleri, AB sınıflandırma
+    tüzükleri): orada eski sürüm ayrı bir belge olarak yaşar ve kimlikler değişmez.
+
+    Tarife eşya tanımları (``CORPUS_TARIFF``) bilerek dışarıda: kimliği ``tariff:{gtip}``
+    olduğu için geçmişi açmak ~20.000 belgenin kimliğini değiştirir ve tümünü yeniden
+    gömmeye zorlar; nomenklatür metni sürümler arasında neredeyse hiç değişmediği için
+    bu maliyetin karşılığı yok.
+    """
     feeders: list[tuple[str, Any]] = [
-        (CORPUS_CONTROLS, lambda: control_documents(control_engine) if control_engine is not None else []),
-        (CORPUS_CLASSIFICATION, lambda: classification_documents(classification_engine) if classification_engine is not None else []),
+        (CORPUS_CONTROLS, lambda: control_documents(control_engine, include_history=include_history) if control_engine is not None else []),
+        (CORPUS_CLASSIFICATION, lambda: classification_documents(classification_engine, include_history=include_history) if classification_engine is not None else []),
         (CORPUS_MEASURES, lambda: trade_measure_documents(trade_measure_engine) if trade_measure_engine is not None else []),
         (CORPUS_OFFICIAL_PAGES, lambda: official_page_documents(sources_path)),
         (CORPUS_EXCISE, lambda: excise_documents(excise_index) if excise_index is not None else []),
