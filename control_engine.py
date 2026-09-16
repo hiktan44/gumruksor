@@ -280,6 +280,65 @@ def extract_annex_scope(text: str, annex_number: int = 1) -> list[ControlScopeRo
 # için, çünkü "kapsamda" demek "yasak" demekten daha zayıf bir iddiadır.
 _LIST_KINDS = frozenset({"scope", "prohibited", "licence_required"})
 
+
+def literal_scope_plan(config: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalise a ``scope_literal`` block into verifiable rows.
+
+    Bazı tebliğlerde kapsam bir tabloda değil, maddenin düz metninde tek tek
+    sayılır (ör. "…GTİP numarası '0601.10.90.10.00'dır"). Ek ise botanik tür
+    bazlıdır ve GTİP içermez, dolayısıyla ek indirmek bu kayıtta hiçbir satır
+    üretmez. Bu blok kodları yapılandırmadan okur; **doğrulaması**
+    ``extract_literal_scope`` tarafından resmî metne karşı yapılır.
+    """
+    block = config.get("scope_literal") or {}
+    plan: list[dict[str, str]] = []
+    for item in block.get("rows", []):
+        code = _normalise_gtip(item.get("gtip"))
+        if code is None:
+            continue
+        kind = str(item.get("list_kind", "scope"))
+        plan.append({
+            "gtip": code,
+            "list_kind": kind if kind in _LIST_KINDS else "scope",
+            "description": str(item.get("description") or ""),
+        })
+    return plan
+
+
+def extract_literal_scope(text: str, plan: list[dict[str, str]]) -> tuple[list[ControlScopeRow], list[str]]:
+    """Return only those declared rows whose code really occurs in the text.
+
+    Yapılandırma bir iddiadır, kaynak değildir. Resmî metinde geçmeyen bir kod
+    sessizce kabul edilmez: satır düşürülür ve çağıran için bir hata döner.
+    Böylece tebliğ değiştiğinde (kod çıkarıldığında) ürün eski kodu göstermeye
+    devam edemez.
+    """
+    present: set[str] = set()
+    for match in _CODE_RE.finditer(text):
+        code = _normalise_gtip(match.group(1))
+        if code:
+            present.add(code)
+    rows: list[ControlScopeRow] = []
+    errors: list[str] = []
+    for item in plan:
+        code = item["gtip"]
+        if code not in present:
+            errors.append(f"beyan edilen {code} kodu resmî metinde bulunamadı")
+            continue
+        index = text.find(code[:4])
+        rows.append(
+            ControlScopeRow(
+                gtip_prefix=code,
+                description=item["description"] or None,
+                source_line=item["description"] or code,
+                source_offset=max(index, 0),
+                excluded=False,
+                list_kind=item["list_kind"],  # type: ignore[arg-type]
+            )
+        )
+    return rows, errors
+
+
 # Resmî ek olarak indirilip ayrıştırılabilen dosya türleri.
 _ATTACHMENT_SUFFIXES = (".zip", ".docx", ".doc", ".xlsx", ".xls", ".pdf")
 
@@ -884,7 +943,12 @@ class ImportControlEngine:
                         continue
                     _, text, document, raw_html = result
                     attachment_digest = ""
-                    if config.get("scope_table"):
+                    if config.get("scope_literal"):
+                        literal_plan = literal_scope_plan(config)
+                        scope, literal_errors = extract_literal_scope(text, literal_plan)
+                        for message in literal_errors:
+                            self._errors.append(f"{config['code']}: {message}")
+                    elif config.get("scope_table"):
                         table = config["scope_table"]
                         scope = extract_scope_table(text, table["start_pattern"], table["end_pattern"])
                         # Madde içi tablo her zaman "kapsam" değildir: ihracat tebliğlerinde
@@ -926,10 +990,12 @@ class ImportControlEngine:
                             self._errors.append(f"{config['code']}: resmî ek arşivi işlenemedi ({exc})")
                             continue
                     if not scope:
-                        location = (
-                            "resmî ek arşivi" if config.get("scope_attachment")
-                            else f"Ek-{annex_plan(config)[0]['annex']}"
-                        )
+                        if config.get("scope_attachment"):
+                            location = "resmî ek arşivi"
+                        elif config.get("scope_literal"):
+                            location = "resmî metinde sayılan GTİP listesi"
+                        else:
+                            location = f"Ek-{annex_plan(config)[0]['annex']}"
                         self._errors.append(f"{config['code']}: {location} GTİP kapsamı ayrıştırılamadı")
                         continue
                     digest_material = text.encode("utf-8") + attachment_digest.encode("ascii")
@@ -1364,9 +1430,22 @@ class ImportControlEngine:
                 continue
             rule = self._rule(row)
             list_kind = row["list_kind"] if "list_kind" in row.keys() else "scope"
+            # Aynı liste türü ithalatta ve ihracatta farklı bir hukuki sonuç doğurur;
+            # cümle yönden türetilir, sabit yazılmaz. İhracat dosyasında "ithalat izni
+            # verilmez" demek, okuyanı yanlış işleme sevk eden bir hatadır.
             if list_kind == "prohibited":
                 risk_sentence = (
-                    "GTİP tebliğin ithali yasak eşya listesinde yer alıyor; kapsam istisnası yoksa ithalat izni verilmez."
+                    "GTİP tebliğin ihracı yasak eşya listesinde yer alıyor; kapsam istisnası yoksa bu eşya ihraç edilemez."
+                    if direction == "export"
+                    else "GTİP tebliğin ithali yasak eşya listesinde yer alıyor; kapsam istisnası yoksa ithalat izni verilmez."
+                )
+            elif list_kind == "licence_required":
+                risk_sentence = (
+                    "GTİP tebliğin ön izne/ruhsata bağlı eşya listesinde yer alıyor; ihracat, yetkili kurumdan "
+                    "alınacak izne bağlıdır."
+                    if direction == "export"
+                    else "GTİP tebliğin ön izne/ruhsata bağlı eşya listesinde yer alıyor; ithalat, yetkili kurumdan "
+                    "alınacak izne bağlıdır."
                 )
             elif rule.risk_based:
                 risk_sentence = "GTİP tebliğ ekinde yer alıyor; fiilî denetime yönlendirme TAREKS risk analiziyle belirlenir."
@@ -1377,6 +1456,8 @@ class ImportControlEngine:
             ]
             if list_kind == "prohibited":
                 cautions.insert(0, "Yasak listesi eşleşmesi: ürünün liste tanımına ve tebliğdeki istisnalara uyup uymadığı resmî metinden teyit edilmelidir.")
+            elif list_kind == "licence_required":
+                cautions.insert(0, "Ön izin listesi eşleşmesi: iznin hangi kurumdan ve hangi koşullarla alınacağı resmî metinden teyit edilmelidir.")
             if rule.laboratory_test_possible:
                 cautions.append(
                     "Laboratuvar testi mevzuatta mümkün bir fiilî denetim yöntemidir; belirli bir özel laboratuvar otomatik veya zorunlu kabul edilmemiştir."
