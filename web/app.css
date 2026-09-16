@@ -756,6 +756,24 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .dossier-item b { display: block; font-size: .7rem; }.dossier-item small { display: block; margin-top: 5px; color: var(--ink-3); font-size: .56rem; }
 .dossier-actions { display: flex; gap: 6px; }.dossier-actions a,.dossier-actions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); color: var(--teal); font-size: .58rem; font-weight: 700; text-decoration: none; }
 .dossier-actions button { color: var(--danger); }
+.api-key-form { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; margin-bottom: 16px; }
+.api-key-form label { color: var(--ink-3); font-size: .62rem; font-weight: 700; }
+.api-key-form input { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: .65rem; }
+.api-key-form button { min-height: 40px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: var(--surface); font-size: .62rem; font-weight: 700; }
+.api-key-reveal { padding: 15px; margin-bottom: 16px; border: 1px solid var(--orange); background: var(--canvas); }
+.api-key-reveal p { margin: 0 0 10px; font-size: .62rem; }
+.api-key-secret { display: block; padding: 10px; overflow-wrap: anywhere; border: 1px solid var(--line); background: var(--surface); font-size: .62rem; }
+.api-key-list { display: grid; gap: 10px; }
+.api-key-card { display: grid; gap: 6px; padding: 15px; border: 1px solid var(--line); background: var(--canvas); }
+.api-key-card header { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.api-key-card header b { font-size: .7rem; }
+.api-key-card code { overflow-wrap: anywhere; color: var(--teal); font-size: .62rem; }
+.api-key-card small { color: var(--ink-3); font-size: .56rem; }
+.api-key-state { padding: 3px 8px; border: 1px solid var(--line); font-size: .54rem; font-weight: 700; }
+.api-key-state.active { color: var(--teal); border-color: var(--teal); }
+.api-key-state.revoked { color: var(--ink-3); }
+.api-key-actions { display: flex; gap: 6px; }
+.api-key-actions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface); color: var(--danger); font-size: .58rem; font-weight: 700; }
 .pricing-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
 .price-card { position: relative; display: flex; flex-direction: column; min-height: 320px; padding: 19px; border: 1px solid var(--line); background: var(--surface); }
 .price-card.featured { border: 2px solid var(--orange); background: color-mix(in srgb,var(--orange) 5%,var(--surface)); }

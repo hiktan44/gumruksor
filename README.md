@@ -471,6 +471,23 @@ Kesinlik rayı burada da aynıdır ve **hiçbir kutu uydurulmaz**:
 * Değeri olmayan kutu `unavailable` olur ve **değer taşımaz**; boş bir kutu asla "kontrol gerekir" diye işaretlenmez.
 * Taslak tek kalem varsayımıyla üretilir; çok kalemli beyannamede kutu 31-46 her kalem için ayrı doldurulur.
 
+### ERP / dış sistem API anahtarları
+
+`api_access` özellik kilidi (Kurumsal paket) artık gerçek bir erişim yolu açar. Kullanıcı Hesabım → **API anahtarları** sekmesinden anahtar üretir; anahtar `gsk_<önek>_<gizli>` biçimindedir ve **açık değeri yalnız üretildiği yanıtta bir kez** görünür. Veritabanında (`api_keys` tablosu) yalnızca SHA-256 özeti durur, yani bir veritabanı kopyası çalınsa bile anahtarlar geri üretilemez; denetim günlüğüne de yalnız etiket ve ön ek yazılır.
+
+İstemci anahtarı `X-API-Key` başlığıyla (veya `Authorization: Bearer gsk_…` olarak) gönderir. Anahtar **kapalı bir beyaz listeyle** sınırlıdır — rota `_api_key_identity` çağırmıyorsa anahtarı hiç görmez:
+
+| Uç | Ek kilit |
+|---|---|
+| `POST /api/customs/precheck` | `precheck` kotası |
+| `POST /api/customs/declaration-draft` | `declaration_draft` |
+| `POST /api/tariff/bulk` | `bulk_costing` |
+| `GET /api/dossiers`, `POST /api/dossiers`, `GET /api/dossiers/{id}` | `dossier` kotası (POST) |
+
+Beyaz liste dışındaki her şey anahtara kapalıdır: ödeme ve abonelik, hesap silme, yönetim panelleri, kanıt dosyası silme — ve **anahtar yönetiminin kendisi**. Anahtar üretme/listeleme/iptal rotaları bilerek yalnız çerez oturumuyla çalışır; aksi hâlde çalınan bir anahtar kendini yenileyerek kalıcı hâle getirebilirdi.
+
+Kurallar her istekte yeniden okunur: paket düşerse anahtar aynı anda 403 `feature_required` vermeye başlar, iptal edilen anahtar bir sonraki istekte 401 alır. Her anahtarlı istek ayrıca `api_call` kotasına yazılır (Kurumsal pakette sınırsızdır) ve hesap panelinde "API çağrısı" sayacı olarak görünür; rotanın kendi kotası bundan bağımsız olarak işlemeye devam eder. Hesap başına en fazla **10 etkin anahtar** tutulabilir. `AgentTokenVerifier` (kısa ömürlü ajan JWT'si) bu yoldan **etkilenmez**; iki kimlik birbirine karışmasın diye yalnız `gsk_` ön ekli değerler anahtar sayılır.
+
 Hazırlık kapısı üç sonuç verir: `ready` (tüm zorunlu kutular karşılandı), `needs_check` (yalnız kullanıcının dolduracağı kutular eksik) ve `blocked` (resmî veriden gelmesi gereken bir kutu — bugün GTİP — doğrulanamadı).
 
 ### Abonelik, kota ve kanıt dosyaları

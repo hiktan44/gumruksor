@@ -220,6 +220,8 @@ def _agent_or_browser_identity(request: Request) -> None:
     """Optionally require a signed browser session or short-lived agent token."""
     if os.environ.get("REQUIRE_AGENT_IDENTITY", "0") != "1":
         return
+    if isinstance(getattr(request.state, "api_user", None), dict):
+        return  # API anahtarı zaten doğrulanmış bir kullanıcı kimliğidir.
     session_token = request.cookies.get(google_auth.session_cookie, "")
     if session_token:
         try:
@@ -240,6 +242,11 @@ def _session_user(request: Request, *, required: bool = False) -> dict[str, Any]
             return google_auth.parse_session(token)
         except AuthError:
             pass
+    # API anahtarı kimliği yalnız `_api_key_identity` çağıran rotalarda kurulur; bu
+    # yüzden anahtar, beyaz listeye alınmamış hiçbir rotaya erişemez.
+    api_user = getattr(request.state, "api_user", None)
+    if isinstance(api_user, dict):
+        return api_user
     if required:
         raise AuthError("Bu işlem için Google hesabınızla giriş yapın.")
     return None
@@ -299,6 +306,42 @@ def require_feature(request: Request, feature: str) -> dict[str, Any] | None:
         raise FeatureNotAvailable(
             feature, f"{label} paketinizde yok. Hesabım alanından {plans} paketine geçebilirsiniz."
         )
+    return user
+
+
+_API_KEY_HEADER = "x-api-key"
+
+
+def _api_key_identity(request: Request) -> dict[str, Any] | None:
+    """ERP / dış sistem API anahtarını çözüp isteğe kimlik olarak bağlar.
+
+    Yalnızca bu işlevi **açıkça çağıran** rotalar anahtar kabul eder; beyaz listede
+    olmayan bir rotaya anahtarla erişilemez (hesap silme, ödeme, yönetim ve anahtar
+    üretiminin kendisi buna dahildir — anahtar yeni anahtar üretemez).
+
+    Anahtar yoksa ``None`` döner ve rota normal çerez oturumuyla ilerler.
+    """
+    raw = request.headers.get(_API_KEY_HEADER, "").strip()
+    if not raw:
+        authorization = request.headers.get("authorization", "")
+        candidate = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+        # Kısa ömürlü ajan JWT'si ile karışmaması için yalnız kendi ön ekimiz anahtar sayılır.
+        raw = candidate if candidate.startswith(f"{AccountService.API_KEY_PREFIX}_") else ""
+    if not raw:
+        return None
+    resolved = account_service.authenticate_api_key(raw)
+    if resolved is None:
+        raise AuthError("API anahtarı geçersiz veya iptal edilmiş.")
+    user = resolved["user"]
+    if "api_access" not in account_service.capabilities_for(user):
+        # Anahtar üretildikten sonra paket düşmüş olabilir; kilit her istekte yeniden okunur.
+        label = account_service.feature_catalog()["api_access"]
+        plans = ", ".join(item["name"] for item in account_service.plans_with_feature("api_access")) or "Kurumsal"
+        raise FeatureNotAvailable("api_access", f"{label} paketinizde yok. {plans} paketine geçmeniz gerekir.")
+    # Anahtarla gelen her istek ayrıca sayılır: rotanın kendi kotası (ön değerlendirme,
+    # kanıt dosyası) aynen işler, `api_call` yalnız API kullanımını görünür kılar.
+    account_service.consume(user, "api_call")
+    request.state.api_user = user
     return user
 
 
@@ -797,19 +840,85 @@ def _dossier_evidence() -> dict[str, Any]:
     }
 
 
+@mcp.custom_route("/api/account/api-keys", methods=["GET"])
+async def web_api_keys(request: Request):
+    """Hesabın API anahtarlarının künyesi. Gizli değer burada asla dönmez."""
+    try:
+        user = _required_user(request)
+        return JSONResponse(
+            {"items": account_service.list_api_keys(user), "limit": AccountService.API_KEY_LIMIT},
+            headers={"Cache-Control": "no-store"},
+        )
+    except AuthError as exc:
+        return _auth_error(exc)
+
+
+@mcp.custom_route("/api/account/api-keys", methods=["POST"])
+async def web_create_api_key(request: Request):
+    """Yeni API anahtarı üretir. Açık değer yalnızca bu yanıtta bir kez görünür.
+
+    Bilerek yalnız çerez oturumuyla çalışır: bir anahtarın kendi yerine yenisini
+    üretebilmesi, çalınan anahtarın kalıcı hâle gelmesi demek olurdu.
+    """
+    limited = _rate_limit_response(request, "api-keys", limit=10, window_seconds=3600)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        require_feature(request, "api_access")
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            body = {}
+        label = str((body or {}).get("label", "")) if isinstance(body, dict) else ""
+        created = account_service.create_api_key(user, label=label)
+        return JSONResponse(created, status_code=201, headers={"Cache-Control": "no-store"})
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+
+@mcp.custom_route("/api/account/api-keys/{key_id}", methods=["DELETE"])
+async def web_revoke_api_key(request: Request):
+    """Anahtarı iptal eder. İptal geri alınamaz; kayıt denetim için saklanır."""
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        revoked = account_service.revoke_api_key(user, request.path_params["key_id"])
+        return JSONResponse(revoked, headers={"Cache-Control": "no-store"})
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except AccountError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+
+
 @mcp.custom_route("/api/dossiers", methods=["GET"])
 async def web_dossiers(request: Request):
     try:
+        _api_key_identity(request)  # ERP beyaz listesi
         user = _required_user(request)
         return JSONResponse({"items": account_service.list_dossiers(user)}, headers={"Cache-Control": "no-store"})
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
     except AuthError as exc:
         return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return _quota_error(exc)
 
 
 @mcp.custom_route("/api/dossiers", methods=["POST"])
 async def web_create_dossier(request: Request):
     try:
         _trusted_request_origin(request)
+        _api_key_identity(request)  # ERP beyaz listesi
         user = _required_user(request)
         body = await request.json()
         if not isinstance(body, dict):
@@ -832,6 +941,8 @@ async def web_create_dossier(request: Request):
         return JSONResponse(dossier, status_code=201, headers={"Cache-Control": "no-store"})
     except SecurityViolation as exc:
         return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
@@ -843,6 +954,7 @@ async def web_create_dossier(request: Request):
 @mcp.custom_route("/api/dossiers/{dossier_id}", methods=["GET"])
 async def web_get_dossier(request: Request):
     try:
+        _api_key_identity(request)  # ERP beyaz listesi
         user = _required_user(request)
         dossier = account_service.get_dossier(user, request.path_params.get("dossier_id", ""))
         download = request.query_params.get("download") == "1"
@@ -850,6 +962,10 @@ async def web_get_dossier(request: Request):
         if download:
             headers["Content-Disposition"] = f'attachment; filename="kanit-dosyasi-{dossier["id"]}.json"'
         return JSONResponse(dossier, headers=headers)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except QuotaExceeded as exc:
+        return _quota_error(exc)
     except AuthError as exc:
         return _auth_error(exc)
     except AccountError as exc:
@@ -2116,10 +2232,13 @@ async def web_customs_precheck(request: Request):
         return limited
     try:
         _trusted_request_origin(request)
+        _api_key_identity(request)  # ERP beyaz listesi
         _agent_or_browser_identity(request)
         quota_user = _enforce_quota(request, "precheck")
     except SecurityViolation as exc:
         return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
     except AuthError as exc:
         return _auth_error(exc)
     except QuotaExceeded as exc:
@@ -2364,6 +2483,7 @@ async def web_customs_declaration_draft(request: Request):
         return limited
     try:
         _trusted_request_origin(request)
+        _api_key_identity(request)  # ERP beyaz listesi
         user = _required_user(request)
         require_feature(request, "declaration_draft")
     except SecurityViolation as exc:
@@ -3106,6 +3226,7 @@ async def web_tariff_bulk(request: Request):
         return limited
     try:
         _trusted_request_origin(request)
+        _api_key_identity(request)  # ERP beyaz listesi
         require_feature(request, "bulk_costing")
     except SecurityViolation as exc:
         return _security_response(exc)
@@ -3113,6 +3234,8 @@ async def web_tariff_bulk(request: Request):
         return _feature_error(exc)
     except AuthError as exc:
         return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return _quota_error(exc)
     try:
         content_length = int(request.headers.get("content-length", "0") or 0)
         if content_length > BULK_MAX_FILE_BYTES * 2:
