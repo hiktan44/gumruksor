@@ -161,6 +161,14 @@ class CustomsInquiry(BaseModel):
         None, max_length=100, description="İhracatta eşyanın gideceği ülke; ithalatta kullanılmaz."
     )
     atr_certificate: bool | None = Field(None, description="Sevk AB'den ise A.TR ibraz edilecek mi (teyit edilmeden serbest dolaşım sütunu uygulanmaz).")
+    # İhracatta tercihli oran, ispat belgesine bağlıdır ve belge her hedefte A.TR
+    # değildir (BK'de menşe beyanı, Kore'de menşe beyanı, BAE'de anlaşma belgesi).
+    # Bu yüzden `atr_certificate` yeniden kullanılmaz, ayrı ve yön-nötr bir alan tutulur.
+    export_preference_proof: bool | None = Field(
+        None,
+        description="İhracatta menşe ispat belgesi (A.TR / EUR.1 / menşe beyanı) düzenlenecek mi; "
+        "teyit edilmeden tercihli oran hesaba girmez.",
+    )
     intended_use: str | None = Field(None, max_length=300)
     target_user: str | None = Field(None, max_length=300)
     declared_product_type: str | None = Field(None, max_length=300)
@@ -2724,6 +2732,7 @@ class CustomsAdvisor:
             duty_source=source,
             on_demand_lookup=on_demand,
             destination_vat=destination_vat,
+            preference_proof_confirmed=bool(inquiry.export_preference_proof),
         )
 
     async def close(self) -> None:

@@ -35,6 +35,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from countries import Country, REGISTRY_CHECKED_AT, country_key, find_country, PENDING_AGREEMENTS
+from export_costing import ExportCostEstimate, build_export_cost
 from origin_documents import CustomsUnionRoute, customs_union_route
 
 # Türkiye kayıt defterinde yok; yabancı motorlara geçilecek tek gerçek kimlik bu sabittir.
@@ -141,6 +142,9 @@ class ExportRequirements(BaseModel):
     commercial_documents: list[str] = Field(default_factory=list, max_length=10)
     turkish_procedure: list[ExportDocument] = Field(default_factory=list, max_length=12)
     market_hints: list[MarketHint] = Field(default_factory=list, max_length=10)
+    # Hedef ülke gümrük yükü; `rates` dışındaki kademede sebebini taşıyan bir
+    # "hesaplanmadı" sonucudur, asla uydurma bir sayı değildir.
+    cost: ExportCostEstimate | None = None
     caveats: list[str] = Field(default_factory=list, max_length=8)
     sources: list[dict[str, str]] = Field(default_factory=list, max_length=8)
     checked_at: str = REGISTRY_CHECKED_AT
@@ -981,6 +985,7 @@ def build_export_requirements(
     duty_source: dict[str, str] | None = None,
     on_demand_lookup: dict[str, str] | None = None,
     destination_vat: dict[str, Any] | None = None,
+    preference_proof_confirmed: bool = False,
 ) -> ExportRequirements:
     """Hedef ülke bloğunu birleştirir. ``destination_duty`` yalnız ``rates`` düzeyinde kabul edilir."""
     data = inquiry_like if isinstance(inquiry_like, dict) else getattr(inquiry_like, "__dict__", {}) or {}
@@ -1004,6 +1009,16 @@ def build_export_requirements(
         destination_vat=destination_vat,
     )
     readiness = assess_readiness(fields, profile)
+    # `destination_duty` yukarıda kademeye göre zaten temizlendi; maliyet bu yüzden
+    # yalnız gerçekten oran verisi olan ülkede sayı üretebilir.
+    cost = build_export_cost(
+        data,
+        profile,
+        destination_duty=destination_duty,
+        duty_source=duty_source,
+        destination_vat=destination_vat,
+        preference_proof_confirmed=preference_proof_confirmed,
+    )
 
     caveats = doc_caveats + _caveats(profile)
     return ExportRequirements(
@@ -1017,6 +1032,7 @@ def build_export_requirements(
         commercial_documents=list(_COMMERCIAL_DOCUMENTS),
         turkish_procedure=turkish_export_procedure(data),
         market_hints=market_hints(data, profile),
+        cost=cost,
         caveats=caveats[:8],
         sources=_sources(profile),
     )
@@ -1029,6 +1045,7 @@ __all__ = [
     "DeclarationField",
     "DeclarationReadiness",
     "DestinationProfile",
+    "ExportCostEstimate",
     "ExportDocument",
     "ExportRequirements",
     "MarketHint",
