@@ -165,10 +165,25 @@ class HybridIndex:
                 );
                 """
             )
+            # Geçmiş sürümler: belge artık "bugün yürürlükte olan" değil, "hangi aralıkta
+            # yürürlükteydi" bilgisini taşır. Depo kuralı gereği yalnız eklemeli ALTER.
+            self._ensure_column(connection, "documents", "as_of_from", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "documents", "as_of_to", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "documents", "snapshot_active", "INTEGER NOT NULL DEFAULT 1")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_documents_validity ON documents(snapshot_active, as_of_from)"
+            )
         try:
             self.db_path.chmod(0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        """Eklemeli göç: eski veritabanında sütun yoksa ekler. Hiçbir tablo yeniden yazılmaz."""
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _set_meta(self, connection: sqlite3.Connection, key: str, value: Any) -> None:
         connection.execute(
@@ -261,11 +276,15 @@ class HybridIndex:
             "source_url": str(doc.get("source_url") or ""),
             "source_sha256": sha,
             "snapshot_id": str(doc.get("snapshot_id") or ""),
+            # Besleyici vermezse belge "bugün yürürlükte" sayılır — göç öncesi davranışın aynısı.
+            "as_of_from": str(doc.get("as_of_from") or "")[:40],
+            "as_of_to": str(doc.get("as_of_to") or "")[:40],
+            "snapshot_active": 0 if doc.get("snapshot_active") is False else 1,
         }
 
     def upsert_documents(self, docs: Iterable[dict[str, Any]]) -> dict[str, int]:
         """Belgeleri yazar; ``source_sha256`` değişmeyenler atlanır (yeniden gömülmez)."""
-        counts = {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 0}
+        counts = {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 0, "retimed": 0}
         with self._lock, self._connect() as connection:
             for raw in docs:
                 prepared = self._prepare(raw)
@@ -273,20 +292,40 @@ class HybridIndex:
                     counts["invalid"] += 1
                     continue
                 existing = connection.execute(
-                    "SELECT source_sha256 FROM documents WHERE id=?", (prepared["id"],)
+                    "SELECT source_sha256, as_of_from, as_of_to, snapshot_active FROM documents WHERE id=?",
+                    (prepared["id"],),
                 ).fetchone()
                 if existing and existing["source_sha256"] == prepared["source_sha256"]:
-                    counts["skipped"] += 1
+                    # Metin aynı ama yürürlük aralığı kapanmış olabilir (yeni sürüm yayına
+                    # girdiğinde önceki snapshot'a valid_to yazılır). Bu, metni yeniden
+                    # gömmeyi gerektirmez — yalnız zaman sütunları güncellenir.
+                    same_validity = (
+                        (existing["as_of_from"] or "") == prepared["as_of_from"]
+                        and (existing["as_of_to"] or "") == prepared["as_of_to"]
+                        and int(existing["snapshot_active"] or 0) == prepared["snapshot_active"]
+                    )
+                    if same_validity:
+                        counts["skipped"] += 1
+                        continue
+                    connection.execute(
+                        "UPDATE documents SET as_of_from=:as_of_from, as_of_to=:as_of_to, "
+                        "snapshot_active=:snapshot_active, updated_at=:updated_at WHERE id=:id",
+                        {**prepared, "updated_at": _now()},
+                    )
+                    counts["retimed"] += 1
                     continue
                 connection.execute(
                     """
-                    INSERT INTO documents(id, corpus, title, text, gtip_codes_json, source_url, source_sha256, snapshot_id, updated_at)
-                    VALUES (:id, :corpus, :title, :text, :gtip_codes_json, :source_url, :source_sha256, :snapshot_id, :updated_at)
+                    INSERT INTO documents(id, corpus, title, text, gtip_codes_json, source_url, source_sha256, snapshot_id,
+                                          as_of_from, as_of_to, snapshot_active, updated_at)
+                    VALUES (:id, :corpus, :title, :text, :gtip_codes_json, :source_url, :source_sha256, :snapshot_id,
+                            :as_of_from, :as_of_to, :snapshot_active, :updated_at)
                     ON CONFLICT(id) DO UPDATE SET
                         corpus=excluded.corpus, title=excluded.title, text=excluded.text,
                         gtip_codes_json=excluded.gtip_codes_json, source_url=excluded.source_url,
                         source_sha256=excluded.source_sha256, snapshot_id=excluded.snapshot_id,
-                        updated_at=excluded.updated_at
+                        as_of_from=excluded.as_of_from, as_of_to=excluded.as_of_to,
+                        snapshot_active=excluded.snapshot_active, updated_at=excluded.updated_at
                     """,
                     {**prepared, "updated_at": _now()},
                 )
@@ -392,12 +431,31 @@ class HybridIndex:
         return summary
 
     # ---- search
-    def _lexical(self, query: str, limit: int, corpora: list[str] | None) -> list[dict[str, Any]]:
+    @staticmethod
+    def _validity_sql(as_of: str | None, alias: str = "d") -> tuple[str, list[Any]]:
+        """Zaman filtresi. ``as_of`` yoksa bugünkü davranış birebir korunur (yalnız aktif sürüm).
+
+        ``as_of`` verilirse o güne ait sürüm seçilir. Aralığı bilinmeyen belgeler (``as_of_from``
+        boş) geçmiş sorgusunda **elenir**: tarihi doğrulanamayan bir satırı "o gün yürürlükteydi"
+        diye göstermek, kanıtı olmayan bir iddia olurdu.
+        """
+        if not as_of:
+            return f" AND {alias}.snapshot_active=1", []
+        return (
+            f" AND {alias}.as_of_from != '' AND {alias}.as_of_from <= ?"
+            f" AND ({alias}.as_of_to = '' OR {alias}.as_of_to > ?)",
+            [as_of, as_of],
+        )
+
+    def _lexical(
+        self, query: str, limit: int, corpora: list[str] | None, as_of: str | None = None
+    ) -> list[dict[str, Any]]:
         match = _fts_query(query)
         if not match:
             return []
         sql = (
-            "SELECT d.id, d.corpus, d.title, d.gtip_codes_json, d.source_url, "
+            "SELECT d.id, d.corpus, d.title, d.gtip_codes_json, d.source_url, d.source_sha256, "
+            "d.snapshot_id, d.as_of_from, d.as_of_to, d.snapshot_active, "
             "snippet(documents_fts, 3, '', '', ' … ', 32) AS snippet, bm25(documents_fts) AS rank "
             "FROM documents_fts f JOIN documents d ON d.id=f.id WHERE documents_fts MATCH ?"
         )
@@ -405,6 +463,9 @@ class HybridIndex:
         if corpora:
             sql += f" AND d.corpus IN ({','.join('?' for _ in corpora)})"
             params.extend(corpora)
+        clause, clause_params = self._validity_sql(as_of)
+        sql += clause
+        params.extend(clause_params)
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
         try:
@@ -415,15 +476,19 @@ class HybridIndex:
             return []
         return [dict(row) for row in rows]
 
-    def _fetch(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+    def _fetch(self, ids: list[str], as_of: str | None = None) -> dict[str, dict[str, Any]]:
+        """Vektör adaylarının künyesi. Zaman filtresi burada da uygulanır: filtreyi geçemeyen
+        aday satır dönmez ve ``_fuse`` onu sessizce atlar."""
         if not ids:
             return {}
         marks = ",".join("?" for _ in ids)
+        clause, clause_params = self._validity_sql(as_of, alias="documents")
         with self._connect() as connection:
             rows = connection.execute(
-                f"SELECT id, corpus, title, substr(text, 1, 240) AS snippet, gtip_codes_json, source_url "
-                f"FROM documents WHERE id IN ({marks})",
-                ids,
+                f"SELECT id, corpus, title, substr(text, 1, 240) AS snippet, gtip_codes_json, source_url, "
+                f"source_sha256, snapshot_id, as_of_from, as_of_to, snapshot_active "
+                f"FROM documents WHERE id IN ({marks}){clause}",
+                [*ids, *clause_params],
             ).fetchall()
         return {row["id"]: dict(row) for row in rows}
 
@@ -438,9 +503,12 @@ class HybridIndex:
         limit: int = 10,
         gtip_prefix: str | None = None,
         corpora: list[str] | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Yalnız BM25 (senkron); event loop dışından güvenle çağrılabilir."""
-        return self._fuse(query, limit=limit, gtip_prefix=gtip_prefix, corpora=corpora, query_vector=None)
+        return self._fuse(
+            query, limit=limit, gtip_prefix=gtip_prefix, corpora=corpora, query_vector=None, as_of=as_of
+        )
 
     async def search(
         self,
@@ -450,8 +518,12 @@ class HybridIndex:
         gtip_prefix: str | None = None,
         corpora: list[str] | None = None,
         embed_timeout: float = DEFAULT_EMBED_TIMEOUT,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
-        """BM25 + vektör sonuçlarını RRF ile birleştirir; gömme gecikirse sözlüksel kalır."""
+        """BM25 + vektör sonuçlarını RRF ile birleştirir; gömme gecikirse sözlüksel kalır.
+
+        ``as_of`` verilmezse yalnız yürürlükteki sürüm aranır — göç öncesi davranışın aynısı.
+        """
         text = guard_text(query, source="hibrit arama", max_chars=500)
         query_vector: list[float] | None = None
         if self.embedder is not None and text and self._matrix is not None:
@@ -462,7 +534,13 @@ class HybridIndex:
                 logger.info("Hybrid query embedding unavailable (%s); lexical only", type(exc).__name__)
                 query_vector = None
         return await asyncio.to_thread(
-            self._fuse, text, limit=limit, gtip_prefix=gtip_prefix, corpora=corpora, query_vector=query_vector
+            self._fuse,
+            text,
+            limit=limit,
+            gtip_prefix=gtip_prefix,
+            corpora=corpora,
+            query_vector=query_vector,
+            as_of=as_of,
         )
 
     def _fuse(
@@ -473,15 +551,16 @@ class HybridIndex:
         gtip_prefix: str | None,
         corpora: list[str] | None,
         query_vector: list[float] | None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         text = str(query or "").strip()
         limit = max(1, min(int(limit or 10), 50))
         prefix = normalise_gtip(gtip_prefix)
         corpora = [str(c) for c in (corpora or []) if str(c)] or None
         if not text:
-            return {"query": "", "mode": "lexical", "items": [], "count": 0}
+            return {"query": "", "mode": "lexical", "items": [], "count": 0, "as_of": as_of, "history": bool(as_of)}
         candidates = limit * 4
-        lexical = self._lexical(text, candidates, corpora)
+        lexical = self._lexical(text, candidates, corpora, as_of)
         vector_hits = self._vector_scores(query_vector, candidates * 2) if query_vector else []
         mode = "hybrid" if query_vector else "lexical"
 
@@ -493,7 +572,7 @@ class HybridIndex:
         if vector_hits:
             allowed_corpora = set(corpora) if corpora else None
             missing = [doc_id for doc_id, _ in vector_hits if doc_id not in fused]
-            details = self._fetch(missing)
+            details = self._fetch(missing, as_of)
             rank = 0
             for doc_id, similarity in vector_hits:
                 row = fused[doc_id]["row"] if doc_id in fused else details.get(doc_id)
@@ -522,6 +601,13 @@ class HybridIndex:
                     "gtip_codes": codes[:20],
                     "gtip_match": gtip_match,
                     "source_url": row.get("source_url") or "",
+                    # Geçmiş cevabın künyesi: hangi anlık görüntüden, hangi aralık için.
+                    # Künyesi olmayan satır geçmiş sorgusunda zaten elenir (bkz. _validity_sql).
+                    "source_sha256": row.get("source_sha256") or "",
+                    "snapshot_id": row.get("snapshot_id") or "",
+                    "as_of_from": row.get("as_of_from") or None,
+                    "as_of_to": row.get("as_of_to") or None,
+                    "snapshot_active": bool(row.get("snapshot_active", 1)),
                     "score": round(score, 6),
                     "lexical_rank": entry["lexical_rank"],
                     "vector_rank": entry["vector_rank"],
@@ -530,7 +616,14 @@ class HybridIndex:
             )
         items.sort(key=lambda item: (-item["score"], item["id"]))
         items = items[:limit]
-        return {"query": text, "mode": mode, "items": items, "count": len(items)}
+        return {
+            "query": text,
+            "mode": mode,
+            "items": items,
+            "count": len(items),
+            "as_of": as_of,
+            "history": bool(as_of),
+        }
 
     # ---- status
     def status(self) -> dict[str, Any]:
@@ -541,11 +634,16 @@ class HybridIndex:
                 for row in connection.execute("SELECT corpus, COUNT(*) AS n FROM documents GROUP BY corpus ORDER BY corpus")
             }
             embedded = connection.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+            historical = connection.execute(
+                "SELECT COUNT(*) FROM documents WHERE snapshot_active=0"
+            ).fetchone()[0]
             last_refresh = self._get_meta(connection, "last_refresh_at")
             last_counts = self._get_meta(connection, "last_refresh_counts")
         return {
             "db_path": str(self.db_path),
             "document_count": int(total),
+            # Yürürlükten kalkmış ama arşivde duran sürümler; `as_of` sorgusunun malzemesi.
+            "historical_count": int(historical),
             "corpora": by_corpus,
             "embedding_count": int(embedded),
             "vectors_in_memory": len(self._ids),

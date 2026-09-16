@@ -2871,8 +2871,17 @@ async def web_tariff_autocomplete(request: Request):
         return limited
     query = str(request.query_params.get("q", "")).strip()[:100]
     limit_val = max(1, min(int(request.query_params.get("limit", "12") or 12), 30))
-    hybrid = await _hybrid_hits(query, limit=limit_val)
-    items = unified_search.autocomplete(query, limit=limit_val, hybrid=hybrid)
+    # Geçmiş tarihli arama `temporal_query` yeteneğine bağlıdır; bugünkü arama herkese açık.
+    try:
+        as_of = _as_of_param(request, None, query=True)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Tarih çözümlenemedi."}, status_code=422)
+    hybrid = await _hybrid_hits(query, limit=limit_val, as_of=as_of)
+    items = unified_search.autocomplete(query, limit=limit_val, hybrid=hybrid, as_of=as_of)
     return JSONResponse(
         {
             "items": items,
@@ -2912,13 +2921,15 @@ async def web_controls_search(request: Request):
     return JSONResponse({"query": query, "items": items, "results": items, "count": len(items), "total": len(items)})
 
 
-async def _hybrid_hits(query: str, *, limit: int = 10, gtip: str | None = None) -> dict[str, Any] | None:
+async def _hybrid_hits(
+    query: str, *, limit: int = 10, gtip: str | None = None, as_of: str | None = None
+) -> dict[str, Any] | None:
     """Kalıcı hibrit indeksten (BM25 + embedding) sonuç alır; hata/boş sorguda None."""
     text = str(query or "").strip()
     if not text:
         return None
     try:
-        return await hybrid_index.search(text, limit=limit, gtip_prefix=gtip)
+        return await hybrid_index.search(text, limit=limit, gtip_prefix=gtip, as_of=as_of)
     except SecurityViolation:
         raise
     except Exception:  # noqa: BLE001 - hibrit indeks mevcut aramayı hiçbir zaman engellemez
@@ -2941,7 +2952,15 @@ async def web_hybrid_search(request: Request):
     if not query:
         return JSONResponse({"query": "", "mode": "lexical", "items": [], "count": 0})
     try:
-        result = await hybrid_index.search(query, limit=limit_val, gtip_prefix=gtip or None)
+        as_of = _as_of_param(request, None, query=True)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Tarih çözümlenemedi."}, status_code=422)
+    try:
+        result = await hybrid_index.search(query, limit=limit_val, gtip_prefix=gtip or None, as_of=as_of)
     except SecurityViolation as exc:
         return _security_response(exc)
     except Exception:
@@ -3008,18 +3027,28 @@ async def web_unified_search(request: Request):
     limited = _rate_limit_response(request, "unified-search", limit=60, window_seconds=60)
     if limited:
         return limited
+    payload: dict[str, Any] | None = None
     if request.method == "POST":
         try:
             body = await request.json()
-            query = str(body.get("query", "") if isinstance(body, dict) else "").strip()
-            category = str(body.get("category", "all") if isinstance(body, dict) else "all").strip()
+            payload = body if isinstance(body, dict) else None
+            query = str((payload or {}).get("query", "")).strip()
+            category = str((payload or {}).get("category", "all")).strip()
         except Exception:
             query, category = "", "all"
     else:
         query = str(request.query_params.get("q", "")).strip()
         category = str(request.query_params.get("category", "all")).strip()
-    hybrid = await _hybrid_hits(query, limit=10)
-    result = unified_search.search_all(query, category=category, limit=30, hybrid=hybrid)
+    try:
+        as_of = _as_of_param(request, payload, query=request.method == "GET")
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc) or "Tarih çözümlenemedi."}, status_code=422)
+    hybrid = await _hybrid_hits(query, limit=10, as_of=as_of)
+    result = unified_search.search_all(query, category=category, limit=30, hybrid=hybrid, as_of=as_of)
     return JSONResponse(result)
 
 
@@ -3233,7 +3262,10 @@ async def web_control_lookup(request: Request):
         if not isinstance(body, dict):
             raise ValueError("Kontrol isteği bir nesne olmalıdır.")
         as_of = _as_of_param(request, body)
-        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of)
+        # Yön: ihracatta yalnız ihracat listeleri taranır. İhracat indeksi kısmidir ve
+        # sonuç bunu her zaman uyarı olarak taşır.
+        direction = "export" if str(body.get("direction") or "import").strip().lower() == "export" else "import"
+        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of, direction=direction)
         return JSONResponse(result.model_dump(mode="json"))
     except FeatureNotAvailable as exc:
         return _feature_error(exc)

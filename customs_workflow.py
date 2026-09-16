@@ -766,10 +766,13 @@ class _ExportBuilder(_Builder):
     aynen devralınır. Kalan adımlar Türk ithalat vergilerinin yerine hedef ülke
     şartlarını ve Türkiye tarafı ihracat işlemlerini alır.
 
-    Dört adım (``exporter_registration``, ``export_prohibitions``, ``dual_use_control``,
-    ``vat_exemption_refund``) her dosyada ``pending`` kalır: bu listeler indekslenmemiştir
-    ve "kapsam dışıdır" demek yanlış olurdu. Gözlemleyemediğimiz şeyi tamamlanmış saymak,
-    hedef ülkede yanlış beyannameye yol açabilecek en sessiz hatadır.
+    ``exporter_registration``, ``dual_use_control`` ve ``vat_exemption_refund`` her dosyada
+    ``pending`` kalır: bu veriler sistemimizde yoktur ve "kapsam dışıdır" demek yanlış olurdu.
+    ``export_prohibitions`` ve ``export_product_control`` ise FAZ 8.2'den beri **kısmi** bir
+    ihracat kontrol indeksinden beslenir: eşleşme çıkarsa kanıtlı sonuç yazılır, çıkmazsa
+    adım yine ``pending`` kalır — indeks kısmi olduğu için eşleşmemek yükümlülük olmadığını
+    göstermez. Gözlemleyemediğimiz şeyi tamamlanmış saymak, hedef ülkede yanlış beyannameye
+    yol açabilecek en sessiz hatadır.
     """
 
     @property
@@ -852,20 +855,53 @@ class _ExportBuilder(_Builder):
                  evidence=["export_requirements.turkish_procedure"],
                  next_action="İlgili ihracatçı birliğine üyeliğinizi ve İBGS kaydınızı teyit edin.")
 
-        self.add("export_prohibitions", "İhracı yasak veya ön izne bağlı mallar", "pending",
-                 "İhracı yasak ve ön izne bağlı mal listeleri indekslenmemiştir; kapsam dışı olduğu söylenemez.",
-                 evidence=["export_requirements.turkish_procedure"],
-                 next_action="Eşyanızı resmî yasak/ön izin listesiyle karşılaştırın.",
-                 legal_basis="İhracat Yönetmeliği ve ekli listeler")
+        # FAZ 8.2: ihracat kontrol motoru artık kısmi bir indeks taşıyor. Eşleşme çıkarsa
+        # gerçek kanıt yazılır; çıkmazsa adım yine `pending` kalır — indeks kısmi olduğu
+        # için "kapsam dışıdır" demek yanlış olurdu. Bu ayrım bilerek korunuyor.
+        export_matches = [_as_dict(item) for item in self.control.get("matches") or []] if self.control else []
+        export_control_evidence = [
+            "control_lookup.direction",
+            "control_lookup.matches[].rule.code",
+            "control_lookup.matches[].matched_scope.gtip_prefix",
+        ]
+
+        def export_rule_names(items: list[dict[str, Any]]) -> str:
+            return "; ".join(
+                f"{_text(_as_dict(m.get('rule')).get('code'))} {_text(_as_dict(m.get('rule')).get('title'))[:60]}"
+                for m in items[:3]
+            )
+
+        restricted = [
+            m for m in export_matches
+            if _as_dict(m.get("matched_scope")).get("list_kind") in {"prohibited", "licence_required"}
+        ]
+        if restricted:
+            self.add("export_prohibitions", "İhracı yasak veya ön izne bağlı mallar", "blocked",
+                     f"İhracat kontrol listesi eşleşmesi: {export_rule_names(restricted)}.",
+                     evidence=export_control_evidence,
+                     next_action="Yükümlülüğün türünü (yasak / ön izin / kota) resmî metinden teyit etmeden ilerlemeyin.",
+                     legal_basis="İhracat Yönetmeliği ve ekli listeler")
+        else:
+            self.add("export_prohibitions", "İhracı yasak veya ön izne bağlı mallar", "pending",
+                     "İhracat kontrol indeksimiz kısmidir; eşleşme çıkmaması kapsam dışı olduğunu göstermez.",
+                     evidence=["export_requirements.turkish_procedure", *export_control_evidence],
+                     next_action="Eşyanızı resmî yasak/ön izin listesiyle karşılaştırın.",
+                     legal_basis="İhracat Yönetmeliği ve ekli listeler")
 
         evidence = ["inquiry.candidate_gtip", "export_requirements.turkish_procedure"]
         if not self.gtip:
             self.add("export_product_control", "İhracatta ürün güvenliği / TAREKS denetimi", "blocked",
                      "Tarife kodu olmadan denetim kapsamı belirlenemez.", evidence=evidence,
                      next_action="Önce aday GTİP'i belirleyin.")
+        elif export_matches:
+            self.add("export_product_control", "İhracatta ürün güvenliği / TAREKS denetimi", "pending",
+                     f"İndekslenen ihracat tebliğinde eşleşme: {export_rule_names(export_matches)}. "
+                     "Fiilî denetim yetkili kurumun değerlendirmesine bağlıdır.",
+                     evidence=[*evidence, *export_control_evidence],
+                     next_action="Ürün tanımını ve istisnaları tebliğ metninden doğrulayın.")
         else:
             self.add("export_product_control", "İhracatta ürün güvenliği / TAREKS denetimi", "pending",
-                     "İhracat tarafı ürün denetim indeksimiz yok; ürün grubunuz denetime tabi olabilir.",
+                     "İhracat ürün denetim indeksimiz kısmidir; ürün grubunuz denetime tabi olabilir.",
                      evidence=evidence, next_action="Ürün grubunuz için ihracat denetim tebliğlerini kontrol edin.")
 
         if not self.gtip:
@@ -873,8 +909,12 @@ class _ExportBuilder(_Builder):
                      "Tarife kodu olmadan kontrol listesi karşılaştırması yapılamaz.", evidence=evidence,
                      next_action="Önce aday GTİP'i belirleyin.")
         else:
+            # İkili kullanım ve yaptırım listeleri askerî/teknik kategoriye göre düzenlenir,
+            # GTİP'e göre değil; bu yüzden indekslenmemiştir ve bu adım hep `pending` kalır.
             self.add("dual_use_control", "İkili kullanım ve ihracat kontrol listeleri", "pending",
-                     "İkili kullanım ve yaptırım listeleri sistemimizde yok.", evidence=evidence,
+                     "İkili kullanım ve yaptırım listeleri GTİP'e göre değil teknik kategoriye göre "
+                     "düzenlendiğinden indekslenmemiştir.",
+                     evidence=evidence,
                      next_action="Teknik özellikleri resmî ikili kullanım listesiyle karşılaştırın.")
 
         # 12. Hedef pazar uygunluk işareti

@@ -227,6 +227,9 @@ async def hybrid_index_refresh_loop() -> None:
                 tariff_engine=tariff_engine,
                 foreign_tariff_engine=foreign_tariff_engine,
                 ebti_engine=ebti_engine,
+                # Geçmiş sürümler de beslenir: motor veritabanlarında zaten duran arşiv
+                # böylece arama katmanında da görünür ve `as_of` sorgulanabilir olur.
+                include_history=True,
             )
             counts = await hybrid_index.refresh(corpora)
             logger.info("Hybrid index refresh: %s", counts)
@@ -2647,6 +2650,43 @@ async def search_classification_evidence(
 @app.tool(
     app=True,
     annotations={
+        "title": "Resmî kaynak indeksinde ara (geçmiş tarih dahil)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def search_official_index(
+    query: str = Field(..., min_length=2, max_length=300, description="Ürün tanımı, tebliğ adı veya arama terimleri."),
+    as_of: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            "Hangi güne ait sürüm aransın (YYYY-AA-GG). Boş bırakılırsa yalnız bugün yürürlükte "
+            "olan sürüm aranır."
+        ),
+    ),
+    gtip_prefix: Optional[str] = Field(None, max_length=20, description="Varsa GTİP ön eki; eşleşen kayıtlar öne alınır."),
+    limit: int = Field(10, ge=1, le=30),
+) -> dict[str, Any]:
+    """Search the versioned official corpora, optionally as they stood on a past date.
+
+    The archive keeps every distinct snapshot, so a past ``as_of`` returns the version that
+    was actually in force that day together with its provenance: ``snapshot_id``,
+    ``source_sha256`` and the ``as_of_from`` / ``as_of_to`` window it covered.
+
+    A record whose validity window is unknown is **excluded** from a past-dated search:
+    presenting an undated row as "in force that day" would be a claim without evidence.
+    Rates and control findings still come from the dedicated lookup tools; this tool
+    retrieves text, not decisions.
+    """
+    return await hybrid_index.search(query, limit=limit, gtip_prefix=gtip_prefix, as_of=as_of)
+
+
+@app.tool(
+    app=True,
+    annotations={
         "title": "Ürün fotoğrafından görünür evsafları çıkar",
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -3163,14 +3203,20 @@ async def sync_import_control_rules(
 async def lookup_import_controls(
     gtip: str = Field(..., pattern=r"^(?:\d[. ]*){12}$", description="Noktalı veya düz 12 haneli Türk GTİP."),
     as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); o gün geçerli tebliğ sürümleri kullanılır."),
+    direction: str = Field("import", pattern=r"^(import|export)$", description="İşlem yönü: ithalat (varsayılan) veya ihracat."),
 ) -> ImportControlLookupResult:
     """Find GTIP annex matches without claiming automatic physical inspection.
 
     A match establishes only that the code appears in an indexed communique
     annex. Product nature, exemptions and the authority's risk result must still
     be checked. Private laboratories are never presented as automatically required.
+
+    ``direction="export"`` searches the export control lists instead. That index is
+    **partial** by design — prohibited/licensed export goods, dual-use and sanctions
+    lists are not fully indexed — and every export result says so. A miss there never
+    means "no obligation".
     """
-    return await control_engine.lookup(gtip, as_of=as_of)
+    return await control_engine.lookup(gtip, as_of=as_of, direction=direction)
 
 
 @app.tool(
