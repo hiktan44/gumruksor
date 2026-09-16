@@ -211,7 +211,7 @@
       "optional": true,
       "title": "Doğal Çiçek Soğanlarının İhracat Listesi Hakkında Tebliğ",
       "category": "ihracatta listeye tabi doğal çiçek soğanları",
-      "annex_note": "Tür listesi tebliğin ekindedir (ayrı .docx); ek, ihracı yasak türler ile kotaya ve izne tabi türleri ayırır. Satırın hangi eke ait olduğu resmî metinden teyit edilmelidir.",
+      "annex_note": "Tür listesi (Ek-1) botanik familya/cins/tür bazlıdır ve GTİP içermez; bu tablo İNDEKSLENMEMİŞTİR. Aşağıdaki kodlar tebliğ metninin kendisinde açıkça sayılan GTİP'lerdir. Eşyanın türü Ek-1'in (I) yasak, (II) kotalı veya (III) serbest sütunundan hangisine girdiği resmî ekten teyit edilmelidir.",
       "discovery": {
         "terms": [
           "Çiçek",
@@ -222,8 +222,26 @@
           "TEBLIGLER"
         ]
       },
-      "scope_attachment": true,
-      "scope_attachment_list_kind": "licence_required"
+      "scope_literal": {
+        "note": "Kodlar resmî konsolide metinden okunur; eşitlemede metne karşı doğrulanır.",
+        "rows": [
+          {
+            "gtip": "0601.10.90.10.00",
+            "list_kind": "licence_required",
+            "description": "Doğal çiçek soğanları (Madde 5/1); ihracat türe göre yasak, kotalı veya serbest olabilir (Ek-1)"
+          },
+          {
+            "gtip": "0714.90.20.00.12",
+            "list_kind": "prohibited",
+            "description": "Orchidaceae (salepgiller) yumru ve drogları — ihracatı yapılamaz (Madde 4/1-a)"
+          },
+          {
+            "gtip": "1106.20.90.00.11",
+            "list_kind": "prohibited",
+            "description": "Orchidaceae (salepgiller) yumru ve drogları, toz/tablet ve her türlü form — ihracatı yapılamaz (Madde 4/1-a)"
+          }
+        ]
+      }
     }
   ]
 }

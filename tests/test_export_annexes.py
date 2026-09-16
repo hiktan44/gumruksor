@@ -237,7 +237,9 @@ class ShippedConfigTests(unittest.TestCase):
         # Ölçüm: ek, konsolide metinde yok. scope_annex ile beklemek her turda hata üretirdi.
         for code, rule in self.exports.items():
             self.assertNotIn("scope_annex", rule, code)
-            self.assertTrue(rule.get("scope_table") or rule.get("scope_attachment"), code)
+            self.assertTrue(
+                rule.get("scope_table") or rule.get("scope_attachment") or rule.get("scope_literal"), code
+            )
 
     def test_the_ozone_table_is_labelled_prohibited_as_the_official_text_says(self) -> None:
         table = self.exports["IHR/OZON"]["scope_table"]
@@ -250,10 +252,15 @@ class ShippedConfigTests(unittest.TestCase):
         # Sevk edilen desen izin fıkrasını dışarıda bırakmalı (yukarıdaki gerekçe).
         self.assertFalse([r for r in rows if r.gtip_prefix.startswith("8424")])
 
-    def test_the_flower_bulb_annex_is_downloaded_not_read_from_the_body(self) -> None:
+    def test_the_flower_bulb_scope_comes_from_the_article_text_not_an_annex(self) -> None:
+        # Bu kayıt 8.2b'de ek indirmeye bağlanmıştı; canlı ölçüm o varsayımı çürüttü:
+        # Bedesten bu belgede `ekler` vermiyor (yalnız göreli bir href var) ve Ek-1
+        # botanik tür bazlı olduğu için hiç GTİP içermiyor. Kapsam, tebliğin kendi
+        # maddelerinde tek tek sayılan üç GTİP'tir.
         rule = self.exports["IHR/CICEK-SOGANI"]
-        self.assertTrue(rule["scope_attachment"])
-        self.assertEqual(rule["scope_attachment_list_kind"], "licence_required")
+        self.assertNotIn("scope_attachment", rule)
+        codes = {row["gtip"] for row in rule["scope_literal"]["rows"]}
+        self.assertEqual(codes, {"0601.10.90.10.00", "0714.90.20.00.12", "1106.20.90.00.11"})
 
     def test_every_declared_list_kind_is_a_known_one(self) -> None:
         for code, rule in self.exports.items():
