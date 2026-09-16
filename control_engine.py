@@ -280,6 +280,9 @@ def extract_annex_scope(text: str, annex_number: int = 1) -> list[ControlScopeRo
 # için, çünkü "kapsamda" demek "yasak" demekten daha zayıf bir iddiadır.
 _LIST_KINDS = frozenset({"scope", "prohibited", "licence_required"})
 
+# Resmî ek olarak indirilip ayrıştırılabilen dosya türleri.
+_ATTACHMENT_SUFFIXES = (".zip", ".docx", ".doc", ".xlsx", ".xls", ".pdf")
+
 Direction = Literal["import", "export"]
 
 
@@ -350,16 +353,40 @@ def _tabular_bytes_to_text(data: bytes, extension: str) -> str:
     return "\n".join(lines)
 
 
+def _document_bytes_to_text(data: bytes, extension: str, converter: MarkItDown) -> str | None:
+    """Tek bir resmî belgeyi metne çevirir; tanınmayan türde ``None`` döner."""
+    if extension in {".xlsx", ".xls"}:
+        return _tabular_bytes_to_text(data, extension)
+    if extension in {".docx", ".doc", ".pdf"}:
+        return converter.convert_stream(io.BytesIO(data), file_extension=extension).text_content
+    if extension in {".csv", ".txt", ".htm", ".html"}:
+        return data.decode("utf-8", errors="replace")
+    return None
+
+
 def extract_attachment_scope(
     data: bytes,
     converter: MarkItDown | None = None,
     member_suffixes: list[str] | None = None,
+    *,
+    extension: str = ".zip",
 ) -> list[ControlScopeRow]:
-    """Extract tariff rows from selected scope members of an official ZIP."""
+    """Resmî ekten GTİP satırlarını çıkarır.
+
+    İthalat ÜGD tebliğlerinin eki bir ZIP arşividir. İhracat tebliğlerinde ise ek,
+    tek başına bir ``.docx`` dosyasıdır (canlı ölçüldü); bir ``.docx`` teknik olarak
+    ZIP olsa da içinde belge üyesi bulunmadığı için arşiv yolu boş dönerdi.
+    """
     if len(data) > 50 * 1024 * 1024:
         raise ValueError("Resmî ek arşivi 50 MB güvenlik sınırını aşıyor.")
-    rows: list[ControlScopeRow] = []
     converter = converter or MarkItDown()
+    extension = (extension or ".zip").casefold()
+    if extension != ".zip":
+        text = _document_bytes_to_text(data, extension, converter)
+        if text is None:
+            raise ValueError(f"Resmî ek dosyası okunamadı: bilinmeyen tür '{extension}'")
+        return _dedupe_scope(_scope_rows_from_segment(text))
+    rows: list[ControlScopeRow] = []
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         total_uncompressed = sum(item.file_size for item in archive.infolist() if not item.is_dir())
         if total_uncompressed > 150 * 1024 * 1024:
@@ -371,16 +398,9 @@ def extract_attachment_scope(
                 member_key = _key(Path(item.filename).name)
                 if not any(member_key.endswith(_key(suffix)) for suffix in member_suffixes):
                     continue
-            extension = Path(item.filename).suffix.casefold()
-            member = archive.read(item)
-            if extension in {".xlsx", ".xls"}:
-                text = _tabular_bytes_to_text(member, extension)
-            elif extension in {".docx", ".pdf"}:
-                converted = converter.convert_stream(io.BytesIO(member), file_extension=extension)
-                text = converted.text_content
-            elif extension in {".csv", ".txt", ".htm", ".html"}:
-                text = member.decode("utf-8", errors="replace")
-            else:
+            member_extension = Path(item.filename).suffix.casefold()
+            text = _document_bytes_to_text(archive.read(item), member_extension, converter)
+            if text is None:
                 continue
             rows.extend(_scope_rows_from_segment(text))
     return _dedupe_scope(rows)
@@ -781,7 +801,9 @@ class ImportControlEngine:
         candidates.extend(re.findall(r"(?is)href\s*=\s*['\"]([^'\"]+)['\"]", raw_html))
         for candidate in candidates:
             href = html.unescape(candidate).strip()
-            if not href.casefold().endswith(".zip"):
+            # İthalat tebliğlerinde ek bir ZIP arşividir; ihracat tebliğlerinde tek bir
+            # .docx dosyasıdır. Liste kasten dardır: yalnız ayrıştırabildiğimiz türler.
+            if not href.casefold().endswith(_ATTACHMENT_SUFFIXES):
                 continue
             url = urljoin("https://www.mevzuat.gov.tr/MevzuatMetin/", href)
             parsed = urlsplit(url)
@@ -865,6 +887,14 @@ class ImportControlEngine:
                     if config.get("scope_table"):
                         table = config["scope_table"]
                         scope = extract_scope_table(text, table["start_pattern"], table["end_pattern"])
+                        # Madde içi tablo her zaman "kapsam" değildir: ihracat tebliğlerinde
+                        # doğrudan "ihracatı yasaktır" diyen tablolar var. İddianın gücü
+                        # resmî metinden okunup yapılandırmaya yazılır, varsayılmaz.
+                        table_kind = str(table.get("list_kind", "scope"))
+                        if table_kind not in _LIST_KINDS:
+                            table_kind = "scope"
+                        for row in scope:
+                            row.list_kind = table_kind
                     else:
                         scope = []
                         for index, step in enumerate(annex_plan(config)):
@@ -879,12 +909,18 @@ class ImportControlEngine:
                             scope.extend(annex_rows)
                     if config.get("scope_attachment"):
                         try:
-                            attachment, _ = await self._download_attachment(raw_html, document.ekler)
+                            attachment, attachment_url = await self._download_attachment(raw_html, document.ekler)
                             scope = extract_attachment_scope(
                                 attachment,
                                 self._converter,
                                 list(config.get("scope_attachment_member_suffixes", [])),
+                                extension=Path(urlsplit(attachment_url).path).suffix.casefold() or ".zip",
                             )
+                            attachment_kind = str(config.get("scope_attachment_list_kind", "scope"))
+                            if attachment_kind not in _LIST_KINDS:
+                                attachment_kind = "scope"
+                            for row in scope:
+                                row.list_kind = attachment_kind
                             attachment_digest = hashlib.sha256(attachment).hexdigest()
                         except Exception as exc:
                             self._errors.append(f"{config['code']}: resmî ek arşivi işlenemedi ({exc})")

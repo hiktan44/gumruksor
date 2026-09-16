@@ -189,8 +189,7 @@
       "optional": true,
       "title": "Ozon Tabakasını İncelten Maddelerin ve Florlu Sera Gazlarının İhracına İlişkin Tebliğ",
       "category": "ihracatta izne tabi maddeler",
-      "scope_annex": 1,
-      "annex_note": "Ek listede yer alan maddelerin ihracı izne tabidir; yükümlülüğün türü ve istisnaları resmî metinden teyit edilmelidir.",
+      "annex_note": "Madde 5/1 tablosu: sayılan maddelerin ve bunları içeren Ek-3/A, Ek-3/B mallarının ihracatı yasaktır; indekslenen 16 satır bu tablodur. Madde 5/2 uyarınca 2903.76.10.00.00 ve 2903.76.20.00.00 içeren 8424.10 GTİP'li mallar yasak değil, Çevre, Şehircilik ve İklim Değişikliği Bakanlığı iznine tabidir; bu kod bilerek yasak listesine alınmaz ve resmî metinden teyit edilmelidir.",
       "discovery": {
         "terms": [
           "İhracına",
@@ -199,6 +198,11 @@
         "mevzuat_tur_list": [
           "TEBLIGLER"
         ]
+      },
+      "scope_table": {
+        "start_pattern": "İhracat\\s+kısıtlamaları",
+        "end_pattern": "^\\(2\\)\\s",
+        "list_kind": "prohibited"
       }
     },
     {
@@ -207,8 +211,7 @@
       "optional": true,
       "title": "Doğal Çiçek Soğanlarının İhracat Listesi Hakkında Tebliğ",
       "category": "ihracatta listeye tabi doğal çiçek soğanları",
-      "scope_annex": 1,
-      "annex_note": "Tebliğ ekleri ihracı yasak, kotaya ve izne tabi türleri ayırır; satırın hangi eke ait olduğu resmî metinden teyit edilmelidir.",
+      "annex_note": "Tür listesi tebliğin ekindedir (ayrı .docx); ek, ihracı yasak türler ile kotaya ve izne tabi türleri ayırır. Satırın hangi eke ait olduğu resmî metinden teyit edilmelidir.",
       "discovery": {
         "terms": [
           "Çiçek",
@@ -218,7 +221,9 @@
         "mevzuat_tur_list": [
           "TEBLIGLER"
         ]
-      }
+      },
+      "scope_attachment": true,
+      "scope_attachment_list_kind": "licence_required"
     }
   ]
 }
