@@ -3262,7 +3262,10 @@ async def web_control_lookup(request: Request):
         if not isinstance(body, dict):
             raise ValueError("Kontrol isteği bir nesne olmalıdır.")
         as_of = _as_of_param(request, body)
-        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of)
+        # Yön: ihracatta yalnız ihracat listeleri taranır. İhracat indeksi kısmidir ve
+        # sonuç bunu her zaman uyarı olarak taşır.
+        direction = "export" if str(body.get("direction") or "import").strip().lower() == "export" else "import"
+        result = await control_engine.lookup(str(body.get("gtip", "")), as_of=as_of, direction=direction)
         return JSONResponse(result.model_dump(mode="json"))
     except FeatureNotAvailable as exc:
         return _feature_error(exc)

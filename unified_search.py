@@ -237,6 +237,32 @@ def merge_hybrid_cards(
     return results
 
 
+# Kapsam satırının türü. Yasak ve ön izne bağlı satırlar aramada ayırt edilebilmeli.
+_LIST_KIND_LABELS = {
+    "scope": "Kapsam",
+    "prohibited": "Yasak liste",
+    "licence_required": "Ön izne bağlı",
+}
+
+
+def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    """Tablodaki sütun adları.
+
+    Bu modül motoru import etmeden SQLite dosyasına doğrudan bağlanır; göç henüz
+    uygulanmamış bir dosyada eksik tek bir sütun, ``OperationalError`` üretip
+    **denetim kategorisinin tamamını** sessizce düşürürdü. Sorgu bu kümeye göre kurulur.
+    """
+    try:
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def _optional_column(available: set[str], expression: str, name: str, default: str = "''") -> str:
+    """Sütun varsa seçer, yoksa sabit varsayılanı aynı adla döndürür."""
+    return f"{expression} AS {name}" if name in available else f"{default} AS {name}"
+
+
 def _snapshot_filter(as_of: str | None, alias: str = "d") -> tuple[str, list[Any]]:
     """Kontrol tebliği anlık görüntüsü için yürürlük filtresi.
 
@@ -503,10 +529,20 @@ class UnifiedSearchEngine:
                     wildcard = f"%{text}%"
                     digits = re.sub(r"\D", "", text)
                     clause, clause_params = _snapshot_filter(as_of)
+                    snapshot_cols = _table_columns(c_conn, "control_snapshots")
+                    scope_cols = _table_columns(c_conn, "control_scope")
+                    scope_kind = _optional_column(scope_cols, "s.list_kind", "list_kind", "'scope'")
+                    snapshot_direction = _optional_column(snapshot_cols, "d.direction", "direction", "'import'")
+                    snapshot_sha = _optional_column(snapshot_cols, "d.document_sha256", "document_sha256")
+                    snapshot_retrieved = _optional_column(snapshot_cols, "d.retrieved_at", "retrieved_at")
+                    snapshot_from = _optional_column(snapshot_cols, "d.valid_from", "valid_from")
+                    snapshot_to = _optional_column(snapshot_cols, "d.valid_to", "valid_to")
                     c_rows = c_conn.execute(
                         f"""
-                        SELECT s.gtip_prefix, s.description, d.code, d.title, d.authority, d.system, d.source_url,
-                               d.document_sha256, d.retrieved_at, d.valid_from, d.valid_to, d.active
+                        SELECT s.gtip_prefix, s.description, d.code, d.title, d.authority,
+                               d.system, d.source_url, d.active,
+                               {scope_kind}, {snapshot_direction}, {snapshot_sha},
+                               {snapshot_retrieved}, {snapshot_from}, {snapshot_to}
                         FROM control_scope s
                         JOIN control_snapshots d ON d.id=s.snapshot_id
                         WHERE {clause} AND s.excluded=0 AND (
@@ -530,6 +566,12 @@ class UnifiedSearchEngine:
                             "authority": cr["authority"],
                             "system": cr["system"],
                             "source_url": cr["source_url"],
+                            # Yasak / ön izin satırı aramada normal kapsam satırı gibi
+                            # görünmemeli: liste türü ve yön karta taşınır.
+                            "list_kind": cr["list_kind"] or "scope",
+                            "list_label": _LIST_KIND_LABELS.get(cr["list_kind"] or "scope", "Kapsam"),
+                            "direction": cr["direction"] or "import",
+                            "direction_label": "İhracat" if (cr["direction"] or "import") == "export" else "İthalat",
                             # Geçmiş cevabın künyesi: hangi anlık görüntü, hangi aralık.
                             # Bu alanlar olmadan "o gün şu yürürlükteydi" denemez.
                             "source_sha256": cr["document_sha256"],

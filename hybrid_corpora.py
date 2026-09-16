@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 CORPUS_CONTROLS = "controls"
+# Aramada "yasak liste" satırı normal kapsam satırından ayrılabilsin diye metne yazılır.
+_LIST_KIND_TEXT = {
+    "scope": "kapsam listesi",
+    "prohibited": "yasak liste",
+    "licence_required": "ön izne bağlı liste",
+}
 CORPUS_CLASSIFICATION = "eu_classification"
 CORPUS_MEASURES = "trade_measures"
 CORPUS_OFFICIAL_PAGES = "official_pages"
@@ -92,7 +98,8 @@ def control_documents(control_engine: Any, *, include_history: bool = False) -> 
             f"""
             SELECT s.snapshot_id, s.gtip_prefix, s.description, s.source_line, s.list_kind,
                    d.code, d.title, d.authority, d.system, d.source_url, d.document_sha256, d.active,
-                   {_optional(available, "valid_from")}, {_optional(available, "valid_to")}
+                   {_optional(available, "valid_from")}, {_optional(available, "valid_to")},
+                   {_optional(available, "direction") if "direction" in available else "'import' AS direction"}
             FROM control_scope s JOIN control_snapshots d ON d.id=s.snapshot_id
             WHERE {where}
             """
@@ -111,7 +118,11 @@ def control_documents(control_engine: Any, *, include_history: bool = False) -> 
                 "id": f"control:{row['snapshot_id']}:{row['gtip_prefix']}:{row['list_kind']}",
                 "corpus": CORPUS_CONTROLS,
                 "title": f"{row['code']} – {row['title']}",
-                "text": f"{description} · {row['authority']} · {row['system']}",
+                "text": (
+                    f"{description} · {row['authority']} · {row['system']} · "
+                    f"{'ihracat' if (row['direction'] or 'import') == 'export' else 'ithalat'} kontrolü · "
+                    f"{_LIST_KIND_TEXT.get(row['list_kind'] or 'scope', 'kapsam listesi')}"
+                ),
                 "gtip_codes": [row["gtip_prefix"]],
                 "source_url": row["source_url"] or "",
                 "source_sha256": _sha(row["document_sha256"], row["gtip_prefix"], description),

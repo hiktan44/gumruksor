@@ -3203,14 +3203,20 @@ async def sync_import_control_rules(
 async def lookup_import_controls(
     gtip: str = Field(..., pattern=r"^(?:\d[. ]*){12}$", description="Noktalı veya düz 12 haneli Türk GTİP."),
     as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Yürürlük tarihi (YYYY-AA-GG); o gün geçerli tebliğ sürümleri kullanılır."),
+    direction: str = Field("import", pattern=r"^(import|export)$", description="İşlem yönü: ithalat (varsayılan) veya ihracat."),
 ) -> ImportControlLookupResult:
     """Find GTIP annex matches without claiming automatic physical inspection.
 
     A match establishes only that the code appears in an indexed communique
     annex. Product nature, exemptions and the authority's risk result must still
     be checked. Private laboratories are never presented as automatically required.
+
+    ``direction="export"`` searches the export control lists instead. That index is
+    **partial** by design — prohibited/licensed export goods, dual-use and sanctions
+    lists are not fully indexed — and every export result says so. A miss there never
+    means "no obligation".
     """
-    return await control_engine.lookup(gtip, as_of=as_of)
+    return await control_engine.lookup(gtip, as_of=as_of, direction=direction)
 
 
 @app.tool(

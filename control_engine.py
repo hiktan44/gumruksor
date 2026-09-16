@@ -81,9 +81,10 @@ class ControlScopeRow(BaseModel):
     source_line: str
     source_offset: int
     excluded: bool = False
-    # "scope": product is subject to the control; "prohibited": the annex lists
-    # goods whose import is banned outright (e.g. waste and chemical communiques).
-    list_kind: Literal["scope", "prohibited"] = "scope"
+    # "scope": ürün denetime tabidir; "prohibited": ek, giriş/çıkışı doğrudan yasak
+    # eşyayı sayar (atık ve kimyasal tebliğleri); "licence_required": eşya yasak değil
+    # ama ön izne/ruhsata bağlıdır (özellikle ihracat listelerinde).
+    list_kind: Literal["scope", "prohibited", "licence_required"] = "scope"
 
 
 class RequiredDocument(BaseModel):
@@ -97,6 +98,7 @@ class ImportControlRule(BaseModel):
     code: str
     title: str
     category: str
+    direction: Literal["import", "export"] = "import"
     authority: str
     system: str
     risk_based: bool
@@ -129,6 +131,8 @@ class ImportControlMatch(BaseModel):
 class ImportControlLookupResult(BaseModel):
     status: Literal["matched", "not_found", "unavailable"]
     gtip: str
+    # Sonuç hangi yönün listelerinden üretildi. Göç öncesi kayıtlar ithalattır.
+    direction: Literal["import", "export"] = "import"
     scope_determination: Literal["annex_match", "no_indexed_match", "unavailable"] = "unavailable"
     risk_selection_status: Literal["not_determined_by_this_system"] = "not_determined_by_this_system"
     product_scope_review_required: bool = True
@@ -155,7 +159,10 @@ class ControlSnapshot(BaseModel):
 
 
 class ControlSyncStatus(BaseModel):
+    # `ready` anlamını korur: **ithalat** tarafı hazır mı. İhracat ayrı bayrak taşır ki
+    # bir ihracat belgesinin çekilememesi ithalat yolunu kilitlemesin.
     ready: bool
+    ready_export: bool = False
     syncing: bool
     last_checked_at: str | None = None
     active_snapshots: list[ControlSnapshot] = Field(default_factory=list)
@@ -269,6 +276,19 @@ def extract_annex_scope(text: str, annex_number: int = 1) -> list[ControlScopeRo
     return _dedupe_scope(rows)
 
 
+# Ek türleri: bilinmeyen bir değer sessizce "scope"a düşer — yanlış tarafta hata yapmamak
+# için, çünkü "kapsamda" demek "yasak" demekten daha zayıf bir iddiadır.
+_LIST_KINDS = frozenset({"scope", "prohibited", "licence_required"})
+
+Direction = Literal["import", "export"]
+
+
+def rule_direction(config: dict[str, Any]) -> str:
+    """Kaydın işlem yönü. Alan yoksa ``import`` — mevcut 25 ithalat kaydı hiç değişmeden çalışır."""
+    value = str(config.get("direction") or "import").strip().lower()
+    return "export" if value == "export" else "import"
+
+
 def annex_plan(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalise ``scope_annex`` / ``scope_annexes`` into [{annex, kind}, ...]."""
     raw = config.get("scope_annexes")
@@ -278,7 +298,9 @@ def annex_plan(config: dict[str, Any]) -> list[dict[str, Any]]:
     for item in raw:
         if isinstance(item, dict):
             kind = str(item.get("kind", "scope"))
-            plan.append({"annex": int(item.get("annex", 1)), "kind": kind if kind in {"scope", "prohibited"} else "scope"})
+            plan.append(
+                {"annex": int(item.get("annex", 1)), "kind": kind if kind in _LIST_KINDS else "scope"}
+            )
         else:
             plan.append({"annex": int(item), "kind": "scope"})
     return plan
@@ -578,6 +600,10 @@ class ImportControlEngine:
             for column in ("required_documents_json", "exemptions_json"):
                 if column not in snapshot_columns:
                     db.execute(f"ALTER TABLE control_snapshots ADD COLUMN {column} TEXT")
+            # FAZ 8.2: işlem yönü. Göç öncesi her snapshot ithalattır, bu yüzden
+            # varsayılan 'import' — eski veritabanları aynen okunmaya devam eder.
+            if "direction" not in snapshot_columns:
+                db.execute("ALTER TABLE control_snapshots ADD COLUMN direction TEXT NOT NULL DEFAULT 'import'")
             ensure_review_columns(db, "control_snapshots")
             ensure_validity_columns(db, "control_snapshots")
             ensure_validity_columns(db, "control_snapshots", (("effective_clause", "TEXT"),))
@@ -618,11 +644,74 @@ class ImportControlEngine:
         if delay > 0:
             await asyncio.sleep(delay)
 
+    async def _search(self, **kwargs: Any) -> Any:
+        """Tek bir resmî arama; 429'da geri çekilerek yeniden dener."""
+        result = None
+        for attempt in range(5):
+            async with self._request_lock:
+                await self._pace()
+                result = await self._client.search_documents(**kwargs)
+                self._last_request_at = time.monotonic()
+            if not result.error_message:
+                return result
+            if "429" not in result.error_message and "Too Many" not in result.error_message:
+                raise RuntimeError(result.error_message)
+            await asyncio.sleep(min(30, 3 * (2 ** attempt)))
+        raise RuntimeError(result.error_message if result else "Resmî arama yanıt vermedi")
+
+    async def _discover_export_documents(self) -> dict[str, Any]:
+        """İhracat kayıtlarını kayıt başına arayarak bulur.
+
+        Neden ithalattan farklı: ithalat ÜGD tebliğleri **tek bir yıllık pakette**
+        (31/12, aynı Resmî Gazete) yayımlanır, bu yüzden tek geniş süpürme yeter.
+        İhracat listeleri ise farklı yıllara ve farklı mevzuat türlerine dağılmıştır
+        (Tebliğ, Cumhurbaşkanı Kararı, Kurum Yönetmeliği) — canlı ölçüldü. Ayrıca
+        Bedesten'in başlık araması **kelime tabanlıdır**: çok kelimeli bir ifade,
+        o kelimelerin hepsi bir başlıkta geçmedikçe sıfır döner. Bu yüzden her kayıt
+        kendi arama terimlerini taşır ve eşleşme başlıkta **tüm** terimlerin geçmesine
+        bakılarak doğrulanır.
+        """
+        documents: dict[str, Any] = {}
+        for config in self.rules_config:
+            if rule_direction(config) != "export":
+                continue
+            discovery = config.get("discovery") or {}
+            terms = [str(term).strip() for term in (discovery.get("terms") or []) if str(term).strip()]
+            if not terms:
+                self._errors.append(f"{config['code']}: ihracat kaydında arama terimi yok")
+                continue
+            kwargs: dict[str, Any] = {"mevzuat_adi": terms[0], "page": 1, "page_size": 20}
+            if discovery.get("mevzuat_tur_list"):
+                kwargs["mevzuat_tur_list"] = list(discovery["mevzuat_tur_list"])
+            for key in ("resmi_gazete_tarihi_start", "resmi_gazete_tarihi_end"):
+                if discovery.get(key):
+                    kwargs[key] = str(discovery[key])
+            try:
+                result = await self._search(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - tek kayıt diğerlerini düşürmez
+                self._errors.append(f"{config['code']}: arama başarısız: {str(exc)[:160]}")
+                continue
+            required = [_key(term) for term in terms]
+            best = None
+            for document in result.documents:
+                title = _key(str(document.mevzuat_adi or ""))
+                if all(token in title for token in required):
+                    best = document
+                    break
+            if best is None:
+                self._errors.append(f"{config['code']}: arama sonucunda başlık eşleşmedi")
+                continue
+            documents[config["code"]] = best
+        return documents
+
     async def _discover_documents(self) -> dict[str, Any]:
         """Discover the current annual set with a few paged searches.
 
         One broad official search replaces one search per communique, which is
         both faster and substantially friendlier to the public Bedesten API.
+
+        İhracat kayıtları bu süpürmeye girmez; onlar ``_discover_export_documents``
+        ile kayıt başına aranır (gerekçesi orada yazılı).
         """
         documents: dict[str, Any] = {}
         for page in range(1, 5):
@@ -645,8 +734,9 @@ class ImportControlEngine:
                 await asyncio.sleep(min(30, 3 * (2 ** attempt)))
             if result is None or result.error_message:
                 raise RuntimeError(result.error_message if result else "Resmî arama yanıt vermedi")
+            import_rules = [item for item in self.rules_config if rule_direction(item) == "import"]
             for document in result.documents:
-                for config in self.rules_config:
+                for config in import_rules:
                     if communique_code_matches(config["code"], document.mevzuat_adi):
                         if config["code"] in documents and documents[config["code"]].mevzuat_id != document.mevzuat_id:
                             self._errors.append(
@@ -654,8 +744,9 @@ class ImportControlEngine:
                             )
                             continue
                         documents[config["code"]] = document
-            if len(result.documents) < 20 or len(documents) >= len(self.rules_config):
+            if len(result.documents) < 20 or len(documents) >= len(import_rules):
                 break
+        documents.update(await self._discover_export_documents())
         return documents
 
     async def _fetch_rule(
@@ -840,8 +931,8 @@ class ImportControlEngine:
                                 authority, system, risk_based,
                                 physical_inspection_possible, laboratory_test_possible,
                                 required_documents_excerpt, required_documents_json, exemptions_json, active, status,
-                                valid_from_basis, effective_clause
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending_review',?,?)
+                                valid_from_basis, effective_clause, direction
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending_review',?,?,?)
                             """,
                             (
                                 snapshot_id, config["code"], document.mevzuat_adi, config["category"],
@@ -850,7 +941,7 @@ class ImportControlEngine:
                                 sum(not row.excluded for row in scope), process["authority"], process["system"],
                                 int(process["risk_based"]), int(process["physical_inspection_possible"]),
                                 int(process["laboratory_test_possible"]), documents, documents_json, exemptions_json,
-                                effective_basis, effective_clause,
+                                effective_basis, effective_clause, rule_direction(config),
                             ),
                         )
                         db.execute("DELETE FROM control_scope WHERE snapshot_id=?", (snapshot_id,))
@@ -1107,6 +1198,7 @@ class ImportControlEngine:
 
         return ImportControlRule(
             code=row["code"], title=row["title"], category=row["category"], authority=row["authority"],
+            direction=(row["direction"] if "direction" in row.keys() and row["direction"] else "import"),
             system=row["system"], risk_based=bool(row["risk_based"]),
             physical_inspection_possible=bool(row["physical_inspection_possible"]),
             laboratory_test_possible=bool(row["laboratory_test_possible"]),
@@ -1131,37 +1223,73 @@ class ImportControlEngine:
             ).fetchone()["n"]
             pending = db.execute("SELECT COUNT(*) FROM control_snapshots WHERE status='pending_review'").fetchone()[0]
         snapshots = [self._snapshot(row) for row in rows]
-        required_codes = {item["code"] for item in self.rules_config if not item.get("optional")}
         active_codes = {item.code for item in snapshots}
+
+        # İthalat: **tam kapsam** ölçütü — ÜGD paketi yıllık ve bütündür, eksik bir tebliğ
+        # "kontrole tabi değil" yanlış sonucunu doğurur, o yüzden hepsi aktif olmalı.
+        required_import = {
+            item["code"]
+            for item in self.rules_config
+            if not item.get("optional") and rule_direction(item) == "import"
+        }
+        # İhracat: **kısmi kapsam** ölçütü — listeler dağınık ve indeksimiz bilerek eksik.
+        # Elimizde olan listelerden cevap verilir, sonuç her zaman "indeks kısmidir"
+        # uyarısını taşır. Tam kapsam istemek, ihracat yolunu kalıcı olarak kapalı tutardı.
+        export_codes = {item["code"] for item in self.rules_config if rule_direction(item) == "export"}
+
         return ControlSyncStatus(
             pending_review_count=int(pending), review_mode=self.review_policy.mode,
-            ready=bool(required_codes) and required_codes.issubset(active_codes), syncing=self._syncing,
+            ready=bool(required_import) and required_import.issubset(active_codes),
+            ready_export=bool(export_codes & active_codes),
+            syncing=self._syncing,
             last_checked_at=meta["value"] if meta else None, active_snapshots=snapshots,
             scope_count=count, errors=list(self._errors), sync_interval_seconds=self.sync_interval_seconds,
         )
 
-    async def lookup(self, gtip: str, *, as_of: str | None = None) -> ImportControlLookupResult:
+    async def lookup(
+        self, gtip: str, *, as_of: str | None = None, direction: str = "import"
+    ) -> ImportControlLookupResult:
         code = _normalise_gtip(gtip)
         if code is None or len(code) not in {4, 6, 8, 10, 12}:
             raise ValueError("Kontrol sorgusu için 4, 6, 8, 10 veya 12 haneli GTİP gereklidir.")
         as_of = normalise_as_of(as_of)
-        if not self.status().ready:
+        direction = "export" if str(direction).strip().lower() == "export" else "import"
+        status = self.status()
+        if not (status.ready_export if direction == "export" else status.ready):
+            missing = (
+                "İhracat kontrol listeleri henüz indekslenmedi; ihracı yasak/ön izne bağlı mallar ve "
+                "ikili kullanım listeleri resmî kaynaktan doğrulanmalıdır."
+                if direction == "export"
+                else "Resmî kontrol tebliğleri arka planda eşitleniyor; uygunluk hakkında sonuç verilmedi. Kısa süre sonra yeniden deneyin."
+            )
             return ImportControlLookupResult(
-                status="unavailable", gtip=code,
+                status="unavailable", gtip=code, direction=direction,
                 scope_determination="unavailable",
-                warnings=["Resmî kontrol tebliğleri arka planda eşitleniyor; uygunluk hakkında sonuç verilmedi. Kısa süre sonra yeniden deneyin."],
+                warnings=[missing],
                 as_of=_now(), as_of_date=as_of or today_iso(), validity_basis="unavailable",
             )
         with self._connect() as db:
             selected = self._select_snapshot_ids(db, as_of)
             if selected is None:
-                selected_rows = db.execute("SELECT * FROM control_snapshots WHERE active=1").fetchall()
-                snapshot_filter, params = "d.active=1", []
+                selected_rows = db.execute(
+                    "SELECT * FROM control_snapshots WHERE active=1 AND direction=?", (direction,)
+                ).fetchall()
+                snapshot_filter, params = "d.active=1 AND d.direction=?", [direction]
             else:
                 selected_rows = selected
                 if not selected_rows:
                     return ImportControlLookupResult(
-                        status="unavailable", gtip=code, scope_determination="unavailable",
+                        status="unavailable", gtip=code, direction=direction, scope_determination="unavailable",
+                        warnings=[f"{as_of} tarihini kapsayan onaylı kontrol tebliği sürümü arşivde yok."],
+                        as_of=_now(), as_of_date=as_of, validity_basis="unavailable",
+                    )
+                selected_rows = [
+                    row for row in selected_rows
+                    if (row["direction"] if "direction" in row.keys() else "import") == direction
+                ]
+                if not selected_rows:
+                    return ImportControlLookupResult(
+                        status="unavailable", gtip=code, direction=direction, scope_determination="unavailable",
                         warnings=[f"{as_of} tarihini kapsayan onaylı kontrol tebliği sürümü arşivde yok."],
                         as_of=_now(), as_of_date=as_of, validity_basis="unavailable",
                     )
@@ -1241,8 +1369,16 @@ class ImportControlEngine:
             warnings.append(
                 "GTİP, indekslenen güncel tebliğ eklerinde bulunamadı. Bu sonuç 'kontrole tabi değildir' anlamına gelmez; ürün niteliği, başka izin mevzuatı ve güncel değişiklikler ayrıca incelenmelidir."
             )
+        if direction == "export":
+            # Bu uyarı her ihracat sonucunda yazılır, eşleşme olsun olmasın: ihracat
+            # kontrol indeksimiz bilerek kısmidir ve tammış gibi okunmamalıdır.
+            warnings.append(
+                "İhracat kontrol indeksimiz kısmidir: ihracı yasak ve ön izne bağlı malların tamamı, "
+                "ikili kullanım ve yaptırım listeleri indekslenmemiştir. Eşleşme çıkmaması yükümlülük "
+                "olmadığını göstermez; Ticaret Bakanlığı'nın güncel listelerinden doğrulayın."
+            )
         return ImportControlLookupResult(
-            status="matched" if matches else "not_found", gtip=code, matches=matches,
+            status="matched" if matches else "not_found", gtip=code, direction=direction, matches=matches,
             scope_determination="annex_match" if matches else "no_indexed_match",
             warnings=warnings + temporal_warnings, as_of=_now(),
             as_of_date=as_of or today_iso(), validity_basis=basis, snapshot_validity=validity_info,

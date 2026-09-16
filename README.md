@@ -436,7 +436,19 @@ Beyannameye girecek her kalem bir **emin olma düzeyi** taşır: `verified` (res
 
 AB tarafı ön değerlendirmede `archive_only=True` ile sorgulanır, yani **ücretli Apify aktörü tetiklenmez**; arşivde satır yoksa kademe düşürülür ve kullanıcıya tek kod için ücretli canlı sorguyu kendi başlatma seçeneği (Uzman paketi `foreign_tariff` kilidi) verilir.
 
-İhracatta Türk ithalat vergileri (GV, İGV, EMY, KDV, ÖTV, KKDF, gözetim, damping) hesaplanmaz ve gösterilmez; `deterministic_cost` `null`'dır. İş akışı 18 adımlık ihracat listesine döner (`tr-export-workflow-v1`). İhracatçı birliği kaydı, ihracı yasak/ön izne bağlı mallar, ikili kullanım listeleri ve KDV iadesi **indekslenmemiştir**; bu adımlar her dosyada "bekliyor" kalır ve "kapsam dışıdır" denmez.
+İhracatta Türk ithalat vergileri (GV, İGV, EMY, KDV, ÖTV, KKDF, gözetim, damping) hesaplanmaz ve gösterilmez; `deterministic_cost` `null`'dır. İş akışı 18 adımlık ihracat listesine döner (`tr-export-workflow-v1`).
+
+**İhracat kontrol listeleri (kısmi indeks).** `control_engine` artık yön taşır: `control_snapshots.direction` (korumalı göç, varsayılan `import`) ve `lookup(gtip, direction="import"|"export")`. İhracatta yalnız ihracat listeleri taranır; ithalat ÜGD tebliği ihracat dosyasına **asla** karışmaz.
+
+İki keşif yöntemi bilerek farklıdır ve sebebi ölçülmüştür: ithalat ÜGD tebliğleri tek bir yıllık pakette (31/12, aynı Resmî Gazete) yayımlandığı için tek geniş süpürme yeter — Bedesten'de `"Denetimi Tebliği"` + 31/12 filtresi **24 kayıt** döndürüyor. İhracat listeleri ise farklı yıllara ve farklı mevzuat türlerine (Tebliğ, Cumhurbaşkanı Kararı, Kurum Yönetmeliği) dağılmış; ayrıca Bedesten'in başlık araması **kelime tabanlıdır** — çok kelimeli bir ifade, o kelimelerin hepsi bir başlıkta geçmedikçe sıfır döner (`"İhracat Denetimi Tebliği"` → 0, `"İhracat"` → 108). Bu yüzden her ihracat kaydı `control_sources.json` içinde kendi `discovery.terms` listesini taşır ve eşleşme, başlıkta **tüm** terimlerin geçmesine bakılarak doğrulanır.
+
+`list_kind` üçüncü bir değer aldı: `scope` (kapsamda) · `prohibited` (yasak) · `licence_required` (ön izne bağlı). Bilinmeyen bir ek türü **en zayıf iddiaya** (`scope`) düşer.
+
+**Hazırlık ölçütü yöne göre farklıdır ve bu kasıtlıdır.** İthalatta `ready` **tam kapsam** ister (yıllık ÜGD paketi bütündür; eksik bir tebliğ "kontrole tabi değil" yanlış sonucunu doğurur). İhracatta `ready_export` **kısmi kapsam** yeterlidir — elimizdeki listelerden cevap verilir. Yönler birbirini kilitlemez: bir ihracat belgesi çekilemediğinde ithalat yolu çalışmaya devam eder, bu bir gerileme testiyle korunuyor.
+
+**Her ihracat sonucu, eşleşme olsun olmasın, indeksin kısmi olduğunu yazar.** İhracı yasak ve ön izne bağlı malların tamamı, ikili kullanım ve yaptırım listeleri indekslenmemiştir — bunlar GTİP'e göre değil teknik/askerî kategoriye göre düzenlendiği için GTİP sorgusuna cevap veremezler. Eşleşme çıkmaması yükümlülük olmadığını göstermez. İş akışında `export_prohibitions` ve `export_product_control` eşleşme varsa kanıtlı sonuç yazar, yoksa `pending` kalır; `exporter_registration`, `dual_use_control` ve `vat_exemption_refund` her dosyada `pending` kalır ve "kapsam dışıdır" denmez.
+
+**Yan düzeltme:** birleşik aramada yasak/ön izin satırı artık normal kapsam satırından ayrılıyor — kart `list_kind`, `list_label` ve `direction` taşıyor. Önceden üç sorgunun hiçbiri `list_kind` seçmediği için yasak listesindeki bir satır aramada sıradan bir kapsam satırı gibi görünüyordu.
 
 Menşe/dolaşım belgeleri `countries.py` kayıt defterinden türetilir ama ifade tersine çevrilir: ithalatta belge *ibraz edilir*, ihracatta Türkiye *düzenler* (AB'de fasıla göre A.TR veya EUR.1, Birleşik Krallık ve Kore'de fatura üzeri menşe beyanı, BAE ve Katar'da anlaşmaya özgü belge, tercihsiz ülkede menşe şahadetnamesi). Hedef pazar uygunluk ipuçları (CE/UKCA, tekstil etiketleme, LVD/EMC, ISPM-15) **kullanıcının onayladığı görsel evsaflardan** türetilir ve her ipucu hangi alandan çıktığını gösterir; bunlar ipucudur, bulgu değildir.
 

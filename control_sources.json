@@ -182,6 +182,43 @@
       "title": "Helal Uygunluk Belgeli Ürünlerin İthalat Denetimi Tebliği",
       "category": "helal uygunluk beyanlı ürünler",
       "optional": true
+    },
+    {
+      "code": "IHR/OZON",
+      "direction": "export",
+      "optional": true,
+      "title": "Ozon Tabakasını İncelten Maddelerin ve Florlu Sera Gazlarının İhracına İlişkin Tebliğ",
+      "category": "ihracatta izne tabi maddeler",
+      "scope_annex": 1,
+      "annex_note": "Ek listede yer alan maddelerin ihracı izne tabidir; yükümlülüğün türü ve istisnaları resmî metinden teyit edilmelidir.",
+      "discovery": {
+        "terms": [
+          "İhracına",
+          "Ozon"
+        ],
+        "mevzuat_tur_list": [
+          "TEBLIGLER"
+        ]
+      }
+    },
+    {
+      "code": "IHR/CICEK-SOGANI",
+      "direction": "export",
+      "optional": true,
+      "title": "Doğal Çiçek Soğanlarının İhracat Listesi Hakkında Tebliğ",
+      "category": "ihracatta listeye tabi doğal çiçek soğanları",
+      "scope_annex": 1,
+      "annex_note": "Tebliğ ekleri ihracı yasak, kotaya ve izne tabi türleri ayırır; satırın hangi eke ait olduğu resmî metinden teyit edilmelidir.",
+      "discovery": {
+        "terms": [
+          "Çiçek",
+          "Soğanlarının",
+          "İhracat"
+        ],
+        "mevzuat_tur_list": [
+          "TEBLIGLER"
+        ]
+      }
     }
   ]
 }
