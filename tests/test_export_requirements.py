@@ -226,15 +226,52 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(readiness.status, "needs_check")
         self.assertIn("tek başına beyanname yerine geçmez", readiness.summary)
 
-    def test_ready_only_when_every_mandatory_field_is_verified(self) -> None:
+    def test_ready_needs_official_fields_verified_and_user_fields_filled(self) -> None:
+        # Kapı iki ayrı ölçüt uygular: resmî veriden gelmesi gereken alan `verified`
+        # olmalı, yalnız beyan sahibinin bilebileceği alan ise dolu olmalıdır.
+        profile = destination_profile("Almanya")
+        fields = declaration_fields({"destination_country": "Almanya"}, profile)
+        for field in fields:
+            if not field.mandatory:
+                continue
+            if field.user_supplied:
+                field.value = "beyan sahibi tarafından dolduruldu"
+            else:
+                field.certainty = "verified"
+        readiness = assess_readiness(fields, profile)
+        self.assertEqual(readiness.status, "ready")
+        self.assertEqual(readiness.blocking, [])
+
+    def test_an_empty_user_field_still_blocks_even_when_marked_verified(self) -> None:
+        # Gerileme kilidi: kullanıcı alanına "verified" yazmak onu doldurmuş saymaz.
         profile = destination_profile("Almanya")
         fields = declaration_fields({"destination_country": "Almanya"}, profile)
         for field in fields:
             if field.mandatory:
                 field.certainty = "verified"
+                if field.user_supplied:
+                    field.value = None
         readiness = assess_readiness(fields, profile)
-        self.assertEqual(readiness.status, "ready")
-        self.assertEqual(readiness.blocking, [])
+        self.assertNotEqual(readiness.status, "ready")
+        self.assertIn("Eşya tanımı (ticari)", readiness.blocking)
+
+    def test_importer_identity_is_fillable_by_the_user(self) -> None:
+        # Yapısal çıkmaz düzeltmesi: alan artık kalıcı olarak `unavailable` değil.
+        profile = destination_profile("Almanya")
+        fields = declaration_fields(
+            {"destination_country": "Almanya", "consignee_tax_id": "DE123456789"}, profile
+        )
+        importer = next(item for item in fields if item.key == "importer_identity")
+        self.assertEqual(importer.certainty, "check_required")
+        self.assertEqual(importer.value, "DE123456789")
+        self.assertTrue(importer.user_supplied)
+
+    def test_fields_that_can_never_be_verified_are_not_mandatory(self) -> None:
+        # Hedef ülke KDV'si tasarım gereği asla `verified` olamaz; zorunlu sayılsaydı
+        # hiçbir dosya asla 'hazır' olamaz ve kapı anlamsız kalırdı.
+        fields = declaration_fields({"destination_country": "Almanya"}, destination_profile("Almanya"))
+        vat = next(item for item in fields if item.key == "destination_vat")
+        self.assertFalse(vat.mandatory)
 
 
 class BuildTests(unittest.TestCase):
