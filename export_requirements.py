@@ -42,7 +42,7 @@ from origin_documents import CustomsUnionRoute, customs_union_route
 EXPORTER_ISO2 = "TR"
 
 DataTier = Literal["rates", "nomenclature", "agreement_only", "none"]
-ExportEngine = Literal["eu_taric", "foreign_tariff_uk", "foreign_tariff_ch", "none"]
+ExportEngine = Literal["eu_taric", "foreign_tariff_uk", "foreign_tariff_ch", "foreign_tariff_us", "none"]
 
 # Hedef ülkede açılacak beyanname yanlış doldurulursa ciddi zarar doğar. Bu yüzden her alan
 # üç durumdan birini taşır ve hiçbir tahmin "doğrulandı" sayılmaz:
@@ -208,6 +208,21 @@ def destination_profile(value: Any) -> DestinationProfile:
             tier="rates",
             engine="foreign_tariff_uk",
             badge_text="Hedef ülke vergi verisi: Birleşik Krallık resmî tarife API'sinden okunur.",
+        )
+    if country.iso2 == "US":
+        # Türkiye'nin ABD ile yürürlükte serbest ticaret anlaşması ya da tercihli program
+        # ortaklığı yoktur (2018'de GSP kapsamından çıkarıldı); bu yüzden Türk menşeli eşya
+        # HTS'in "General" (NTR/MFN) sütununu alır. Bu tahmin değil, motorun okuduğu satırda
+        # gösterilen sütunun hangisi olduğunun beyanıdır.
+        return DestinationProfile(
+            **base,
+            tier="rates",
+            engine="foreign_tariff_us",
+            badge_text=(
+                "Hedef ülke vergi verisi: ABD Uyumlaştırılmış Tarife Cetvelinden (USITC HTS) okunur. "
+                "Türkiye'nin ABD ile tercihli ticaret anlaşması yoktur; Türk menşeli eşyaya "
+                "'General' (NTR/MFN) sütunu uygulanır."
+            ),
         )
     if country.iso2 == "CH":
         return DestinationProfile(

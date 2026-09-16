@@ -35,6 +35,19 @@ class DestinationTierTests(unittest.TestCase):
         self.assertEqual(profile.tier, "rates")
         self.assertEqual(profile.engine, "foreign_tariff_uk")
 
+    def test_united_states_uses_the_usitc_engine(self) -> None:
+        profile = destination_profile("Amerika Birleşik Devletleri")
+        self.assertEqual(profile.tier, "rates")
+        self.assertEqual(profile.engine, "foreign_tariff_us")
+        self.assertIn("USITC", profile.badge_text)
+
+    def test_the_us_badge_states_which_column_turkish_goods_take(self) -> None:
+        # Türkiye'nin ABD ile anlaşması yok; kullanıcı hangi sütunun uygulandığını
+        # tahmin etmek zorunda kalmamalı.
+        badge = destination_profile("ABD").badge_text
+        self.assertIn("General", badge)
+        self.assertIn("tercihli ticaret anlaşması yoktur", badge)
+
     def test_switzerland_is_nomenclature_only(self) -> None:
         profile = destination_profile("İsviçre")
         self.assertEqual(profile.tier, "nomenclature")

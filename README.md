@@ -444,7 +444,7 @@ Hedef ülkede açılacak beyanname yanlış doldurulursa ciddi zarar doğar. Bu 
 
 | Veri düzeyi | Ülkeler | Gösterilen |
 |---|---|---|
-| `rates` | AB-27 (TARIC arşivi), Birleşik Krallık (resmî API) | Gerçek oran; kaynak URL'i, tarihi ve SHA-256'sı alanın yanında |
+| `rates` | AB-27 (TARIC arşivi), Birleşik Krallık (resmî API), **ABD (USITC HTS)** | Gerçek oran; kaynak URL'i, tarihi ve SHA-256'sı alanın yanında. ABD'de Türk menşeli eşya "General" (NTR/MFN) sütununu alır — Türkiye'nin ABD ile tercihli anlaşması yoktur |
 | `nomenclature` | İsviçre | Tarife numarası ve eşya tanımı; **İsviçre oran yayımlamaz** |
 | `agreement_only` | Kayıt defterindeki kalan ülkeler | Yalnız anlaşma ve menşe/belge kuralı; oran **gösterilmez** |
 | `none` | Tanınmayan ülke adı | Yalnız Türkiye tarafı ihracat prosedürü |
