@@ -1174,7 +1174,7 @@ function renderMeasureCoverage(coverage) {
     anti_dumping: "Damping / sübvansiyon",
     surveillance: "Gözetim",
     safeguard: "Korunma önlemi",
-    tariff_quota: "Tarife kontenjanı",
+    tariff_quota: "Tarım ürünleri tarife kontenjanı",
     vat: "KDV",
     kkdf: "KKDF",
     sct: "ÖTV",
@@ -3208,7 +3208,7 @@ function renderLiraSummary(summary) {
   `;
 }
 
-const TRADE_MEASURE_LABELS = { anti_dumping: "Damping / sübvansiyon", safeguard: "Korunma önlemleri", surveillance: "Gözetim tebliğleri", tariff_quota: "Tarım tarife kontenjanları", communiques: "İthalat Tebliğleri" };
+const TRADE_MEASURE_LABELS = { anti_dumping: "Damping / sübvansiyon", safeguard: "Korunma önlemleri", surveillance: "Gözetim tebliğleri", tariff_quota: "Tarım ürünleri tarife kontenjanları", communiques: "İthalat Tebliğleri" };
 function tradeSourceText(sources) {
   return Object.entries(sources || {}).map(([kind, meta]) => {
     const state = meta.origin === "synced" ? `resmî eşitleme ${String(meta.fetched_at || "").slice(0, 10)}` : meta.origin === "seed" ? "depo tohum verisi" : "yüklü değil";
@@ -3254,7 +3254,7 @@ function renderTradeMeasures(trade) {
     ["Damping / sübvansiyon", (trade.anti_dumping || []).filter((hit) => hit.origin_match !== false)],
     ["Korunma önlemi", (trade.safeguard || []).filter((hit) => hit.origin_match !== false)],
     ["Gözetim", trade.surveillance || []],
-    ["Tarife kontenjanı", (trade.tariff_quota || []).filter((hit) => hit.origin_match !== false)],
+    ["Tarım ürünleri tarife kontenjanı", (trade.tariff_quota || []).filter((hit) => hit.origin_match !== false)],
   ];
   const rows = groups.flatMap(([label, hits]) => hits.map((hit) => `<tr><td>${escapeHtml(label)}</td><td><code>${escapeHtml(hit.matched_code)}</code> ${escapeHtml(hit.product || "")}</td><td>${escapeHtml(hit.country || "")}</td><td>${escapeHtml(hit.rate_text || "—")} ${escapeHtml(hit.unit || "")}</td><td>${escapeHtml(hit.legal_act || "")}<br><small>${escapeHtml(hit.gazette || "")}${hit.expires ? ` · bitiş ${escapeHtml(hit.expires)}` : ""}${hit.notes ? ` · ${escapeHtml(hit.notes)}` : ""}</small></td><td><span class="measure-status ${escapeHtml(hit.status || "")}">${escapeHtml(statusLabel[hit.status] || hit.status || "")}</span></td></tr>`));
   const hidden = (trade.anti_dumping || []).filter((hit) => hit.origin_match === false).length;

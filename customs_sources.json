@@ -40,6 +40,14 @@
       "note": "Bu resmî sayfa güvenlik sorusu/CAPTCHA içerdiği için otomatik sorgulanmaz; kullanıcı bağlantıyı tarayıcıda açıp manuel doğrular."
     },
     {
+      "id": "industrial_tariff_quota",
+      "title": "Sanayi ürünlerinde açılan tarife kontenjanları",
+      "authority": "T.C. Ticaret Bakanlığı – İthalat Genel Müdürlüğü",
+      "url": "https://ticaret.gov.tr/ithalat/askiya-alma-ve-tarife-kontenjani/sanayi-urunlerinde-acilan-tarife-kontenjanlari",
+      "access_mode": "manual_only",
+      "note": "Sanayi ürünleri tarife kontenjanı kararları GTİP'e göre İNDEKSLENMEMİŞTİR ve bu sorguda taranmamıştır. Sebebi ölçüldü: kararlar Resmî Gazete'de, ek sayfaları gömülü fontla yazılmış PDF olarak yayımlanıyor; aynı karar Bedesten'den de ham PDF olarak dönüyor, yani GTİP tablosu makine tarafından okunamıyor. Rakamları tahminle okumak yanlış bir GTİP üretebileceği için bilerek yapılmıyor. Ürününüz için kontenjan açılıp açılmadığını bu resmî sayfadan doğrulayın."
+    },
+    {
       "id": "customs_value",
       "title": "Gümrük kıymeti",
       "authority": "T.C. Ticaret Bakanlığı",

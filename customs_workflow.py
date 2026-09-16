@@ -486,10 +486,10 @@ class _Builder:
 
         # 14. Korunma / kota
         self._trade_step(
-            "safeguard_quota", "Korunma önlemi / tarife kontenjanı", kinds=("safeguard", "tariff_quota"),
-            user_field=None, label="korunma önlemi/kontenjan",
+            "safeguard_quota", "Korunma önlemi / tarım ürünleri tarife kontenjanı", kinds=("safeguard", "tariff_quota"),
+            user_field=None, label="korunma önlemi/tarım kontenjanı",
             legal_basis="İthalatta Korunma Önlemleri ve Tarife Kontenjanı Kararları",
-            confirm_action="Ek mali yükümlülük oranını ve kontenjan tahsis/bakiye durumunu tescil gününde doğrulayın.",
+            confirm_action="Ek mali yükümlülük oranını ve kontenjan tahsis/bakiye durumunu tescil gününde doğrulayın. Sanayi ürünleri tarife kontenjanları indekslenmemiştir (kararlar makine okunamayan Resmî Gazete PDF'i olarak yayımlanıyor); sanayi ürünlerinde kontenjan açılıp açılmadığını resmî sayfadan ayrıca doğrulayın.",
         )
 
         # 15. Gözetim
