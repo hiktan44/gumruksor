@@ -226,9 +226,9 @@ Ayrıca **birleşik aramanın web arayüzü yoktur**: `/api/search/unified` uygu
 çağrılmıyor, bu yüzden "yürürlük tarihi" alanı iliştirilecek bir arama kutusu da yok. Yetenek bugün API ve
 MCP üzerinden kullanılabilir; arama sayfası ayrı bir iştir.
 
-**Yurt dışı tarife karşılaştırma** (`foreign_tariff.py`, PRD Faz 4): aynı eşya için Türk tarifesinin
-yanında Birleşik Krallık, Avrupa Birliği ve İsviçre tarifesi gösterilir. Üç ülke veriyi aynı biçimde
-yayımlamadığı için ürün bu farkı gizlemez:
+**Yurt dışı tarife karşılaştırma** (`foreign_tariff.py`, PRD Faz 4/8.7): aynı eşya için Türk
+tarifesinin yanında Birleşik Krallık, Avrupa Birliği, İsviçre ve Amerika Birleşik Devletleri
+tarifesi gösterilir. Dört ülke veriyi aynı biçimde yayımlamadığı için ürün bu farkı gizlemez:
 
 * **Birleşik Krallık** — `trade-tariff.service.gov.uk` JSON:API'si anahtarsız ve makine okunurdur.
   **Nomenklatürün tamamı yereldedir**: 21 bölüm (`/goods_nomenclatures/section/{n}`) günlük
@@ -251,6 +251,17 @@ yayımlamadığı için ürün bu farkı gizlemez:
   üzerinden hesap gerektiriyor. Oran **çekilmez**; `data/official/foreign_tariff_links.json`
   kataloğundan sorguyu resmî ekranda hazır açan doğrulanmış derin bağlantılar üretilir ve arayüzde
   "otomatik oran alınamıyor" notu görünür. (AB'nin **EBTI karar verisi** ayrıdır ve alınır — bkz. altta.)
+* **Amerika Birleşik Devletleri (USITC HTS)** — `hts.usitc.gov/reststop/exportList` ucu anahtarsız
+  ve ücretsizdir; BK'nin aksine **tek çağrıda** tüm tarife cetvelini (~36.000 satır, ~13 MB)
+  General/Special/Other sütunlarıyla birlikte döner, bu yüzden ayrı bir emtia başına oran arşivi
+  doldurma döngüsü gerekmez. `us_hts` veri seti günlük eşitlenir (aynı inceleme kapısı ve değişiklik
+  defteri). Special sütunundaki parantez içi kısaltmalar (SPI, ör. `KR`, `AU`, `D`) **ISO ülke kodu
+  değildir**; ABD Genel Not 3(c)'de tanımlı tercihli program göstergeleridir ve motor bunları
+  yorumlamadan ham gösterir. Türkiye'nin ABD ile yürürlükte bir serbest ticaret anlaşması veya
+  tercihli program ortaklığı yoktur (2018'de GSP kapsamından çıkarıldı); bu yüzden **Türk menşeli
+  eşya için geçerli sütun her zaman "General" (NTR/MFN)'dir** ve sonuçta bu açıkça belirtilir.
+  Column 2 (Küba/Kuzey Kore/Rusya/Belarus), ek vergi notu ve kota bilgisi ayrı ölçü satırları olarak
+  gösterilir.
 
 **AB vergi oranları (TARIC)** (`eu_taric.py`): Komisyon TARIC'i yalnız danışma ekranı olarak
 yayımlıyor — o ekran robots politikasıyla otomatik erişime kapalı ve kod içeren GET sorgusuna
@@ -363,12 +374,12 @@ değerlendirmede aday GTİP ile eşleşenler kanıt defterine `ebti_…` kimlikl
 Eşleşme HS-6 düzeyindedir (Türk 12 haneli GTİP'inin ilk 6 hanesi ortaktır; sonraki haneler ulusaldır
 ve eşleştirilmez). **Hiçbir yurt dışı oran `calculate_landed_cost` girdisine aktarılmaz**; Türkiye
 maliyeti yalnız Türk resmî anlık görüntüleriyle hesaplanır. Her dış çağrı
-`security_firewall.validate_outbound_url` ile yalnız `trade-tariff.service.gov.uk` alan adına,
-her yönlendirme adımında yeniden doğrulanarak yapılır. Rotalar: `GET /api/foreign/tariff?gtip=&origin=
-&jurisdiction=uk|eu|ch|all&as_of=` (30/dk, `foreign_tariff` özellik kilidi — Uzman paketi ve üstü) ve
-`GET /api/foreign/tariff/status`; MCP tarafında `compare_foreign_tariff` aracı. UK nomenklatür
+`security_firewall.validate_outbound_url` ile yalnız izinli resmî alan adına (`trade-tariff.service.gov.uk`,
+`hts.usitc.gov`, ...), her yönlendirme adımında yeniden doğrulanarak yapılır. Rotalar: `GET /api/foreign/tariff?gtip=&origin=
+&jurisdiction=uk|eu|ch|us|all&as_of=` (30/dk, `foreign_tariff` özellik kilidi — Uzman paketi ve üstü) ve
+`GET /api/foreign/tariff/status`; MCP tarafında `compare_foreign_tariff` aracı. UK ve ABD nomenklatür
 tanımları hibrit indekse `foreign_tariff` korpusu olarak beslenir, böylece İngilizce ürün ifadeleri de
-sınıflandırma kanıtına girer. Ön değerlendirme kanıt defterine AB/İsviçre/BK resmî sorgu bağlantıları
+sınıflandırma kanıtına girer. Ön değerlendirme kanıt defterine AB/İsviçre/BK/ABD resmî sorgu bağlantıları
 `foreign_…` kimlikli kaynak olarak eklenir (ağ çağrısı yapılmadan).
 
 Sınıflandırma ve ön değerlendirme bu indeksten **dipnotlu kanıt** alır. `classify_product` model

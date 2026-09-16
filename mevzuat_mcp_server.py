@@ -2878,7 +2878,7 @@ async def lookup_trade_measures(
 @app.tool(
     app=True,
     annotations={
-        "title": "Yurt dışı tarifeyi karşılaştır (BK / AB / İsviçre)",
+        "title": "Yurt dışı tarifeyi karşılaştır (BK / AB / İsviçre / ABD)",
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -2888,14 +2888,15 @@ async def lookup_trade_measures(
 async def compare_foreign_tariff(
     gtip: str = Field(..., min_length=6, max_length=20, description="En az 6 haneli GTİP/HS kodu; eşleşme HS-6 düzeyindedir."),
     origin_country: Optional[str] = Field(None, max_length=100, description="Menşe ülke; tercihli oran eşleştirmesi için kullanılır."),
-    jurisdiction: str = Field("all", description="uk | eu | ch | all"),
+    jurisdiction: str = Field("all", description="uk | eu | ch | us | all"),
     as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Sorgu tarihi (YYYY-AA-GG); resmî bağlantılar bu tarihle açılır."),
 ) -> dict:
-    """Compare the Turkish code against the UK tariff (live API) and EU/Swiss official query links.
+    """Compare the Turkish code against the UK/US tariffs (live APIs) and EU/Swiss official query links.
 
-    Birleşik Krallık verisi resmî açık API'den oran düzeyinde çekilir. AB (TARIC/EBTI) ve
-    İsviçre (Tares) makine okunur açık veri yayımlamadığı için yalnız resmî sorgu bağlantısı
-    döner. Hiçbir yabancı oran Türkiye maliyet hesabına aktarılmaz.
+    Birleşik Krallık ve Amerika Birleşik Devletleri verisi resmî açık API'lerden oran
+    düzeyinde çekilir. AB (TARIC/EBTI) ve İsviçre (Tares) makine okunur açık veri
+    yayımlamadığı için yalnız resmî sorgu bağlantısı döner. Hiçbir yabancı oran Türkiye
+    maliyet hesabına aktarılmaz.
     """
     try:
         result = await foreign_tariff_engine.lookup(

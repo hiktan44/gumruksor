@@ -100,6 +100,37 @@
           "authority": "Schweizerische Bundeskanzlei"
         }
       ]
+    },
+    {
+      "code": "us",
+      "label": "Amerika Birleşik Devletleri",
+      "authority": "U.S. International Trade Commission (USITC)",
+      "data_kind": "api",
+      "hosts": ["hts.usitc.gov", "rulings.cbp.gov"],
+      "note": "ABD Uyumlaştırılmış Tarife Cetveli (HTS) anahtarsız açık JSON uçlarıyla yayımlanır; General/Special/Other sütunları resmî satırdan doğrudan okunur.",
+      "links": [
+        {
+          "id": "us_hts_search",
+          "title": "USITC HTS – tarife kodu arama",
+          "url": "https://hts.usitc.gov/search?query={code10}",
+          "requires": ["code10"],
+          "authority": "U.S. International Trade Commission"
+        },
+        {
+          "id": "us_hts_home",
+          "title": "USITC HTS – ana sayfa",
+          "url": "https://hts.usitc.gov/",
+          "authority": "U.S. International Trade Commission"
+        },
+        {
+          "id": "us_cbp_rulings",
+          "title": "CBP CROSS – bağlayıcı sınıflandırma kararı arama",
+          "url": "https://rulings.cbp.gov/search?term={code10}&collection=ALL",
+          "requires": ["code10"],
+          "authority": "U.S. Customs and Border Protection",
+          "note": "ABD'de BTB karşılığı CROSS (Customs Rulings Online Search System) kararıdır."
+        }
+      ]
     }
   ]
 }

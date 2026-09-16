@@ -1,12 +1,21 @@
-"""Yurt dışı tarife karşılaştırma: Birleşik Krallık açık API'si, AB ve İsviçre resmî sorgu bağlantıları.
+"""Yurt dışı tarife karşılaştırma: BK/ABD açık API'leri, AB ve İsviçre resmî sorgu bağlantıları.
 
-Üç yargı alanı verisini aynı biçimde yayımlamıyor; bu modül farkı gizlemek yerine açıkça
+Dört yargı alanı verisini aynı biçimde yayımlamıyor; bu modül farkı gizlemek yerine açıkça
 taşır:
 
 * **Birleşik Krallık** — ``trade-tariff.service.gov.uk`` JSON:API uçları anahtarsız ve
   makine okunur. Fasıl listesi arka planda eşitlenir; pozisyon ve emtia gövdeleri talep
   anında çekilip önbelleğe alınır. Üçüncü ülke vergisi, tercihli oranlar, kota, damping ve
   yasaklar resmî ölçü satırlarından ayrıştırılır.
+* **Amerika Birleşik Devletleri** — ABD Uluslararası Ticaret Komisyonu'nun (USITC)
+  ``hts.usitc.gov/reststop`` uçları da anahtarsız ve makine okunur; tek çağrıda tüm
+  tarifeyi (~36.000 satır, oranlarla birlikte) döndürür, bu yüzden BK'nin aksine ayrı
+  bir "emtia başına ölçü" arşiv doldurma döngüsü gerekmez. "General" (NTR/MFN),
+  "Special" (tercihli program) ve "Other" (Sütun 2) sütunları ile ek vergi/kota notları
+  resmî satırdan aynen aktarılır. Sütundaki kısaltmalar (SPI kodları, ör. KR, AU, D) ISO
+  ülke kodu değildir; Türkiye ABD ile yürürlükte bir tercihli ticaret programı
+  paylaşmadığı için Türk menşeli eşyaya her zaman "General" oranı uygulanır — bu modül
+  bunu tahmin etmez, sabit bir not olarak taşır.
 * **Avrupa Birliği (TARIC/EBTI)** ve **İsviçre (Tares)** — resmî açık uç nokta
   yayımlanmıyor (TARIC danışma ekranı oturum/POST ile çalışır, Tares giriş kontrolüne
   yönlendirir). Bu iki yargı alanı için oran **çekilmez**; yalnız sorguyu resmî ekranda
@@ -78,11 +87,21 @@ DEFAULT_SYNC_INTERVAL = max(3600, int(os.environ.get("FOREIGN_TARIFF_SYNC_SECOND
 DEFAULT_CACHE_DAYS = max(1, int(os.environ.get("FOREIGN_TARIFF_CACHE_DAYS") or 7))
 SYNC_ENABLED = (os.environ.get("FOREIGN_TARIFF_SYNC_ENABLED") or "1").strip().lower() not in {"0", "false", "no", "off"}
 
-JURISDICTIONS: tuple[str, ...] = ("uk", "eu", "ch")
-JURISDICTION_LABELS = {"uk": "Birleşik Krallık", "eu": "Avrupa Birliği", "ch": "İsviçre"}
+JURISDICTIONS: tuple[str, ...] = ("uk", "eu", "ch", "us")
+JURISDICTION_LABELS = {
+    "uk": "Birleşik Krallık", "eu": "Avrupa Birliği", "ch": "İsviçre",
+    "us": "Amerika Birleşik Devletleri",
+}
 UK_DATASET = "uk_chapters"
 UK_NOMENCLATURE_DATASET = "uk_nomenclature"
 CH_DATASET = "ch_nomenclature"
+US_DATASET = "us_hts"
+# USITC HTS reststop'u anahtarsız ve tek çağrıda tüm tarifeyi (~36k satır) veriyor;
+# BK'nin aksine ayrı bir "emtia başına ölçü" arşiv doldurma döngüsüne gerek yok.
+US_BASE_URL = (os.environ.get("US_TARIFF_BASE_URL") or "https://hts.usitc.gov/reststop").rstrip("/")
+US_SITE_URL = "https://hts.usitc.gov"
+_US_HOSTS = frozenset({"hts.usitc.gov"})
+US_SYNC_ENABLED = (os.environ.get("US_TARIFF_SYNC_ENABLED") or "1").strip().lower() not in {"0", "false", "no", "off"}
 # Birleşik Krallık nomenklatürü 21 bölüm hâlinde yayımlanır; tamamı yerel arşive alınır.
 UK_SECTIONS = tuple(range(1, 22))
 # Oranlar yalnız emtia başına yayımlanıyor (toplu uç yok), bu yüzden kalıcı arşive
@@ -159,6 +178,8 @@ MEASURE_KIND_LABELS = {
     "vat": "KDV",
     "excise": "Özel tüketim",
     "supplementary_unit": "Tamamlayıcı ölçü birimi",
+    "column2_duty": "Sütun 2 vergisi (NTR dışı ülkeler)",
+    "additional_duty_note": "Ek vergi notu (bkz. ABD HTS Fasıl 99)",
     "other": "Diğer önlem",
 }
 
@@ -424,6 +445,79 @@ def parse_swiss_nomenclature(text: str, *, limit: int = 40_000) -> list[dict[str
     return rows
 
 
+# --------------------------------------------------------------------------- ABD (USITC HTS)
+
+_SPI_GROUP_RE = re.compile(r"\(([^)]+)\)")
+
+
+def parse_us_special_program_indicators(special: Any) -> list[str]:
+    """``special`` sütunundaki parantez içi program kısaltmalarını (SPI) çıkarır.
+
+    Bu kısaltmalar (ör. ``KR``, ``AU``, ``D``, ``A+``) ISO ülke kodu **değildir**;
+    ABD Genel Not 3(c)'de tanımlı tercihli ticaret programı/anlaşma göstergeleridir.
+    Bu fonksiyon yalnız kodları ayıklar, hangi ülkeyi kapsadığını yorumlamaz — o
+    yorum resmî Genel Not metninden doğrulanmalıdır.
+    """
+    text = str(special or "")
+    codes: list[str] = []
+    for group in _SPI_GROUP_RE.findall(text):
+        for item in group.split(","):
+            code = item.strip()
+            if code and code not in codes:
+                codes.append(code)
+    return codes
+
+
+def parse_us_hts_rows(payload: Any) -> list[dict[str, Any]]:
+    """``/reststop/exportList`` gövdesinden (düz JSON dizisi) tarife satırlarını ayrıştırır.
+
+    ABD listesi BK'nin aksine tek çağrıda hem nomenklatürü hem oranları birlikte verir:
+    her satır ``htsno`` (kod), ``description`` ve General/Special/Other sütunlarını taşır.
+    Kod taşımayan satırlar (bölüm/fasıl başlığı notları) atlanır.
+    """
+    if not isinstance(payload, list):
+        raise ValueError("ABD tarife yanıtı beklenen dizi biçiminde değil.")
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        code = digits_only(item.get("htsno"))
+        if not code or code in seen:
+            continue
+        description = _plain(item.get("description"))
+        if not description:
+            continue
+        seen.add(code)
+        general = _plain(item.get("general"))
+        special = _plain(item.get("special"))
+        other = _plain(item.get("other"))
+        additional = _plain(item.get("additionalDuties") or item.get("addiitionalDuties"))
+        quota = _plain(item.get("quotaQuantity"))
+        footnotes = [
+            _plain(note.get("value")) for note in (item.get("footnotes") or []) if isinstance(note, dict) and note.get("value")
+        ]
+        units = [str(unit) for unit in (item.get("units") or []) if unit]
+        rows.append(
+            {
+                "code": code,
+                "description": description[:600],
+                "indent": int(str(item.get("indent") or 0) or 0),
+                "general": general,
+                "special": special,
+                "other": other,
+                "additional_duties": additional,
+                "quota_quantity": quota,
+                "footnotes": footnotes[:6],
+                "units": units,
+                "special_program_indicators": parse_us_special_program_indicators(special),
+                "has_rate": bool(general or special or other),
+            }
+        )
+    rows.sort(key=lambda row: row["code"])
+    return rows
+
+
 # --------------------------------------------------------------------------- resmî bağlantı kataloğu
 
 _LINK_FIELDS = ("code12", "code10", "code8", "hs6", "heading", "chapter", "area", "date_compact", "date_iso")
@@ -584,6 +678,24 @@ class ForeignTariffStore:
                     PRIMARY KEY (code, measure_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_commodity_measures_code ON commodity_measures(code);
+                -- ABD: BK'nin aksine oran, nomenklatürle aynı tek çağrıda gelir; bu tablo yalnız
+                -- oranı taşır, tanım `nomenclature` tablosunda kalır (aynı snapshot_id ile eşlenir).
+                CREATE TABLE IF NOT EXISTS us_hts_rows (
+                    snapshot_id TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    indent INTEGER NOT NULL DEFAULT 0,
+                    general TEXT NOT NULL DEFAULT '',
+                    special TEXT NOT NULL DEFAULT '',
+                    other TEXT NOT NULL DEFAULT '',
+                    additional_duties TEXT NOT NULL DEFAULT '',
+                    quota_quantity TEXT NOT NULL DEFAULT '',
+                    footnotes_json TEXT NOT NULL DEFAULT '[]',
+                    units_json TEXT NOT NULL DEFAULT '[]',
+                    spi_json TEXT NOT NULL DEFAULT '[]',
+                    has_rate INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (snapshot_id, code)
+                );
+                CREATE INDEX IF NOT EXISTS idx_us_hts_rows_code ON us_hts_rows(code);
                 """
             )
             ensure_review_columns(connection, "snapshots")
@@ -767,6 +879,74 @@ class ForeignTariffStore:
         with self.connect() as connection:
             row = connection.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return str(row["value"]) if row else None
+
+    # ---- ABD (USITC HTS) oran satırları
+    def store_us_rows(self, snapshot_id: str, rows: list[dict[str, Any]]) -> None:
+        """Bir anlık görüntünün oran satırlarını yazar; tanım ayrıca ``nomenclature``'dadır."""
+        with self.connect() as connection:
+            connection.execute("DELETE FROM us_hts_rows WHERE snapshot_id=?", (snapshot_id,))
+            connection.executemany(
+                "INSERT OR REPLACE INTO us_hts_rows(snapshot_id,code,indent,general,special,other,"
+                "additional_duties,quota_quantity,footnotes_json,units_json,spi_json,has_rate) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        snapshot_id, row["code"], int(row.get("indent") or 0),
+                        row.get("general") or "", row.get("special") or "", row.get("other") or "",
+                        row.get("additional_duties") or "", row.get("quota_quantity") or "",
+                        json.dumps(row.get("footnotes") or [], ensure_ascii=False),
+                        json.dumps(row.get("units") or [], ensure_ascii=False),
+                        json.dumps(row.get("special_program_indicators") or [], ensure_ascii=False),
+                        1 if row.get("has_rate") else 0,
+                    )
+                    for row in rows
+                ],
+            )
+
+    @staticmethod
+    def _us_row(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            footnotes = json.loads(row["footnotes_json"])
+        except ValueError:
+            footnotes = []
+        try:
+            units = json.loads(row["units_json"])
+        except ValueError:
+            units = []
+        try:
+            spi = json.loads(row["spi_json"])
+        except ValueError:
+            spi = []
+        return {
+            "code": str(row["code"]), "description": str(row["description"]),
+            "indent": int(row["indent"] or 0), "general": str(row["general"] or ""),
+            "special": str(row["special"] or ""), "other": str(row["other"] or ""),
+            "additional_duties": str(row["additional_duties"] or ""),
+            "quota_quantity": str(row["quota_quantity"] or ""),
+            "footnotes": footnotes, "units": units, "special_program_indicators": spi,
+            "has_rate": bool(row["has_rate"]),
+        }
+
+    def us_rate_candidates(self, snapshot_id: str, hs6: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Oranı olan satırlar arasında HS-6 önekiyle eşleşenler, en özgülden en genele."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT r.*, n.description FROM us_hts_rows r JOIN nomenclature n "
+                "ON n.snapshot_id=r.snapshot_id AND n.kind='us_commodity' AND n.code=r.code "
+                "WHERE r.snapshot_id=? AND r.has_rate=1 AND r.code LIKE ? "
+                "ORDER BY length(r.code) DESC, r.code LIMIT ?",
+                (snapshot_id, f"{hs6}%", int(limit)),
+            ).fetchall()
+        return [self._us_row(row) for row in rows]
+
+    def us_heading_description(self, snapshot_id: str, heading: str) -> str | None:
+        """Oranı olan bir alt satır bulunamazsa 4 haneli pozisyon tanımına düşer."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT description FROM nomenclature WHERE snapshot_id=? AND kind='us_commodity' AND code=? LIMIT 1",
+                (snapshot_id, heading),
+            ).fetchone()
+        return str(row["description"]) if row else None
 
 
 # --------------------------------------------------------------------------- sonuç modelleri
@@ -968,6 +1148,8 @@ class ForeignTariffEngine:
                 ]
                 if CH_SYNC_ENABLED:
                     sources.append(("CH", CH_DATASET, self._sync_swiss_nomenclature))
+                if US_SYNC_ENABLED:
+                    sources.append(("US", US_DATASET, self._sync_us_hts))
                 ran = False
                 for label, dataset, handler in sources:
                     if not force and not self._dataset_due(dataset):
@@ -1044,18 +1226,48 @@ class ForeignTariffEngine:
             title="İsviçre gümrük tarifesi nomenklatürü (BAZG açık verisi)",
         )
 
+    async def _sync_us_hts(self, retrieved_at: str) -> None:
+        """Tüm ABD Uyumlaştırılmış Tarife Cetvelini (HTS) tek çağrıda çeker.
+
+        USITC ``exportList`` ucu anahtarsızdır ve fasıl 01'den 99'a kadar her satırı
+        (oranlarla birlikte) tek gövdede döndürür (~36.000 satır, ~13 MB) — bu yüzden
+        BK'nin bölüm bölüm nomenklatür + emtia başına oran arşivi doldurma deseni
+        burada gereksizdir.
+        """
+        url = f"{US_BASE_URL}/exportList?from=0101&to=9999&format=JSON&styles=false"
+        content, final_url = await self._get_bytes(url, allowed_hosts=_US_HOSTS)
+        try:
+            payload = json.loads(content.decode("utf-8", errors="replace"))
+        except ValueError as exc:
+            raise ValueError("ABD tarife yanıtı çözümlenemedi.") from exc
+        rows = await asyncio.to_thread(parse_us_hts_rows, payload)
+        if len(rows) < 10_000:
+            raise ValueError(f"ABD tarifesi beklenenden küçük döndü ({len(rows)} satır).")
+        nomenclature_rows = [{"code": row["code"], "description": row["description"]} for row in rows]
+        snapshot_id = self._commit_snapshot(
+            dataset=US_DATASET, jurisdiction="us", kind="us_commodity", prefix="us-hts",
+            rows=nomenclature_rows, source_url=final_url, retrieved_at=retrieved_at,
+            title="Amerika Birleşik Devletleri Uyumlaştırılmış Tarife Cetveli (USITC HTS)",
+        )
+        self.store.store_us_rows(snapshot_id, rows)
+
     def _commit_snapshot(
         self, *, dataset: str, jurisdiction: str, kind: str, prefix: str, rows: list[dict[str, Any]],
         source_url: str, retrieved_at: str, title: str,
-    ) -> None:
-        """Yeni bir anlık görüntüyü kaydeder, farkı inceleme kapısından geçirir ve deftere yazar."""
+    ) -> str:
+        """Yeni bir anlık görüntüyü kaydeder, farkı inceleme kapısından geçirir ve deftere yazar.
+
+        Dönen ``snapshot_id``, çağıranın (ör. ABD oran senkronu) aynı anlık görüntüye bağlı
+        ek verileri (duty satırları) yazabilmesi içindir; anlık görüntü zaten varsa bile
+        kimliği döner, böylece çağıran idempotent bir şekilde yeniden yazabilir.
+        """
         digest = _sha256(rows)
         existing = self.store.snapshot_by_sha(dataset, digest)
         if existing is not None:
             if row_review_fields(existing)["status"] == "approved":
                 with self.store.connect() as connection:
                     connection.execute("UPDATE snapshots SET active=(id=?) WHERE dataset=?", (existing["id"], dataset))
-            return
+            return str(existing["id"])
         snapshot_id = f"{prefix}-{digest[:16]}"
         previous = self.store.latest_approved(dataset, exclude=snapshot_id)
         with self.store.connect() as connection:
@@ -1107,6 +1319,7 @@ class ForeignTariffEngine:
         )
         if decision.pending:
             logger.info("%s anlık görüntüsü %s editör onayı bekliyor: %s", title, snapshot_id, "; ".join(decision.reasons))
+        return snapshot_id
 
     async def warm_measures_archive(self, *, limit: int | None = None) -> int:
         """Arşivde eksik/yaşlanmış emtia oranlarını kademeli doldurur; kaç kod alındığını döndürür."""
@@ -1160,7 +1373,7 @@ class ForeignTariffEngine:
             item for item in JURISDICTIONS if item == str(jurisdiction).lower()
         )
         if not selected:
-            raise ValueError("Desteklenen yargı alanları: uk, eu, ch (veya all).")
+            raise ValueError("Desteklenen yargı alanları: uk, eu, ch, us (veya all).")
         iso2 = origin_iso2(origin)
         result = ForeignTariffLookup(
             gtip=code, hs6=code[:6], origin_country=(str(origin).strip() or None) if origin else None,
@@ -1173,6 +1386,8 @@ class ForeignTariffEngine:
                 result.results.append(await self._uk_result(code, iso2, as_of))
             elif item == "ch":
                 result.results.append(self._swiss_result(code, iso2, as_of))
+            elif item == "us":
+                result.results.append(self._us_result(code, iso2, as_of))
             else:
                 result.results.append(self._link_result(item, code, iso2, as_of))
         return result
@@ -1315,6 +1530,91 @@ class ForeignTariffEngine:
         )
         return outcome
 
+    def _us_result(self, code: str, iso2: str | None, as_of: str | None) -> JurisdictionResult:
+        """ABD: HTS satırından General/Special/Other sütunları ve ek vergi/kota notları.
+
+        Türkiye'nin ABD ile yürürlükte bir serbest ticaret anlaşması veya tercihli program
+        ortaklığı yoktur (USTR'nin yürürlükteki anlaşmalar listesinde Türkiye yer almaz);
+        bu yüzden Türk menşeli eşya için geçerli sütun her zaman "General" (NTR/MFN)'dir.
+        Diğer menşeler için Special sütunundaki program kısaltmaları (SPI) ham olarak
+        gösterilir — bu kodlar ISO ülke kodu değildir, hangi ülkeyi kapsadığı resmî
+        Genel Not 3(c) metninden ayrıca doğrulanmalıdır.
+        """
+        record = self.link_catalog.get("us", {})
+        outcome = JurisdictionResult(
+            jurisdiction="us", label=JURISDICTION_LABELS["us"], data_kind="api",
+            authority=str(record.get("authority") or "U.S. International Trade Commission (USITC)"),
+            links=build_links(record, code, iso2, as_of) if record else [],
+            notes=[COMPARABILITY_NOTE],
+        )
+        active = self.store.active_snapshot(US_DATASET)
+        if active is None:
+            outcome.match_quality = "unavailable"
+            outcome.notes.append("ABD tarife verisi henüz eşitlenmedi.")
+            return outcome
+        hs6, heading = code[:6], code[:4]
+        candidates = self.store.us_rate_candidates(active["id"], hs6)
+        if not candidates:
+            description = self.store.us_heading_description(active["id"], heading)
+            outcome.match_quality = "heading_only" if description else "not_found"
+            outcome.description = description
+            outcome.source_url = str(active["source_url"])
+            outcome.sha256 = str(active["sha256"])
+            outcome.retrieved_at = str(active["retrieved_at"])
+            outcome.notes.append(
+                f"ABD tarifesinde {hs6} altında oranlı bir istatistik satırı bulunamadı."
+                if description
+                else f"ABD tarifesinde {heading} pozisyonu bulunamadı."
+            )
+            return outcome
+        outcome.match_quality = "exact_hs6"
+        outcome.candidates = [{"code": row["code"], "description": row["description"]} for row in candidates[:12]]
+        chosen = candidates[0]
+        outcome.matched_code = chosen["code"]
+        outcome.description = chosen["description"]
+        outcome.third_country_duty = chosen["general"] or None
+        outcome.source_url = str(active["source_url"])
+        outcome.sha256 = str(active["sha256"])
+        outcome.retrieved_at = str(active["retrieved_at"])
+        measures: list[dict[str, Any]] = []
+        if chosen["other"]:
+            measures.append({
+                "kind": "column2_duty", "measure_type": MEASURE_KIND_LABELS["column2_duty"],
+                "geographical_area": "Küba, Kuzey Kore, Rusya, Belarus (Sütun 2)",
+                "duty_expression": chosen["other"],
+            })
+        if chosen["additional_duties"]:
+            measures.append({
+                "kind": "additional_duty_note", "measure_type": MEASURE_KIND_LABELS["additional_duty_note"],
+                "geographical_area": "", "duty_expression": chosen["additional_duties"],
+            })
+        if chosen["quota_quantity"]:
+            measures.append({
+                "kind": "quota", "measure_type": MEASURE_KIND_LABELS["quota"],
+                "geographical_area": "", "duty_expression": chosen["quota_quantity"],
+            })
+        outcome.measures = measures
+        spi = chosen.get("special_program_indicators") or []
+        if iso2 == "TR":
+            outcome.notes.append(
+                "Türkiye, ABD'nin yürürlükteki serbest ticaret anlaşmaları veya tercihli program "
+                "ortaklıkları arasında yer almaz (USTR yürürlükteki anlaşmalar listesi); Türk menşeli "
+                f"eşya bu satırda 'General' (NTR/MFN) oranını alır: {chosen['general'] or '—'}."
+            )
+        elif spi:
+            outcome.origin_preference = {
+                "special_program_indicators": spi, "duty_expression": chosen["special"],
+                "geographical_area": "", "note": "SPI kodu — ISO ülke kodu değildir.",
+            }
+            outcome.notes.append(
+                f"Special sütunu program kısaltmaları taşıyor ({', '.join(spi[:12])}); bunlar ISO ülke "
+                "kodu değildir, menşe ülkenizin kapsamda olup olmadığı ABD Genel Not 3(c) metninden "
+                "doğrulanmalıdır."
+            )
+        if chosen["footnotes"]:
+            outcome.notes.append("Resmî dipnot: " + " | ".join(chosen["footnotes"][:3]))
+        return outcome
+
     def _link_result(self, jurisdiction: str, code: str, iso2: str | None, as_of: str | None) -> JurisdictionResult:
         record = self.link_catalog.get(jurisdiction, {})
         notes = [str(record.get("note") or "")] if record.get("note") else []
@@ -1335,6 +1635,7 @@ class ForeignTariffEngine:
         active = self.store.active_snapshot(UK_DATASET)
         nomenclature = self.store.active_snapshot(UK_NOMENCLATURE_DATASET)
         swiss = self.store.active_snapshot(CH_DATASET)
+        us = self.store.active_snapshot(US_DATASET)
         with self.store.connect() as connection:
             pending = connection.execute(
                 "SELECT COUNT(*) FROM snapshots WHERE status='pending_review'"
@@ -1350,6 +1651,8 @@ class ForeignTariffEngine:
             **self.store.archive_stats(),
             "swiss_ready": bool(swiss),
             "swiss_code_count": int(swiss["item_count"]) if swiss else 0,
+            "us_ready": bool(us),
+            "us_code_count": int(us["item_count"]) if us else 0,
             "active_snapshot": str(active["id"]) if active else None,
             "active_sha256": str(active["sha256"]) if active else None,
             "last_checked_at": self.store.get_metadata("last_checked_at"),
@@ -1358,7 +1661,9 @@ class ForeignTariffEngine:
                 {
                     "code": item,
                     "label": JURISDICTION_LABELS[item],
-                    "data_kind": "api" if item == "uk" else ("nomenclature" if item == "ch" and swiss else "links"),
+                    "data_kind": (
+                        "api" if item in {"uk", "us"} else ("nomenclature" if item == "ch" and swiss else "links")
+                    ),
                     "authority": str((self.link_catalog.get(item) or {}).get("authority") or ""),
                 }
                 for item in JURISDICTIONS
@@ -1496,6 +1801,7 @@ class ForeignTariffEngine:
             (UK_DATASET, "UK Fasıl", UK_SITE_URL),
             (UK_NOMENCLATURE_DATASET, "UK tarife kodu", UK_SITE_URL),
             (CH_DATASET, "İsviçre tarife no.", CH_SOURCE_PAGE),
+            (US_DATASET, "ABD HTS kodu", US_SITE_URL),
         ):
             active = self.store.active_snapshot(dataset)
             if active is None:
@@ -1526,6 +1832,8 @@ class ForeignTariffEngine:
 __all__ = [
     "CH_DATASET",
     "UK_NOMENCLATURE_DATASET",
+    "US_DATASET",
+    "US_BASE_URL",
     "COMPARABILITY_NOTE",
     "SYNC_ENABLED",
     "ForeignTariffEngine",
@@ -1548,5 +1856,7 @@ __all__ = [
     "parse_heading",
     "parse_section_nomenclature",
     "parse_swiss_nomenclature",
+    "parse_us_hts_rows",
+    "parse_us_special_program_indicators",
     "summarise_commodity",
 ]
