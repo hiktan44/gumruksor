@@ -44,6 +44,7 @@ function switchTab(tabId) {
   else if (tabId === "logs") loadLogs();
   else if (tabId === "changes") loadChanges();
   else if (tabId === "reviews") loadReviews();
+  else if (tabId === "storage") loadStorage();
 }
 
 window.switchTab = switchTab;
@@ -777,6 +778,111 @@ $("#adminConsultants").addEventListener("click", async (event) => {
     toast(error.message);
   } finally {
     button.disabled = false;
+  }
+});
+
+// TAB: STORAGE & BACKUP
+const formatBytes = (value) => {
+  const bytes = Number(value || 0);
+  if (!bytes) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+};
+
+const formatMoment = (value) =>
+  value
+    ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+    : "—";
+
+function renderStorage(data) {
+  const disk = data.disk || {};
+  $("#storageDisk").innerHTML = disk.available
+    ? `Disk: <strong>%${disk.percent_used}</strong> dolu · ${formatBytes(disk.used_bytes)} / ${formatBytes(
+        disk.total_bytes
+      )} · boş <strong>${formatBytes(disk.free_bytes)}</strong> · veritabanları ${formatBytes(
+        data.data_bytes
+      )} · yedekler ${formatBytes(data.backup_bytes)}`
+    : "Disk kullanımı okunamadı.";
+
+  const warnings = data.warnings || [];
+  $("#storageWarnings").innerHTML = warnings.length
+    ? warnings.map((item) => `<p class="status-badge status-pending">${escapeHtml(item)}</p>`).join("")
+    : "";
+
+  $("#storageDatabases").innerHTML = (data.databases || [])
+    .map(
+      (row) => `
+      <tr>
+        <td><b>${escapeHtml(row.label)}</b><br><small>${escapeHtml(row.filename)}</small></td>
+        <td>${row.exists ? formatBytes(row.total_bytes) : "<small>henüz yok</small>"}</td>
+        <td><small>${escapeHtml(formatMoment(row.modified_at))}</small></td>
+        <td><small>${row.replaceable ? "Resmî kaynaktan ücretsiz yeniden kurulur" : "⚠️ Geri getirilemez"}<br>${escapeHtml(
+          row.note
+        )}</small></td>
+        <td>${row.backed_up ? "✅" : "—"}</td>
+      </tr>`
+    )
+    .join("");
+
+  const backup = data.backup || {};
+  const lastRun = backup.last_run;
+  $("#storageBackupNote").textContent = [
+    backup.enabled ? "Otomatik yedek açık" : "Otomatik yedek kapalı",
+    `her ${Math.round((backup.interval_seconds || 0) / 3600)} saatte bir, veritabanı başına ${backup.keep} kopya saklanır`,
+    lastRun ? `son koşu ${formatMoment(lastRun.at)}` : "henüz otomatik koşu olmadı",
+    backup.note || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const backups = data.backups || [];
+  $("#storageBackups").innerHTML = backups.length
+    ? backups
+        .map(
+          (row) => `
+      <tr>
+        <td>${escapeHtml(row.dataset)}</td>
+        <td>${escapeHtml(formatMoment(row.created_at))}</td>
+        <td>${formatBytes(row.bytes)}</td>
+        <td><a href="/api/admin/storage/backup/${encodeURIComponent(row.name)}" download>indir</a></td>
+      </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="4">Henüz yedek yok. "Şimdi yedek al" ile ilk kopyayı oluşturabilirsiniz.</td></tr>';
+}
+
+async function loadStorage() {
+  try {
+    renderStorage(await json("/api/admin/storage"));
+  } catch (error) {
+    $("#storageDisk").textContent = error.message;
+  }
+}
+
+$("#runBackupBtn").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "Yedek alınıyor…";
+  try {
+    const data = await json("/api/admin/storage", { method: "POST" });
+    renderStorage(data);
+    const last = data.backup?.last_run;
+    toast(
+      last?.errors?.length
+        ? `Yedek kısmen alındı: ${last.errors[0]}`
+        : `Yedek alındı (${last?.created?.length || 0} veritabanı).`
+    );
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Şimdi yedek al";
   }
 });
 

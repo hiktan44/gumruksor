@@ -40,6 +40,7 @@
       <button type="button" class="admin-tab-btn" data-tab="consultants">👨‍💼 Danışmanlar</button>
       <button type="button" class="admin-tab-btn" data-tab="changes">🗂️ Veri Değişiklikleri</button>
       <button type="button" class="admin-tab-btn" data-tab="reviews">🛡️ İnceleme Kuyruğu <span class="tab-badge" id="reviewBadge" hidden>0</span></button>
+      <button type="button" class="admin-tab-btn" data-tab="storage">💾 Depolama & Yedek</button>
     </nav>
 
     <!-- TAB 1: OVERVIEW -->
@@ -352,6 +353,50 @@
               </tr>
             </thead>
             <tbody id="adminConsultants"><tr><td colspan="5">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="admin-tab-content" id="tab-storage">
+      <section class="results admin-section">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Veri Diski ve Yedekler</h2>
+            <p>Tüm kalıcı veri sunucudaki SQLite dosyalarında durur. Disk dolarsa eşitleme veri yazamaz; bu yüzden doluluk burada görünür. Yedek yalnız <strong>yeniden indirilemeyen</strong> veritabanları için alınır (hesaplar, ücretli AB TARIC arşivi, değişiklik defteri, geçmiş anlık görüntüler) — diğerleri resmî kaynaktan ücretsiz yeniden kurulur.</p>
+          </div>
+          <button type="button" class="btn-primary" id="runBackupBtn">Şimdi yedek al</button>
+        </header>
+        <div id="storageDisk" class="empty-note">Yükleniyor…</div>
+        <div id="storageWarnings"></div>
+        <h3>Veritabanları</h3>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Veritabanı</th>
+                <th>Boyut</th>
+                <th>Son değişiklik</th>
+                <th>Kaybolursa</th>
+                <th>Yedekleniyor</th>
+              </tr>
+            </thead>
+            <tbody id="storageDatabases"><tr><td colspan="5">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+        <h3>Yedekler</h3>
+        <p class="empty-note" id="storageBackupNote"></p>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Veritabanı</th>
+                <th>Alındığı zaman</th>
+                <th>Boyut</th>
+                <th>İndir</th>
+              </tr>
+            </thead>
+            <tbody id="storageBackups"><tr><td colspan="4">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </section>

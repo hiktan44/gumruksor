@@ -61,6 +61,7 @@ from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
+from storage import StorageService
 from classification_evidence import (
     ClassificationEvidenceEngine,
     ClassificationEvidenceSearchResult,
@@ -140,6 +141,8 @@ customs_advisor_service = CustomsAdvisor(
     control_engine=control_engine,
     classification_engine=classification_engine,
 )
+# Veri diskinin doluluğu ve yeri doldurulamaz veritabanlarının dönüşümlü yedeği.
+storage_service = StorageService()
 # Tool-calling assistant (PRD Faz 3.3): the LLM orchestrates these deterministic engines only.
 customs_assistant = CustomsAssistant(
     tools=build_assistant_tools(
@@ -168,6 +171,10 @@ if FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED:
 if EU_TARIC_FILL_ENABLED:
     # AB oranları kod × ülke başına ücretlidir; döngü aylık harcama tavanına kadar ilerler.
     BACKGROUND_LOOPS.append(("eu-taric-fill", eu_taric_engine.fill_loop))
+if storage_service.enabled:
+    # Yeri doldurulamaz veritabanları (hesaplar, ücretli AB TARIC arşivi, defter,
+    # geçmiş anlık görüntüler) günlük olarak aynı diskte yedeklenir.
+    BACKGROUND_LOOPS.append(("storage-backup", storage_service.periodic_backup_loop))
 
 
 async def backfill_change_ledger() -> None:

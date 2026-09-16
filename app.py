@@ -57,6 +57,7 @@ from mevzuat_mcp_server import (
     foreign_tariff_engine,
     hybrid_index,
     review_service,
+    storage_service,
     tariff_engine,
     ticaret_client,
     trade_measure_engine,
@@ -68,6 +69,7 @@ from countries import COUNTRIES, PENDING_AGREEMENTS
 from declaration_draft import build_declaration_draft, draft_to_csv, draft_to_xml
 from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
+from storage import resolve_backup_file
 from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
 from shipping_documents import decode_document_data_url, extract_shipping_document, pdf_page_count, rasterize_pdf_pages
@@ -3161,6 +3163,56 @@ async def web_admin_eu_taric_fill(request: Request):
     return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
+@mcp.custom_route("/api/admin/storage", methods=["GET", "POST"])
+async def web_admin_storage(request: Request):
+    """Veri diski ve yedekler: GET rapor, POST hemen yedek al (yönetici)."""
+    limited = _rate_limit_response(request, "admin-storage", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    if request.method == "POST":
+        try:
+            await storage_service.backup_now()
+        except Exception:
+            logger.exception("Yedek alınamadı")
+            return JSONResponse({"error": "Yedek alınamadı."}, status_code=500)
+    try:
+        report = await asyncio.to_thread(storage_service.report)
+    except Exception:
+        logger.exception("Depolama raporu okunamadı")
+        return JSONResponse({"error": "Depolama durumu okunamadı."}, status_code=500)
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/admin/storage/backup/{name}", methods=["GET"])
+async def web_admin_storage_backup_download(request: Request):
+    """Bir yedeği indirir: sunucu dışına kopya almanın ücretsiz yolu (yönetici).
+
+    Yedek dosyası kullanıcı hesaplarını ve kanıt dosyalarını içerir; bu yüzden
+    yalnız yönetici erişir ve dosya adı ``resolve_backup_file`` ile doğrulanır
+    (yedek dizininin dışına çıkan hiçbir ad kabul edilmez).
+    """
+    limited = _rate_limit_response(request, "admin-storage-download", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    path = resolve_backup_file(None, request.path_params.get("name", ""))
+    if path is None:
+        return JSONResponse({"error": "Yedek bulunamadı."}, status_code=404)
+    return FileResponse(
+        path,
+        media_type="application/vnd.sqlite3",
+        filename=path.name,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @mcp.custom_route("/api/search/unified", methods=["GET", "POST"])
 async def web_unified_search(request: Request):
     """Tarife, TAREKS/TSE denetimleri, ÖTV ve resmi mevzuat üzerinde birleşik arama."""
@@ -3865,6 +3917,22 @@ async def health_check(request):
     foreign_status = foreign_tariff_engine.status()
     ebti_status = ebti_engine.status()
     eu_taric_status = eu_taric_engine.status()
+    # Depolama yalnız özet sayılarla: /health herkese açık, dosya adı ve yol verilmez.
+    # Hata durumu sağlık kontrolünü bozmamalı; Coolify bu ucu canlılık için okuyor.
+    try:
+        storage_report = storage_service.report()
+        storage_fields = {
+            "disk_percent_used": storage_report["disk"]["percent_used"],
+            "disk_free_bytes": storage_report["disk"]["free_bytes"],
+            "data_bytes": storage_report["data_bytes"],
+            "backup_bytes": storage_report["backup_bytes"],
+            "backup_enabled": storage_report["backup"]["enabled"],
+            "last_backup_at": (storage_report["backup"]["last_run"] or {}).get("at"),
+            "storage_warnings": len(storage_report["warnings"]),
+        }
+    except Exception:  # noqa: BLE001 – depolama raporu sağlık kontrolünü düşürmez
+        logger.exception("Depolama raporu okunamadı")
+        storage_fields = {"disk_percent_used": None, "storage_warnings": None}
     return JSONResponse({
         "status": "healthy",
         "service": "Mevzuat MCP Server",
@@ -3890,6 +3958,7 @@ async def health_check(request):
         "eu_taric_fill_enabled": (eu_taric_status.get("fill") or {}).get("enabled", False),
         "eu_taric_fill_pending": (eu_taric_status.get("fill") or {}).get("pending_pairs", 0),
         "eu_taric_fill_total": (eu_taric_status.get("fill") or {}).get("total_pairs", 0),
+        **storage_fields,
         "review_mode": review_service.policy.mode,
         "pending_reviews": (
             tariff_status.pending_review_count
