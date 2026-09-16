@@ -289,8 +289,11 @@ _MFN_CERT_EXPORT = ExportDocument(
 _GSP_NOTE = ExportDocument(
     code="GSP_ORIGIN",
     name="Form A / REX menşe belgesi (koşullu)",
-    applicability="Hedef ülke Türkiye'ye yönelik bir genel tercihler sistemi (GSP) uyguluyorsa gerekebilir.",
-    note="GSP yararlanıcı tablomuz yok; hedef ülkenin GSP uygulayıp uygulamadığı resmî kaynaktan doğrulanmalıdır.",
+    applicability="Yalnız hedef ülke Türkiye'yi kendi genel tercihler sisteminin (GSP) yararlanıcısı "
+    "sayıyorsa düzenlenir; aksi hâlde bu belge ihracatçıdan istenmez.",
+    note="Bir ülkenin hangi ülkelere GSP tanıdığı o ülkenin KENDİ mevzuatıdır ve ürün/dönem bazında "
+    "değişir; Türkiye'de bunu gösteren resmî bir kayıt defteri yayımlanmadığı için burada tablo "
+    "tutulmuyor. Alıcınızdan veya hedef ülkenin gümrük idaresinden teyit alın.",
     source_url=TICARET_FTA_URL,
 )
 
