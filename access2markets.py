@@ -184,6 +184,11 @@ _RATE_LIMIT_BASE_SECONDS = max(1.0, _env_float("A2M_RATE_LIMIT_BASE_SECONDS", 5.
 A2M_MAX_DELAY_SECONDS = max(1.0, _env_float("A2M_MAX_DELAY_SECONDS", 30.0))
 # Art arda bu kadar temiz turdan sonra hız kademeli olarak geri açılır.
 A2M_PACE_RECOVER_ROUNDS = max(1, _env_int("A2M_PACE_RECOVER_ROUNDS", 3))
+# Devre kesici: art arda bu kadar tur tamamen engellenirse toplu dolum uzun süre
+# duraklatılır. Engellenmiş bir kaynağı dövmeye devam etmek yasağı uzatmaktan başka
+# işe yaramaz; canlıda 30 saniyede bir tek istek bile 429 aldı.
+A2M_BLOCK_ROUNDS = max(1, _env_int("A2M_BLOCK_ROUNDS", 3))
+A2M_BLOCK_PAUSE_SECONDS = max(60.0, _env_float("A2M_BLOCK_PAUSE_SECONDS", 21600.0))
 
 
 class A2MHttpError(RuntimeError):
@@ -458,6 +463,8 @@ class Access2MarketsEngine:
         # Ortak soğuma penceresi: bir işçi 429 görünce hepsi bekler. Tek tek beklemek,
         # diğer işçilerin aynı anda sınırı zorlamasını engellemiyordu.
         self._cooldown_until = 0.0
+        self._blocked_rounds = 0
+        self._fill_paused_until = 0.0
         self.destination = normalise_iso2(destination) or "DE"
         self.origins = tuple(dict.fromkeys(normalise_iso2(o) for o in origins if normalise_iso2(o))) or ("TR",)
         self._errors: list[str] = []
@@ -788,6 +795,10 @@ class Access2MarketsEngine:
             code, origin_iso, destination_iso,
             summary=summary, taxes=taxes, documents=documents, source_url=url, status="ok",
         )
+        # Tek bir başarı, kaynağın yeniden erişilebilir olduğunun kanıtıdır: devre
+        # kesici kalkar ve toplu dolum bir sonraki turda kaldığı yerden devam eder.
+        self._blocked_rounds = 0
+        self._fill_paused_until = 0.0
         result.status = "ok"
         result.summary = summary
         result.taxes = taxes
@@ -941,6 +952,7 @@ class Access2MarketsEngine:
             "concurrency": self.concurrency,
             "effective_concurrency": self._effective_concurrency,
             "delay_seconds": self._delay_seconds,
+            "paused_seconds": max(0, round(self._fill_paused_until - _monotonic())),
             "retry_attempts": self.retry_attempts,
             "refresh_days": self.refresh_days,
             "cost_usd": 0.0,
@@ -952,6 +964,18 @@ class Access2MarketsEngine:
         if not self.fill_enabled or not self.enabled:
             return {"status": "disabled", "processed": 0, "ok": 0, "not_found": 0}
         async with self._fill_lock:
+            if _monotonic() < self._fill_paused_until:
+                # Kullanıcı sorgusu yolu AÇIK kalır: tek bir sorgu hem meşrudur hem de
+                # yasağın kalkıp kalkmadığını ölçen sonda görevi görür.
+                return {
+                    "status": "paused",
+                    "processed": 0,
+                    "ok": 0,
+                    "not_found": 0,
+                    "failed": 0,
+                    "paused_seconds": round(self._fill_paused_until - _monotonic()),
+                    "reason": "Kaynak bu sunucuya 429 döndürüyor; toplu dolum duraklatıldı.",
+                }
             origin = self.origins[0]
             destination = self.destination
             codes = self._pending_codes(int(limit or self.fill_batch), origin, destination)
@@ -990,6 +1014,7 @@ class Access2MarketsEngine:
                 else:
                     failed += 1
             self._adjust_pace()
+            self._note_round_outcome(ok)
             return {
                 "status": "complete" if not codes else "ran",
                 "processed": processed,
@@ -997,11 +1022,36 @@ class Access2MarketsEngine:
                 "not_found": missing,
                 "failed": failed,
                 "rate_limited": self._rate_limited,
+                "paused_seconds": max(0, round(self._fill_paused_until - _monotonic())),
                 "delay_seconds": self._delay_seconds,
                 "concurrency": self._effective_concurrency,
                 "remaining": max(0, len(self._pending_codes(10_000, origin, destination))),
             }
 
+
+
+    def _note_round_outcome(self, ok: int) -> None:
+        """Art arda tamamen engellenen turlardan sonra dolumu duraklatır.
+
+        Engellenmiş bir kaynağı dövmeye devam etmek yasağı uzatmaktan başka işe
+        yaramaz: canlıda hız tavana vurduğu hâlde (30 sn'de bir istek, tek işçi)
+        arşive tek kayıt eklenmedi, hepsi 429 döndü. O noktada doğru davranış
+        durmak ve sonra yeniden yoklamaktır.
+        """
+        if ok:
+            self._blocked_rounds = 0
+            self._fill_paused_until = 0.0
+            return
+        if not self._rate_limited:
+            return
+        self._blocked_rounds += 1
+        if self._blocked_rounds >= A2M_BLOCK_ROUNDS:
+            self._fill_paused_until = _monotonic() + A2M_BLOCK_PAUSE_SECONDS
+            self._blocked_rounds = 0
+            logger.warning(
+                "Access2Markets toplu dolumu %s saniye duraklatıldı (kaynak 429 döndürüyor).",
+                int(A2M_BLOCK_PAUSE_SECONDS),
+            )
 
     def _adjust_pace(self) -> None:
         """Kaynağın tepkisine göre hızı ayarlar (``eu_taric`` chunk deseninin aynısı).

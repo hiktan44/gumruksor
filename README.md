@@ -437,6 +437,22 @@ sınırı zorlamasını engellemiyordu). 429 dışındaki geçici hatalarda (5xx
 deneme aynen sürer. Tur boyu da küçültüldü (200 → 50): tur bitmeden hız ayarı
 güncellenmiyor ve durum görünmüyordu.
 
+**Devre kesici: engellenmiş kaynağı dövmeye devam etme.** Uyarlanabilir hız canlıda
+tavana vurdu (`delay 30.0`, `effective_concurrency 1`) ve **buna rağmen tek kayıt
+eklenmedi** — 30 saniyede bir tek istek bile 429 aldı. Bu artık "hız sınırı" değil,
+bu çıkışa uygulanan bir engel; ısrar etmek yasağı uzatmaktan başka işe yaramaz.
+Bu yüzden art arda `A2M_BLOCK_ROUNDS` (3) tur **tamamen** engellenirse toplu dolum
+`A2M_BLOCK_PAUSE_SECONDS` (6 saat) duraklatılır ve o süre boyunca kaynağa **hiç
+istek gitmez**. **Kullanıcı sorgusu yolu açık kalır**: tek bir sorgu hem meşrudur hem
+de yasağın kalkıp kalkmadığını ölçen sonda görevi görür — ilk başarılı sorgu devre
+kesiciyi kaldırır ve dolum kaldığı yerden devam eder. Durum `fill.paused_seconds`
+alanından okunur.
+
+**Dürüst sonuç:** ücretsiz kaynak *koddan* değil *ağdan* sınırlıdır. Aynı istekler
+başka bir çıkıştan 24/24 başarılı; bu sunucudan şu an hiçbiri geçmiyor. Bu yüzden
+ücretli AB TARIC arşivi **yerinde kalmalı**: ihracat dosyası ücretsiz kaynak
+cevapsız kaldığında ona düşer ve kullanıcı oransız kalmaz.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
