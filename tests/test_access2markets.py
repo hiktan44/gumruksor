@@ -608,13 +608,23 @@ class RetryTests(unittest.TestCase):
 
         return httpx.MockTransport(handler)
 
-    def test_a_rate_limit_is_retried_and_then_succeeds(self) -> None:
+    def test_a_rate_limit_is_not_retried_inline(self) -> None:
+        """429 tur içinde yeniden DENENMEZ — canlı ölçüm bunun zarar verdiğini gösterdi.
+
+        Yeniden deneme eklendiğinde her kod 3 deneme × geri çekilme ile ~30 saniyeye
+        çıktı, tur saatlerce sürdü, hiçbir şey kaydedilmedi ve hız ayarı tur bitene
+        kadar güncellenmediği için sistem kendini düzeltemedi. Doğrusu: hemen yavaşla,
+        kodu bırak, bir sonraki turda yeniden dene.
+        """
         calls: list = []
         with tempfile.TemporaryDirectory() as tmp:
             engine = _engine(tmp, transport=self._counting_transport(429, calls))
             result = asyncio.run(engine.lookup("6109100000", with_extras=False))
-        self.assertEqual(result.status, "ok")
-        self.assertEqual(len(calls), 3)
+            self.assertEqual(result.status, "unavailable")
+            self.assertEqual(len(calls), 1, "429'da ısrar etmek sınırı daha da kapatır")
+            self.assertTrue(engine._rate_limited)
+            self.assertGreater(engine._delay_seconds, 0.5, "429 anında yavaşlatmalı")
+            self.assertEqual(engine._effective_concurrency, 1)
 
     def test_a_server_error_is_retried(self) -> None:
         calls: list = []
@@ -622,6 +632,26 @@ class RetryTests(unittest.TestCase):
             engine = _engine(tmp, transport=self._counting_transport(503, calls))
             result = asyncio.run(engine.lookup("6109100000", with_extras=False))
         self.assertEqual(result.status, "ok")
+
+    def test_a_cooldown_window_holds_every_worker_not_just_one(self) -> None:
+        # Tek tek beklemek, diğer işçilerin aynı anda sınırı zorlamasını engellemiyordu.
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport())
+            engine._cooldown_until = 0.0
+            engine._note_rate_limit(SimpleNamespace(headers={"retry-after": "3"}))
+            first = engine._cooldown_until
+            engine._note_rate_limit(SimpleNamespace(headers={}))
+        self.assertGreater(first, 0.0)
+        self.assertGreaterEqual(engine._cooldown_until, first)
+
+    def test_an_ordinary_server_error_is_still_retried(self) -> None:
+        # 429 dışındaki geçici hatalarda yeniden deneme hâlâ doğru davranış.
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=self._counting_transport(503, calls))
+            result = asyncio.run(engine.lookup("6109100000", with_extras=False))
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(calls), 3)
 
     def test_a_permanent_error_is_not_retried(self) -> None:
         calls: list = []

@@ -44,6 +44,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from time import monotonic as _monotonic
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urljoin
@@ -107,7 +108,8 @@ A2M_REFRESH_DAYS = max(1, _env_int("A2M_REFRESH_DAYS", 45))
 # Ücretsiz olduğu için varsayılan AÇIK: bütçe kapısına gerek yok, kataloğun tamamı
 # bir kez doldurulunca kullanıcı sorgusu ağa hiç çıkmadan cevaplanır.
 A2M_FILL_ENABLED = _env_flag("A2M_FILL_ENABLED", "1")
-A2M_FILL_BATCH = max(1, min(_env_int("A2M_FILL_BATCH", 200), 1000))
+# Küçük tur bilinçli: tur bitmeden hız ayarı güncellenmiyor ve durum görünmüyordu.
+A2M_FILL_BATCH = max(1, min(_env_int("A2M_FILL_BATCH", 50), 1000))
 # İş BİTTİĞİNDE beklenen süre. İş varken bu kullanılmaz (aşağıdaki BUSY kullanılır):
 # boş beklemek kataloğu günlerce yarım bırakıyordu.
 A2M_FILL_INTERVAL_SECONDS = max(30.0, _env_float("A2M_FILL_INTERVAL_SECONDS", 900.0))
@@ -453,6 +455,9 @@ class Access2MarketsEngine:
         self._effective_concurrency = self.concurrency
         self._clean_rounds = 0
         self._rate_limited = False
+        # Ortak soğuma penceresi: bir işçi 429 görünce hepsi bekler. Tek tek beklemek,
+        # diğer işçilerin aynı anda sınırı zorlamasını engellemiyordu.
+        self._cooldown_until = 0.0
         self.destination = normalise_iso2(destination) or "DE"
         self.origins = tuple(dict.fromkeys(normalise_iso2(o) for o in origins if normalise_iso2(o))) or ("TR",)
         self._errors: list[str] = []
@@ -585,15 +590,19 @@ class Access2MarketsEngine:
             validate_outbound_url(current, allowed_hosts=allowed_hosts)
             response: httpx.Response | None = None
             for attempt in range(self.retry_attempts):
+                await self._await_cooldown()
                 response = await self._http.get(current, headers={"Accept": "application/json"})
+                if response.status_code == 429:
+                    # 429 tur İÇİNDE yeniden denenmez. Canlı ölçüm bunun zarar verdiğini
+                    # gösterdi: her kod 3 deneme × geri çekilme ile ~30 saniyeye çıkıyor,
+                    # tur saatlerce sürüyor, hiçbir şey kaydedilmiyor ve hız ayarı tur
+                    # bitene kadar güncellenmiyordu. Doğrusu: hemen yavaşla, kodu bırak,
+                    # bir sonraki turda yeniden dene.
+                    self._note_rate_limit(response)
+                    break
                 if response.status_code not in _RETRYABLE_STATUS or attempt == self.retry_attempts - 1:
                     break
-                if response.status_code == 429:
-                    self._rate_limited = True
-                base = self.retry_base_seconds
-                if response.status_code == 429 and base:
-                    base = max(base, _RATE_LIMIT_BASE_SECONDS)
-                delay = _retry_delay(response, attempt, base=base)
+                delay = _retry_delay(response, attempt, base=self.retry_base_seconds)
                 if delay:
                     await asyncio.sleep(delay)
             assert response is not None
@@ -603,8 +612,6 @@ class Access2MarketsEngine:
                     raise ValueError("Access2Markets hedefsiz yönlendirme döndürdü.")
                 current = urljoin(str(response.url), location)
                 continue
-            if response.status_code == 429:
-                self._rate_limited = True
             if response.status_code >= 400:
                 # Durum kodu hata metnine yazılır: "HTTPStatusError" tek başına
                 # 403 mü 429 mu 503 mü olduğunu söylemiyordu ve teşhisi kör bırakıyordu.
@@ -621,6 +628,21 @@ class Access2MarketsEngine:
                 raise ValueError(f"Access2Markets JSON yerine {media_type} döndürdü.")
             return json.loads(content.decode("utf-8", errors="replace")), current
         raise ValueError("Access2Markets çok fazla yönlendirme yaptı.")
+
+
+    def _note_rate_limit(self, response: Any) -> None:
+        """429 görüldü: hemen yavaşla ve ortak soğuma penceresi aç."""
+        self._rate_limited = True
+        self._delay_seconds = min(A2M_MAX_DELAY_SECONDS, max(1.0, self._delay_seconds * 2))
+        self._effective_concurrency = 1
+        self._clean_rounds = 0
+        wait = _retry_delay(response, 0, base=_RATE_LIMIT_BASE_SECONDS)
+        self._cooldown_until = max(self._cooldown_until, _monotonic() + wait)
+
+    async def _await_cooldown(self) -> None:
+        remaining = self._cooldown_until - _monotonic()
+        if remaining > 0:
+            await asyncio.sleep(min(remaining, A2M_MAX_DELAY_SECONDS))
 
     def _tariff_url(self, code: str, origin: str, destination: str, *, lang: str = "EN") -> str:
         return f"{A2M_BASE}/api/tariffs/get/{quote(code)}/{quote(origin)}/{quote(destination)}?lang={quote(lang)}"
@@ -991,11 +1013,9 @@ class Access2MarketsEngine:
         kalmak da kataloğu bitirmezdi.
         """
         if self._rate_limited:
+            # Yavaşlatma zaten 429'u gören istekte yapıldı; burada yalnız geri açmayı
+            # engelliyoruz.
             self._clean_rounds = 0
-            self._delay_seconds = min(
-                A2M_MAX_DELAY_SECONDS, max(1.0, self._delay_seconds * 2)
-            )
-            self._effective_concurrency = 1
             return
         self._clean_rounds += 1
         if self._clean_rounds < A2M_PACE_RECOVER_ROUNDS:

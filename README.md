@@ -426,6 +426,17 @@ sunucuya 1 saniye sonra dönmek yavaşlamak değildir. Güncel hız `fill.delay_
 ve `fill.effective_concurrency` alanlarında görünür — katalog ne kadar sürede dolacağı
 bu iki sayıdan okunur, tahminden değil.
 
+**429 tur içinde yeniden denenmez.** İlk tasarım deniyordu ve canlı ölçüm bunun
+**zarar verdiğini** gösterdi: her kod 3 deneme × geri çekilmeyle ~30 saniyeye çıktı,
+tur saatlerce sürdü, hiçbir şey kaydedilmedi ve hız ayarı tur bitene kadar
+güncellenmediği için sistem kendini düzeltemedi — dağıtımdan 40 dakika sonra arşiv
+hâlâ 124 kodda duruyordu. Doğrusu: **hemen yavaşla, kodu bırak, bir sonraki turda
+yeniden dene.** 429 görüldüğü anda bekleme ikiye katlanır, eş zamanlılık 1'e iner ve
+**ortak bir soğuma penceresi** açılır (tek tek beklemek diğer işçilerin aynı anda
+sınırı zorlamasını engellemiyordu). 429 dışındaki geçici hatalarda (5xx) yeniden
+deneme aynen sürer. Tur boyu da küçültüldü (200 → 50): tur bitmeden hız ayarı
+güncellenmiyor ve durum görünmüyordu.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
