@@ -45,6 +45,7 @@ function switchTab(tabId) {
   else if (tabId === "changes") loadChanges();
   else if (tabId === "reviews") loadReviews();
   else if (tabId === "storage") loadStorage();
+  else if (tabId === "jobs") loadJobs();
 }
 
 window.switchTab = switchTab;
@@ -856,6 +857,78 @@ function renderStorage(data) {
         .join("")
     : '<tr><td colspan="4">Henüz yedek yok. "Şimdi yedek al" ile ilk kopyayı oluşturabilirsiniz.</td></tr>';
 }
+
+const JOB_STATE_LABELS = {
+  running: { text: "Çalışıyor", cls: "status-active" },
+  disabled: { text: "Kapalı", cls: "status-pending" },
+  failed: { text: "Çöktü", cls: "status-error" },
+  finished: { text: "Bitti", cls: "status-active" },
+  cancelled: { text: "Durduruldu", cls: "status-pending" },
+  declared: { text: "Başlatılmadı", cls: "status-pending" },
+  on_demand: { text: "Sorgu üzerine", cls: "status-active" },
+};
+
+function renderJobs(data) {
+  const jobs = data.jobs || [];
+  const summary = data.summary || {};
+  const paid = (summary.paid || []).length;
+  $("#jobsSummary").innerHTML = [
+    `<strong>${summary.running || 0}</strong> iş çalışıyor`,
+    `${summary.disabled || 0} kapalı`,
+    `${summary.failed || 0} çökmüş`,
+    paid ? `⚠️ <strong>${paid}</strong> ücretli iş açık` : "ücretli iş çalışmıyor",
+  ].join(" · ");
+
+  const badge = $("#jobsBadge");
+  if (badge) {
+    const problems = summary.failed || 0;
+    badge.hidden = problems === 0;
+    badge.textContent = String(problems);
+  }
+
+  $("#jobsTable").innerHTML = jobs.length
+    ? jobs
+        .map((job) => {
+          const state = JOB_STATE_LABELS[job.state] || { text: job.state, cls: "status-pending" };
+          const detail = job.detail || {};
+          const progress = [
+            detail.progress,
+            detail.spend_usd != null ? `harcama $${Number(detail.spend_usd).toFixed(2)}${detail.budget_usd ? ` / $${detail.budget_usd}` : ""}` : "",
+            detail.pending != null ? `${detail.pending} bekliyor` : "",
+          ]
+            .filter(Boolean)
+            .map((line) => escapeHtml(line))
+            .join("<br>");
+          const extra = [
+            job.disabled_reason ? escapeHtml(job.disabled_reason) : "",
+            job.error ? `<b>Hata:</b> ${escapeHtml(job.error)} (${escapeHtml(formatMoment(job.error_at))})` : "",
+            detail.note ? `<i>${escapeHtml(detail.note)}</i>` : "",
+          ]
+            .filter(Boolean)
+            .join("<br>");
+          return `
+      <tr>
+        <td><b>${escapeHtml(job.label)}</b>${job.cost === "paid" ? ' <span class="status-badge status-pending">ücretli</span>' : ""}<br><small>${escapeHtml(job.name)}</small></td>
+        <td><span class="status-badge ${state.cls}">${escapeHtml(state.text)}</span>${
+            job.started_at ? `<br><small>${escapeHtml(formatMoment(job.started_at))}</small>` : ""
+          }</td>
+        <td><small>${escapeHtml(job.purpose || "")}${extra ? `<br>${extra}` : ""}</small></td>
+        <td><small>${progress || "—"}</small></td>
+      </tr>`;
+        })
+        .join("")
+    : '<tr><td colspan="4">Kayıtlı arka plan işi yok.</td></tr>';
+}
+
+async function loadJobs() {
+  try {
+    renderJobs(await json("/api/admin/background-jobs"));
+  } catch (error) {
+    $("#jobsSummary").textContent = error.message;
+  }
+}
+
+$("#refreshJobsBtn")?.addEventListener("click", loadJobs);
 
 async function loadStorage() {
   try {

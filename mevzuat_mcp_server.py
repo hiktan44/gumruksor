@@ -59,6 +59,7 @@ from foreign_tariff import (
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
+from background_jobs import registry as job_registry
 from comtrade import COMTRADE_MAX_YEARS, TURKIYE_CODE as COMTRADE_TURKIYE_CODE, ComtradeEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
@@ -170,25 +171,63 @@ customs_assistant = CustomsAssistant(
 
 # Extra background coroutines registered by the web layer (e.g. watch-list notifier).
 BACKGROUND_LOOPS: list[tuple[str, "Callable[[], Coroutine[Any, Any, None]]"]] = []
-BACKGROUND_LOOPS.append(("trade-measures-sync", trade_measure_engine.periodic_sync_loop))
-BACKGROUND_LOOPS.append(("vat-lists-sync", vat_rate_index.periodic_sync_loop))
-if FOREIGN_TARIFF_SYNC_ENABLED:
-    BACKGROUND_LOOPS.append(("foreign-tariff-sync", foreign_tariff_engine.periodic_sync_loop))
-if EBTI_SYNC_ENABLED:
-    BACKGROUND_LOOPS.append(("ebti-sync", ebti_engine.periodic_sync_loop))
-if FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED:
-    # BK oranları yalnız emtia başına yayımlanıyor; arşiv kaynağı yormadan kademeli dolar.
-    BACKGROUND_LOOPS.append(("uk-measures-archive", foreign_tariff_engine.measures_archive_loop))
-if EU_TARIC_FILL_ENABLED:
-    # AB oranları kod × ülke başına ücretlidir; döngü aylık harcama tavanına kadar ilerler.
-    BACKGROUND_LOOPS.append(("eu-taric-fill", eu_taric_engine.fill_loop))
-if A2M_FILL_ENABLED:
-    # Aynı katalog, ücretsiz kaynaktan: tavan yok, yalnız kaynağa saygı için hız sınırı var.
-    BACKGROUND_LOOPS.append(("access2markets-fill", access2markets_engine.periodic_fill_loop))
-if storage_service.enabled:
-    # Yeri doldurulamaz veritabanları (hesaplar, ücretli AB TARIC arşivi, defter,
-    # geçmiş anlık görüntüler) günlük olarak aynı diskte yedeklenir.
-    BACKGROUND_LOOPS.append(("storage-backup", storage_service.periodic_backup_loop))
+
+
+def _register_loop(name: str, factory, *, enabled: bool = True, reason: str = "") -> None:
+    """Döngüyü hem başlatma listesine hem kütüğe yaz.
+
+    Kapalı iş de kütüğe **sebebiyle** girer: eskiden bayrağı kapalı olan iş hiçbir
+    ekranda görünmüyordu ve "bu dolum neden ilerlemiyor" sorusunun cevabı yoktu.
+    """
+    job_registry.declare(name, enabled=enabled, reason=reason)
+    if enabled:
+        BACKGROUND_LOOPS.append((name, factory))
+
+
+_register_loop("trade-measures-sync", trade_measure_engine.periodic_sync_loop)
+_register_loop("vat-lists-sync", vat_rate_index.periodic_sync_loop)
+_register_loop(
+    "foreign-tariff-sync",
+    foreign_tariff_engine.periodic_sync_loop,
+    enabled=FOREIGN_TARIFF_SYNC_ENABLED,
+    reason="FOREIGN_TARIFF_SYNC_ENABLED kapalı.",
+)
+_register_loop(
+    "ebti-sync",
+    ebti_engine.periodic_sync_loop,
+    enabled=EBTI_SYNC_ENABLED,
+    reason="EBTI_SYNC_ENABLED kapalı.",
+)
+# BK oranları yalnız emtia başına yayımlanıyor; arşiv kaynağı yormadan kademeli dolar.
+_register_loop(
+    "uk-measures-archive",
+    foreign_tariff_engine.measures_archive_loop,
+    enabled=FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED,
+    reason="FOREIGN_TARIFF_SYNC_ENABLED veya UK_MEASURES_ARCHIVE_ENABLED kapalı.",
+)
+# AB oranları kod × ülke başına ücretlidir; döngü aylık harcama tavanına kadar ilerler.
+_register_loop(
+    "eu-taric-fill",
+    eu_taric_engine.fill_loop,
+    enabled=EU_TARIC_FILL_ENABLED,
+    reason="EU_TARIC_FILL_ENABLED kapalı — ücretli toplu dolum durdurulmuş durumda. "
+    "Arşiv korunur; açıldığında kaldığı yerden devam eder.",
+)
+# Aynı katalog, ücretsiz kaynaktan: tavan yok, yalnız kaynağa saygı için hız sınırı var.
+_register_loop(
+    "access2markets-fill",
+    access2markets_engine.periodic_fill_loop,
+    enabled=A2M_FILL_ENABLED,
+    reason="A2M_FILL_ENABLED kapalı — sınırlı kota kullanıcı sorgularına ayrıldı.",
+)
+# Yeri doldurulamaz veritabanları (hesaplar, ücretli AB TARIC arşivi, defter,
+# geçmiş anlık görüntüler) günlük olarak aynı diskte yedeklenir.
+_register_loop(
+    "storage-backup",
+    storage_service.periodic_backup_loop,
+    enabled=storage_service.enabled,
+    reason="Yedekleme kapalı (STORAGE_BACKUP_ENABLED).",
+)
 
 
 async def backfill_change_ledger() -> None:
@@ -215,7 +254,7 @@ async def backfill_change_ledger() -> None:
         logger.exception("Change ledger backfill failed")
 
 
-BACKGROUND_LOOPS.append(("change-ledger-backfill", backfill_change_ledger))
+_register_loop("change-ledger-backfill", backfill_change_ledger)
 
 # Persistent hybrid search index (BM25 + embedding; PRD Faz 3.1).
 hybrid_index = HybridIndex(embedder=_embedder)
@@ -232,7 +271,7 @@ customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
 # AB-27 KDV oranları (tohum + TEDB'den otomatik yükseltme).
 eu_vat_index = EuVatRates()
 customs_advisor_service.eu_vat_index = eu_vat_index
-BACKGROUND_LOOPS.append(("eu-vat-sync", eu_vat_index.periodic_sync_loop))
+_register_loop("eu-vat-sync", eu_vat_index.periodic_sync_loop)
 
 
 async def hybrid_index_refresh_loop() -> None:
@@ -261,29 +300,32 @@ async def hybrid_index_refresh_loop() -> None:
         await asyncio.sleep(HYBRID_INDEX_REFRESH_SECONDS)
 
 
-BACKGROUND_LOOPS.append(("hybrid-index-refresh", hybrid_index_refresh_loop))
+_register_loop("hybrid-index-refresh", hybrid_index_refresh_loop)
 
 
 @asynccontextmanager
 async def _server_lifespan(server):
     """Keep the Ministry catalogue fresh without delaying ASGI startup."""
-    extra_tasks = [asyncio.create_task(factory(), name=name) for name, factory in BACKGROUND_LOOPS]
-    refresh_task = asyncio.create_task(
-        ticaret_client.periodic_refresh_loop(),
-        name="ticaret-catalog-refresh",
+    extra_tasks = []
+    for name, factory in BACKGROUND_LOOPS:
+        task = asyncio.create_task(factory(), name=name)
+        # Kütük, sessizce ölen bir döngüyü görünür kılar: görev istisnayla biterse
+        # süreç çalışmaya devam eder, yalnız o iş durur.
+        job_registry.track(name, task)
+        extra_tasks.append(task)
+    fixed = (
+        ("ticaret-catalog-refresh", ticaret_client.periodic_refresh_loop),
+        ("official-tariff-refresh", tariff_engine.periodic_sync_loop),
+        ("official-import-controls-refresh", control_engine.periodic_sync_loop),
+        ("official-classification-evidence-refresh", classification_engine.periodic_sync_loop),
     )
-    tariff_task = asyncio.create_task(
-        tariff_engine.periodic_sync_loop(),
-        name="official-tariff-refresh",
-    )
-    control_task = asyncio.create_task(
-        control_engine.periodic_sync_loop(),
-        name="official-import-controls-refresh",
-    )
-    classification_task = asyncio.create_task(
-        classification_engine.periodic_sync_loop(),
-        name="official-classification-evidence-refresh",
-    )
+    fixed_tasks = []
+    for name, factory in fixed:
+        job_registry.declare(name)
+        task = asyncio.create_task(factory(), name=name)
+        job_registry.track(name, task)
+        fixed_tasks.append(task)
+    refresh_task, tariff_task, control_task, classification_task = fixed_tasks
     try:
         yield {
             "ticaret_client": ticaret_client,

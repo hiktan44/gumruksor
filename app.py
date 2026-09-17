@@ -72,13 +72,14 @@ from declaration_draft import build_declaration_draft, draft_to_csv, draft_to_xm
 from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
 from access2markets import compare_sources
+from background_jobs import JOB_CATALOGUE, registry as job_registry
 from comtrade import TURKIYE_CODE as COMTRADE_TURKIYE_CODE
 from storage import resolve_backup_file
 from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
 from shipping_documents import decode_document_data_url, extract_shipping_document, pdf_page_count, rasterize_pdf_pages
 from mevzuat_mcp_server import (
-    BACKGROUND_LOOPS,
+    _register_loop as register_background_loop,
     app as mcp,
 )
 from security_firewall import AgentTokenVerifier, SecurityViolation, guard_data, redact_data, redact_text, sanitize_untrusted_context
@@ -3321,6 +3322,87 @@ async def web_admin_eu_taric_fill(request: Request):
     return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
+def _job_details() -> dict[str, dict]:
+    """İşin ilerlemesini kendi motorundan oku: sayaç, arşiv boyutu, harcama.
+
+    Her motorun ``status()`` çıktısı zaten var; burada yalnız panelde anlamlı olan
+    birkaç alan seçilir. Hiçbir gizli değer taşınmaz.
+    """
+    details: dict[str, dict] = {}
+    try:
+        taric = eu_taric_engine.status()
+        fill = taric.get("fill") or {}
+        spend = fill.get("spend") or {}
+        details["eu-taric-fill"] = {
+            "progress": f"{fill.get('completed_pairs', 0)} / {fill.get('total_pairs', 0)} kod × ülke",
+            "archive": taric.get("archived_lookups"),
+            "spend_usd": spend.get("spent_usd"),
+            "budget_usd": spend.get("budget_usd"),
+            "pending": fill.get("pending_pairs"),
+            "note": "Arşiv kalıcıdır: dolum kapatılınca alınan kayıtlar durur, açılınca kaldığı yerden devam eder.",
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("EU TARIC durumu okunamadı")
+    try:
+        a2m = access2markets_engine.status()
+        a2m_fill = a2m.get("fill") or {}
+        details["access2markets-fill"] = {
+            "progress": f"{a2m.get('archived', 0)} / {a2m_fill.get('total_codes', 0)} kod arşivde",
+            "pending": a2m_fill.get("pending"),
+            "note": "Ücretsiz kaynak; sınırlı kota kullanıcı sorgularına ayrıldı. "
+            "Kullanıcı sorgusu yolu açıktır, toplu dolum kapalıdır.",
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("Access2Markets durumu okunamadı")
+    try:
+        details["comtrade"] = {
+            "progress": f"{comtrade_engine.status().get('archived_queries', 0)} sorgu arşivde",
+            "note": "Arka plan döngüsü yok; yalnız kullanıcı sorgusunda çalışır.",
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("Comtrade durumu okunamadı")
+    return details
+
+
+@mcp.custom_route("/api/admin/background-jobs", methods=["GET"])
+async def web_admin_background_jobs(request: Request):
+    """Arka plan işleri: hangisi çalışıyor, hangisi neden kapalı, hangisi çöktü (yönetici)."""
+    limited = _rate_limit_response(request, "admin-jobs", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    jobs = job_registry.snapshot()
+    details = await asyncio.to_thread(_job_details)
+    for job in jobs:
+        job["detail"] = details.get(job["name"])
+    # Döngüsü olmayan ama panelde görünmesi anlamlı olan kaynaklar (yalnız sorguda çalışır).
+    known = {job["name"] for job in jobs}
+    for name, detail in details.items():
+        if name not in known:
+            jobs.append(
+                {
+                    **JOB_CATALOGUE.get(name, {"label": name, "purpose": "", "cost": "free"}),
+                    "name": name,
+                    "state": "on_demand",
+                    "enabled": True,
+                    "disabled_reason": None,
+                    "started_at": None,
+                    "finished_at": None,
+                    "error": None,
+                    "error_at": None,
+                    "one_shot": False,
+                    "detail": detail,
+                }
+            )
+    return JSONResponse(
+        {"jobs": jobs, "summary": job_registry.summary(), "checked_at": today_iso()},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @mcp.custom_route("/api/admin/storage", methods=["GET", "POST"])
 async def web_admin_storage(request: Request):
     """Veri diski ve yedekler: GET rapor, POST hemen yedek al (yönetici)."""
@@ -3872,7 +3954,7 @@ async def watchlist_notification_loop() -> None:
             logger.exception("Watch-list notification loop failed")
 
 
-BACKGROUND_LOOPS.append(("watchlist-notifications", watchlist_notification_loop))
+register_background_loop("watchlist-notifications", watchlist_notification_loop)
 
 
 async def _notify_consultation(request_id: str, kind: str, snippet: str, *, recipient_role: str) -> None:
@@ -4062,7 +4144,7 @@ async def review_notification_loop() -> None:
         await asyncio.sleep(1800)
 
 
-BACKGROUND_LOOPS.append(("review-notifications", review_notification_loop))
+register_background_loop("review-notifications", review_notification_loop)
 
 
 # Add health check endpoint to the MCP server

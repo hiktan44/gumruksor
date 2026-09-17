@@ -466,6 +466,26 @@ bağlıdır — ve hiçbir değer `calculate_landed_cost` girdisine aktarılmaz.
 Toplu kullanıma geçmeden önce `scripts/eu_taric_validation.py` 10 kodu çözümleyip her biri için
 resmî TARIC ekran bağlantısını yazar; karşılaştırma elle yapılır.
 
+### Arka plan işleri paneli (`background_jobs.py`)
+
+Sunucu açılışta bir dizi sonsuz döngü başlatır (resmî kaynak eşitlemeleri, arşiv
+dolumları, hibrit indeks tazeleme, bildirim gönderimi). Bu döngülerin iki sessiz arızası
+vardı ve ikisini de kütük görünür kılar:
+
+* **Kapalı iş görünmüyordu.** `if FLAG: BACKGROUND_LOOPS.append(...)` deseninde bayrak
+  kapalıysa iş listeye hiç girmiyordu; "AB TARIC dolumu neden ilerlemiyor" sorusunun
+  cevabı hiçbir ekranda yazmıyordu. Artık kapalı işler de **sebebiyle** kaydedilir.
+* **Çöken döngü sessizce ölüyordu.** `asyncio.create_task` ile başlatılan bir görev
+  istisnayla biterse süreç çalışmaya devam eder, yalnız o iş durur. Kütük her göreve
+  bitiş geri çağrısı takar ve istisnanın **türünü** (gizli değer değil, sınıf adı ve
+  kısaltılmış mesaj) saklar.
+
+Yönetim panelinde **⚙️ Arka Plan İşleri** sekmesi: iş adı ve Türkçe künyesi, durumu
+(çalışıyor / kapalı / çöktü / bitti / durduruldu), ne yaptığı, ilerlemesi ve ücretli
+işler için harcama. Ücretli bir iş açıksa özet satırında ayrıca uyarı çıkar. Uç:
+`GET /api/admin/background-jobs` (yalnız yönetici). Durum **çalışma anına** aittir;
+sunucu yeniden başlarsa sayaçlar sıfırlanır, veriler kalır.
+
 ### Dış ticaret istatistiği: UN Comtrade (`comtrade.py`)
 
 Pazar araştırması, alıcı sunumu ve rapor için **istatistik** kaynağı. Birleşmiş Milletler
