@@ -105,9 +105,14 @@ A2M_TIMEOUT = max(10.0, _env_float("A2M_TIMEOUT_SECONDS", 45.0))
 # Alınmış bir kod × menşe × varış üçlüsü bu kadar gün taze sayılır. Ücretsiz olduğu için
 # tazeleme bir bütçe sorunu değil, yalnız kaynağa saygı sorunudur.
 A2M_REFRESH_DAYS = max(1, _env_int("A2M_REFRESH_DAYS", 45))
-# Ücretsiz olduğu için varsayılan AÇIK: bütçe kapısına gerek yok, kataloğun tamamı
-# bir kez doldurulunca kullanıcı sorgusu ağa hiç çıkmadan cevaplanır.
-A2M_FILL_ENABLED = _env_flag("A2M_FILL_ENABLED", "1")
+# Varsayılan KAPALI — ölçümle verilmiş bir karar, tercih değil. Kaynak bu sunucunun
+# çıkışına hız sınırı uyguluyor ve ölçülen dolum hızı 0,24 kod/dakikaya düştü
+# (124 → 139 kod / 63 dakika): kalan katalog bu hızla ~34 gün eder. Daha kötüsü,
+# dolum sınırlı kotayı KULLANICI SORGULARIYLA paylaşıyor — bir ay sürecek arka plan
+# işi uğruna gerçek bir ihracat sorgusunun 429 yemesi kabul edilebilir değil.
+# Değerin olduğu yer kullanıcı sorgusudur: tek istek, kota içinde, 45 gün arşivde.
+# Arşiv zaten gerçekten sorulan kodlarla dolar; 11.997 kodun çoğu hiç sorulmayacak.
+A2M_FILL_ENABLED = _env_flag("A2M_FILL_ENABLED", "0")
 # Küçük tur bilinçli: tur bitmeden hız ayarı güncellenmiyor ve durum görünmüyordu.
 A2M_FILL_BATCH = max(1, min(_env_int("A2M_FILL_BATCH", 50), 1000))
 # İş BİTTİĞİNDE beklenen süre. İş varken bu kullanılmaz (aşağıdaki BUSY kullanılır):

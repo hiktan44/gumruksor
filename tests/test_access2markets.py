@@ -397,6 +397,15 @@ class RulesOfOriginTests(unittest.TestCase):
 
 
 class FillTests(unittest.TestCase):
+    def test_the_module_default_keeps_the_bulk_fill_off(self) -> None:
+        """Varsayılan kapalı: sınırlı kota kullanıcı sorgularına ayrılır.
+
+        Canlı ölçüm dolum hızını 0,24 kod/dakika gösterdi (kalan katalog ~34 gün) ve
+        dolum bu sınırlı kotayı kullanıcı sorgularıyla paylaşıyordu. Bir ay sürecek
+        arka plan işi uğruna gerçek bir ihracat sorgusunun 429 yemesi kabul edilemez.
+        """
+        self.assertFalse(a2m.A2M_FILL_ENABLED)
+
     def test_the_fill_is_off_until_it_is_switched_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             engine = _engine(tmp, code_source=lambda: ["6109100000"], fill_enabled=False)
