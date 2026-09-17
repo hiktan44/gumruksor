@@ -393,8 +393,12 @@ kalır. Ücretsiz çağrı `A2M_EXPORT_TIMEOUT_SECONDS` (varsayılan 12 sn) ile 
 kaynak yavaşlarsa dosya bekletilmez. Sıra ölçümle belirlendi — ücretsiz kaynak hem
 daha geniş kapsıyor hem daha güncel (canlı portal ↔ aylık döküm).
 
-**Toplu dolum ücretsiz olduğu için varsayılan açıktır** (`A2M_FILL_ENABLED=1`) ve
-bütçe kapısı yoktur; yerine kaynağa saygı sınırları vardır. Ölçülen maliyet kod başına
+**Toplu dolum varsayılan KAPALIDIR** (`A2M_FILL_ENABLED=0`) — ücretsiz olduğu için
+değil, ölçüldüğü için. Canlı hız 0,24 kod/dakikaya düştü (124 → 139 kod / 63 dakika),
+yani kalan katalog **~34 gün** eder; üstelik dolum sınırlı kotayı **kullanıcı
+sorgularıyla paylaşıyor**. Bir ay sürecek arka plan işi uğruna gerçek bir ihracat
+sorgusunun 429 yemesi kabul edilebilir değil: kota kullanıcı sorgusuna ayrılır, arşiv
+zaten gerçekten sorulan kodlarla dolar. Açılırsa geçerli olan sınırlar şunlardır. Ölçülen maliyet kod başına
 **~2,3 sn** (istek 1,28 + kodların %42,5'inde CN8 düşmesi + 0,5 sn bekleme): 11.997
 kodluk katalog **sıralı 7,7 saat**, `A2M_CONCURRENCY=3` ile **~2,6 saat** sürer.
 Eş zamanlılık ücretsiz kaynakta maliyeti değiştirmez, yalnız duvar saatini kısaltır;
