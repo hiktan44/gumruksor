@@ -594,8 +594,8 @@ class Access2MarketsEngine:
             return result
 
         try:
-            payload, url = await self._get_json(
-                self._tariff_url(code, origin_iso, destination_iso), allowed_hosts=_A2M_HOSTS
+            payload, url, matched_code, matched_level = await self._fetch_with_fallback(
+                code, origin_iso, destination_iso
             )
         except Exception as exc:  # ağ/biçim hatası ürünü kırmamalı
             message = f"Access2Markets tarife sorgusu başarısız: {type(exc).__name__}"
@@ -641,10 +641,19 @@ class Access2MarketsEngine:
             measures,
             origin_iso,
             goods_description=description,
-            cn_code=code[:8],
+            cn_code=matched_code[:8],
         )
         summary["group_count"] = len(groups)
         summary["queried_code"] = code
+        summary["matched_code"] = matched_code
+        summary["match_level"] = matched_level
+        if matched_level != "hs10":
+            # Kullanıcı hangi kodun cevap verdiğini görmeli: 10 hanenin karşılığı yoksa
+            # oran daha kaba bir kodun oranıdır ve alt kalemler farklılaşabilir.
+            result.warnings.append(
+                f"AB nomenklatüründe {code} bulunamadı; oran {matched_code} "
+                f"({'CN8' if matched_level == 'cn8' else 'HS6'}) düzeyinden okundu."
+            )
 
         taxes: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
@@ -667,6 +676,38 @@ class Access2MarketsEngine:
         result.fetched_at = _now()
         result.age_days = 0
         return result
+
+
+    async def _fetch_with_fallback(
+        self, code: str, origin: str, destination: str
+    ) -> tuple[Any, str, str, str]:
+        """10 hane boş dönerse CN8'e, o da boşsa HS6'ya düşer.
+
+        Bunu ölçüm zorunlu kıldı: 40 fasla yayılmış 120 gerçek GTİP denendiğinde
+        **51'i (%42,5) 10 hanede boş döndü ama CN8'de veri verdi.** Sebep yapısal —
+        Türk GTİP'inin 9-10. haneleri AB'nin TARIC alt açılımıyla aynı olmak zorunda
+        değil; karşılığı olmayan TARIC alt kodu AB'de yoktur, ama CN8 vardır.
+        Düşme yapılmazsa bu kodlar "AB'de bulunamadı" diye raporlanır — oysa oran
+        bellidir. Hangi düzeyden okunduğu sonuçta ``match_level`` ile taşınır ve
+        kullanıcıya uyarı olarak yazılır: sessizce daha kaba bir oran vermek,
+        bulunamadı demekten daha tehlikelidir.
+        """
+        levels: list[tuple[str, str]] = [(code, "hs10")]
+        if len(code) > 8:
+            levels.append((code[:8], "cn8"))
+        if len(code) > 6:
+            levels.append((code[:6], "hs6"))
+        payload: Any = []
+        url = ""
+        for candidate, level in levels:
+            payload, url = await self._get_json(
+                self._tariff_url(candidate, origin, destination), allowed_hosts=_A2M_HOSTS
+            )
+            if isinstance(payload, dict):
+                return payload, url, candidate, level
+            if payload:
+                return payload, url, candidate, level
+        return payload, url, code, "hs10"
 
     async def _safe_extra(self, url: str, parser: Callable[[Any], list[dict[str, Any]]]) -> list[dict[str, Any]]:
         """Yan uçlar (vergi, belge) kırılırsa ana oran sonucu düşmemeli."""

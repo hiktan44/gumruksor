@@ -374,6 +374,16 @@ denmez. Değişkenler: `A2M_ENABLED` (varsayılan açık, ücretsiz), `A2M_REFRE
 `A2M_DEFAULT_DESTINATION`. Uçlar: `GET /api/foreign/eu-a2m`, `GET /api/foreign/eu-a2m/roo`,
 `GET /api/foreign/eu-a2m/status`, MCP aracı `lookup_eu_access2markets`.
 
+**Kod düzeyi düşmesi (ölçümün zorunlu kıldığı dal).** 40 fasla yayılmış **120 gerçek
+GTİP** ücretsiz kaynağa sorulduğunda **51'i (%42,5) 10 hanede boş döndü ama CN8'de veri
+verdi.** Sebep yapısal: Türk GTİP'inin 9-10. haneleri AB'nin TARIC alt açılımıyla aynı
+olmak zorunda değildir; karşılığı olmayan TARIC alt kodu AB'de yoktur, ama CN8 vardır.
+Bu yüzden `lookup` sırayla 10 hane → CN8 → HS6 dener ve hangi düzeyden okuduğunu
+`match_level` ile taşır, kullanıcıya da uyarı yazar: *"AB nomenklatüründe 5205410090
+bulunamadı; oran 52054100 (CN8) düzeyinden okundu."* Sessizce daha kaba bir oran vermek,
+bulunamadı demekten daha tehlikelidir. Düşmeyle birlikte ölçülen kapsam **120/120 (%100)**,
+%97,5'inde üçüncü ülke vergisi ve %89,2'sinde Türkiye'ye özgü satır dolu.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
