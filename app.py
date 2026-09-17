@@ -43,6 +43,7 @@ import report_pdf
 from report_pdf import PdfRenderError, render_precheck_report_html, report_footer_html
 from mevzuat_mcp_server import (
     _BED_VALID_TYPES,
+    access2markets_engine,
     bedesten_client,
     change_ledger,
     classification_engine,
@@ -69,6 +70,7 @@ from countries import COUNTRIES, PENDING_AGREEMENTS
 from declaration_draft import build_declaration_draft, draft_to_csv, draft_to_xml
 from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
+from access2markets import compare_sources
 from storage import resolve_backup_file
 from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
@@ -2902,6 +2904,92 @@ async def web_eu_taric_status(request: Request):
     if limited:
         return limited
     return JSONResponse(eu_taric_engine.status())
+
+
+@mcp.custom_route("/api/foreign/eu-a2m", methods=["GET"])
+async def web_eu_access2markets(request: Request):
+    """AB vergileri, iç vergiler ve istenen belgeler: Access2Markets açık uçları (ücretsiz)."""
+    limited = _rate_limit_response(request, "eu-a2m", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        require_feature(request, "foreign_tariff")
+        result = await access2markets_engine.lookup(
+            str(request.query_params.get("gtip", "")),
+            origin=str(request.query_params.get("origin") or "TR"),
+            destination=str(request.query_params.get("destination") or "") or None,
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Access2Markets lookup failed")
+        return JSONResponse({"error": "AB tarife verisi şu anda alınamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=600"})
+
+
+@mcp.custom_route("/api/foreign/eu-a2m/roo", methods=["GET"])
+async def web_eu_rules_of_origin(request: Request):
+    """Menşe kuralları (PEM Konvansiyonu), fasıl düzeyinde."""
+    limited = _rate_limit_response(request, "eu-a2m-roo", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    chapter = request.query_params.get("chapter") or request.query_params.get("gtip") or ""
+    try:
+        require_feature(request, "foreign_tariff")
+        result = await access2markets_engine.rules_of_origin(
+            chapter, partner=str(request.query_params.get("partner") or "TR")
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except Exception:
+        logger.exception("Access2Markets rules of origin failed")
+        return JSONResponse({"error": "Menşe kuralları şu anda alınamadı."}, status_code=502)
+    return JSONResponse(result, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@mcp.custom_route("/api/foreign/eu-a2m/status", methods=["GET"])
+async def web_eu_access2markets_status(request: Request):
+    limited = _rate_limit_response(request, "eu-a2m-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(await asyncio.to_thread(access2markets_engine.status))
+
+
+@mcp.custom_route("/api/admin/eu-taric/compare", methods=["GET"])
+async def web_admin_eu_taric_compare(request: Request):
+    """Ücretli TARIC arşivi ile ücretsiz Access2Markets'ı karşılaştırır (yönetici).
+
+    Ücret doğurmaz: ücretli taraf yalnız arşivden okunur, aktör hiç çağrılmaz. "Apify
+    durdurulsun mu" kararı bu ölçümün sonucuna göre verilir.
+    """
+    limited = _rate_limit_response(request, "admin-eu-taric-compare", limit=6, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    try:
+        limit_value = max(1, min(int(request.query_params.get("limit") or 25), 200))
+    except (TypeError, ValueError):
+        limit_value = 25
+    try:
+        report = await compare_sources(
+            eu_taric_engine,
+            access2markets_engine,
+            limit=limit_value,
+            destination=str(request.query_params.get("destination") or "") or None,
+        )
+    except Exception:
+        logger.exception("EU TARIC karşılaştırması başarısız")
+        return JSONResponse({"error": "Karşılaştırma çalıştırılamadı."}, status_code=502)
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/foreign/ebti/status", methods=["GET"])

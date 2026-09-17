@@ -290,9 +290,23 @@ def parse_measures(item: dict[str, Any]) -> list[dict[str, Any]]:
     return measures
 
 
-def resolve_rates(item: dict[str, Any], partner: str | None) -> dict[str, Any]:
-    """Ölçü satırlarından koşullu bir özet üretir (tek bir 'nihai vergi' iddia etmez)."""
-    measures = parse_measures(item)
+def summarise_measures(
+    measures: list[dict[str, Any]],
+    partner: str | None,
+    *,
+    snapshot_month: str | None = None,
+    snapshot_date: str | None = None,
+    goods_description: str = "",
+    cn_code: str | None = None,
+) -> dict[str, Any]:
+    """Ortak ölçü biçiminden koşullu özeti üretir (tek bir 'nihai vergi' iddia etmez).
+
+    Gövde ``resolve_rates``'ten ayrıldı çünkü aynı özet şekli iki ayrı kaynaktan
+    besleniyor: ücretli Apify aktörü (aylık TARIC ham veri çıkarımı) ve ücretsiz
+    Access2Markets API'si. Arayüz, ihracat dosyası ve beyanname tablosu bu tek şekli
+    okuduğu için özet mantığının **tek bir yerde** kalması şart — aksi halde iki kaynak
+    aynı veriden farklı sonuç üretir ve hangisinin doğru olduğu anlaşılmaz.
+    """
     partner = (partner or "").upper() or None
     erga = next(
         (m for m in measures if m["kind"] == "third_country_duty" and m["partner_area_code"] in {"1011", ""}),
@@ -321,11 +335,23 @@ def resolve_rates(item: dict[str, Any], partner: str | None) -> dict[str, Any]:
         "additional_duties": extra[:10],
         "measures": [m for m in measures if m["kind"] != "other"][:40],
         "rate_status": "conditional" if conditional else ("definitive" if erga or preference else "unknown"),
-        "snapshot_month": _clean(item.get("sourceSnapshotMonth"), 20) or None,
-        "snapshot_date": _clean(item.get("sourceSnapshotDate"), 20) or None,
-        "goods_description": _clean(item.get("goodsDescription"), 600),
-        "cn_code": _digits(item.get("cnCode"))[:8] or None,
+        "snapshot_month": _clean(snapshot_month, 20) or None,
+        "snapshot_date": _clean(snapshot_date, 20) or None,
+        "goods_description": _clean(goods_description, 600),
+        "cn_code": _digits(cn_code)[:8] or None,
     }
+
+
+def resolve_rates(item: dict[str, Any], partner: str | None) -> dict[str, Any]:
+    """Aktörün tek bir ürün kaydını özete çevirir."""
+    return summarise_measures(
+        parse_measures(item),
+        partner,
+        snapshot_month=item.get("sourceSnapshotMonth"),
+        snapshot_date=item.get("sourceSnapshotDate"),
+        goods_description=item.get("goodsDescription"),
+        cn_code=item.get("cnCode"),
+    )
 
 
 # --------------------------------------------------------------------------- sonuç modeli

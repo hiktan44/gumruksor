@@ -344,6 +344,36 @@ doğurmadan** görebilir, `POST` ile tek turluk dolum çalıştırabilir; `/heal
 `pending_pairs` (hiç alınmamış), `refresh_due_pairs` (tazelemesi gelen) ve
 `estimated_monthly_usd` (kataloğun tazeleme payı) olarak ayrışır.
 
+**Aynı verinin ücretsiz kaynağı: Access2Markets** (`access2markets.py`). Faz 4'te "AB'de
+belgeli API yok" yazılmıştı; bu **yanlıştı** ve iki uydurma yol denenerek varılmış bir
+sonuçtu. Portalın Angular paketi okunduğunda 58 gerçek uç çıktı ve 17.09.2026'da canlı
+ölçüldü:
+
+| Uç | Ne veriyor | Ölçülen |
+|---|---|---|
+| `api/tariffs/get/{kod}/{menşe}/{varış}` | üçüncü ülke vergisi, **gümrük birliği vergisi (Türkiye)**, tercihli tarife, askıya alma, kota, ek vergiler | 200 JSON, anahtarsız, 10/10 başarı, kod başına ~1,3 sn |
+| `api/taxes/get/...` | varış ülkesinin iç vergileri | `VAT 19%`, `revisionDate 2026-07-01` (DE) |
+| `api/v2/document/list?...` | ticaret koşulları: istenen belgeler | menşe şahadetnamesi, fatura, kıymet beyanı, navlun belgeleri |
+| `webgate…/roo/public/v1/classic/chapter/{fasıl}/country/TR` | menşe kuralları (PEM Konvansiyonu) | 21,5 KB, ürün bazlı kural tablosu |
+
+Bu kaynak ücretli yolun **yerine geçmez, yanında durur**: ikisi ortak
+`eu_taric.summarise_measures` ile **aynı özet şeklini** üretir, bu yüzden arayüz, ihracat
+dosyası ve beyanname tablosu tek bir şekil okumaya devam eder. Karar —"Apify durdurulsun
+mu"— tahminle değil ölçümle verilir: `GET /api/admin/eu-taric/compare?limit=N` ücretli
+arşivdeki çiftleri ücretsiz kaynakla karşılaştırır ve **ücret doğurmaz** (ücretli taraf
+yalnız `archived()` ile okunur, aktör hiç çağrılmaz). Çıktı üç sayıyı ayırır: `agree`
+(aynı oran), `disagree` (gerçek fark) ve `coverage_gap` (bir tarafta oran hiç yok — bu
+"yanlış veri" değil "eksik veri"dir). Biçim farkı (`12.00 %` ↔ `12%`) uyuşmazlık sayılmaz.
+
+Dürüst sınır: **varış ülkesi AB üyesi değilse bu uçtan oran okunmaz.** Kaynak o yönde ölçü
+satırı yerine tarife şeması (`schemas`: GEN/MFN/tercihli) döndürüyor; onu oran diye okumak
+"oran yalnız resmî anlık görüntüden" kuralını çiğnerdi. Sonuç `non_eu_destination` durumuyla
+döner ve hiçbir sayı üretmez. Kodun AB'de karşılığı yoksa `not_found` yazılır — sıfır vergi
+denmez. Değişkenler: `A2M_ENABLED` (varsayılan açık, ücretsiz), `A2M_REFRESH_DAYS` (45),
+`A2M_FILL_ENABLED`, `A2M_FILL_BATCH`, `A2M_FILL_INTERVAL_SECONDS`, `A2M_DELAY_SECONDS`,
+`A2M_DEFAULT_DESTINATION`. Uçlar: `GET /api/foreign/eu-a2m`, `GET /api/foreign/eu-a2m/roo`,
+`GET /api/foreign/eu-a2m/status`, MCP aracı `lookup_eu_access2markets`.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
