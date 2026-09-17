@@ -466,6 +466,52 @@ bağlıdır — ve hiçbir değer `calculate_landed_cost` girdisine aktarılmaz.
 Toplu kullanıma geçmeden önce `scripts/eu_taric_validation.py` 10 kodu çözümleyip her biri için
 resmî TARIC ekran bağlantısını yazar; karşılaştırma elle yapılır.
 
+### Dış ticaret istatistiği: UN Comtrade (`comtrade.py`)
+
+Pazar araştırması, alıcı sunumu ve rapor için **istatistik** kaynağı. Birleşmiş Milletler
+Comtrade'in anahtarsız `preview` ucundan (`https://comtradeapi.un.org/public/v1/preview/C/A/HS`)
+okur; **ücretsizdir ve hiçbir ücret doğurmaz**. Bir kodu hangi ülkeler ne kadar alıyor, kilogram
+başına ne ödüyor, yıllar içinde eğilim ne yönde — bunları söyler.
+
+**Bu bir oran kaynağı değildir.** Buradan gelen hiçbir sayı gümrük vergisi, KDV veya
+`calculate_landed_cost` girdisine girmez; oranlar yalnız resmî tarife anlık görüntülerinden
+gelir. Rakamlar ülkelerin **kendi beyanıdır**: ihracatçı ve ithalatçı ülke aynı ticareti farklı
+bildirebilir (navlun, zamanlama, sınıflandırma farkı), bu yüzden yanıt her zaman bir ayna
+uyarısı taşır.
+
+17.09.2026'da canlı ölçülen ve kodun dayandığı olgular:
+
+* **Satırlar hem toplamı hem kırılımı içerir.** Körlemesine toplamak çift sayar: Türkiye'nin
+  Almanya'ya 8517 ihracatı gerçek toplamda **19.154.002 USD** iken tüm satırlar toplandığında
+  **55.768.235 USD** çıkıyor (~3 katı). Doğru satır `motCode == 0` ve `customsCode == "C00"`
+  olandır; istek bu iki süzgeçle gönderilir **ve** gelen satırlar bir daha süzülür (sunucu
+  süzgeci yok sayarsa sessizce şişmiş rakam üretmeyelim). Bu, testlerde gerileme kilidiyle
+  korunur.
+* Tek istek en fazla **500 satır** döndürür; kırpılma `truncated` ile bildirilir ve eksik
+  sıralamayı tam sanmamak için uyarı yazılır.
+* **Tek dönem** kabul edilir (`period=2020,2021` → 400). Eğilim için yıl başına ayrı istek
+  yapılır; bu yüzden `/trend` yavaştır.
+* Arka arkaya istekte **429** gelir, bir dakikadan kısa sürede toparlar. Bu yüzden sorgular
+  seridir, aralarında `COMTRADE_DELAY_SECONDS` (6 sn) beklenir ve **429'da ısrar edilmez**:
+  soğuma penceresi açılır, elde arşiv varsa o gösterilir.
+
+Sonuçlar `comtrade.sqlite3` içinde kalıcıdır; `COMTRADE_REFRESH_DAYS` (90) boyunca taze
+sayılır ve o süre içinde kaynağa hiç dokunulmaz (yıllık istatistik yılda bir değişir). Ülke
+adları ayrı referans tablosundan (`partnerAreas.json`, 310 kayıt) gelir; ölçü satırlarında
+yalnız sayısal kod bulunur.
+
+Değişkenler: `COMTRADE_ENABLED`, `COMTRADE_REFRESH_DAYS`, `COMTRADE_DELAY_SECONDS`,
+`COMTRADE_COOLDOWN_SECONDS`, `COMTRADE_MAX_YEARS`, `COMTRADE_TIMEOUT_SECONDS`.
+Uçlar: `GET /api/foreign/comtrade?gtip=&flow=X|M&year=&limit=`,
+`GET /api/foreign/comtrade/trend?gtip=&years=&partner=`, `GET /api/foreign/comtrade/status`
+(ilk ikisi `foreign_tariff` yetkisiyle korunur). MCP'de `lookup_trade_statistics` ve
+`lookup_trade_statistics_trend`.
+
+**Bu veri bizde yok, dürüst cevap:** *sevkiyat (konşimento) düzeyinde* veri Comtrade'de
+yoktur — yalnız ülke × kod × yıl toplamı vardır. ABD Census dış ticaret API'si de aynı
+şekilde **toplamdır** (ay/yıl, ülke, gümrük bölgesi, taşıma şekli); gönderi bazlı
+konşimento verisi ticari sağlayıcılardan satılır ve ücretsiz değildir.
+
 **AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
 ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir
 ZIP/CSV dosyası olarak **herkese açık** yayımlar (giriş gerekmez). `ebti-sync` döngüsü listeyi okur,

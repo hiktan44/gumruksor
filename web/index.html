@@ -575,6 +575,18 @@
             <p class="rate-warning">Avrupa Komisyonu'nun resmî aylık TARIC ham veri çıkarımından gelir. <b>TARIC'te tek bir "nihai vergi" sayısı yoktur</b>: oran ek koda, tarife kontenjanına, ibraz edilen belgeye ve nihai kullanıma göre değişir. Bu yüzden üçüncü ülke vergisi, menşeye özgü oran, ek vergiler ve gereken belgeler ayrı ayrı gösterilir. Sonuç <b>Türkiye maliyet hesabına aktarılmaz</b>. Bu kaynak sorgu başına ücretlidir; aynı kod için sonuç arşivden sunulur.</p>
             <button class="analyse-button" type="button" id="euTaricLookup"><span>AB oranlarını sorgula</span></button>
             <div id="euTaricOutput" aria-live="polite"></div>
+            <h3>Pazar istatistiği (BM Comtrade)</h3>
+            <p class="rate-warning">Birleşmiş Milletler Comtrade'in resmî istatistiğinden gelir: bu kodu hangi ülkeler ne kadar alıyor, kilogram başına ne ödüyor. <b>Bu bir oran değildir</b> — vergi, KDV ve maliyet kalemleri buradan okunmaz ve hiçbir sayı maliyet hesabına aktarılmaz. Rakamlar ülkelerin kendi beyanıdır; ihracatçı ve ithalatçı ülke aynı ticareti farklı bildirebilir. Kaynak tek istekte en fazla 500 satır verir; kırpılma varsa uyarı yazılır.</p>
+            <label class="field"><span>Yön</span>
+              <select id="comtradeFlow">
+                <option value="X">Türkiye'nin ihracatı (hangi pazarlar alıyor)</option>
+                <option value="M">Türkiye'nin ithalatı (nereden geliyor)</option>
+              </select>
+            </label>
+            <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comtradeYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
+            <button class="analyse-button" type="button" id="comtradeLookup"><span>Pazarları sırala</span></button>
+            <button class="analyse-button" type="button" id="comtradeTrend"><span>Son 5 yıl eğilimi</span></button>
+            <div id="comtradeOutput" aria-live="polite"></div>
           </div>
         </section>
 
