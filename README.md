@@ -384,6 +384,15 @@ bulunamadı; oran 52054100 (CN8) düzeyinden okundu."* Sessizce daha kaba bir or
 bulunamadı demekten daha tehlikelidir. Düşmeyle birlikte ölçülen kapsam **120/120 (%100)**,
 %97,5'inde üçüncü ülke vergisi ve %89,2'sinde Türkiye'ye özgü satır dolu.
 
+**İhracat dosyasında sıra: önce ücretsiz, sonra ücretli arşiv.** AB'ye ihracatta
+`customs_advisor._export_requirements` önce Access2Markets'i sorar; cevap alamazsa
+ücretli TARIC **arşivine** düşer (`archive_only=True` — ücretli aktör ön değerlendirme
+yolundan **asla** tetiklenmez, rota dakikada 20 isteğe açıktır). İkisi de veremezse
+kademe dürüstçe düşer ve kullanıcıya ücretli canlı sorguyu kendi başlatma seçeneği
+kalır. Ücretsiz çağrı `A2M_EXPORT_TIMEOUT_SECONDS` (varsayılan 12 sn) ile sınırlıdır:
+kaynak yavaşlarsa dosya bekletilmez. Sıra ölçümle belirlendi — ücretsiz kaynak hem
+daha geniş kapsıyor hem daha güncel (canlı portal ↔ aylık döküm).
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir

@@ -57,6 +57,10 @@ from tariff_engine import (
 
 logger = logging.getLogger(__name__)
 
+# İhracat dosyasında ücretsiz AB kaynağına verilen süre. Ön değerlendirme rotası dakikada
+# 20 isteğe açık; kaynak yavaşlarsa dosya bekletilmez, ücretli arşive düşülür.
+_A2M_EXPORT_TIMEOUT_SECONDS = max(2.0, float(os.environ.get("A2M_EXPORT_TIMEOUT_SECONDS") or 12))
+
 _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
 # PRD Faz 3.2: hibrit indeksten (BM25 + embedding) çekilen dipnotlu kanıt.
 # Sınıflandırmada nomenklatür/tarife tanımları, AB tüzük sayfaları ve önlem ürün
@@ -2643,16 +2647,60 @@ class CustomsAdvisor:
         self.ebti_engine = ebti_engine
         # İhracat yönünde hedef ülke oranını okuyan motorlar; sunucuda bağlanır (ebti deseni).
         self.eu_taric_engine: Any = None
+        # Aynı AB verisinin ücretsiz kaynağı; AB dalında ücretliden ÖNCE denenir.
+        self.access2markets_engine: Any = None
         self.foreign_tariff_engine: Any = None
         self.eu_vat_index: Any = None
+
+
+    async def _eu_free_duty(
+        self, code: str, profile: Any
+    ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+        """AB oranını ücretsiz Access2Markets kaynağından okur; ücret doğurmaz.
+
+        Ön değerlendirme rotası dakikada 20 isteğe açık olduğu için çağrı bir zaman
+        aşımıyla sınırlanır: kaynak yavaşlarsa dosya bekletilmez, sessizce ücretli
+        arşive düşülür. Motor kendi kalıcı arşivini tuttuğundan aynı kod ikinci kez
+        ağa hiç çıkmaz.
+        """
+        engine = self.access2markets_engine
+        if engine is None:
+            return None, None
+        destination = (getattr(profile, "iso2", None) or "").strip().upper()
+        try:
+            result = await asyncio.wait_for(
+                engine.lookup(code, origin=EXPORTER_ISO2, destination=destination or None),
+                timeout=_A2M_EXPORT_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.info("Access2Markets zaman aşımı; ücretli arşive düşülüyor (%s)", code[:10])
+            return None, None
+        except Exception:
+            logger.exception("Access2Markets ihracat sorgusu başarısız")
+            return None, None
+        if getattr(result, "status", "") != "ok" or not getattr(result, "summary", None):
+            return None, None
+        duty = dict(result.summary)
+        if getattr(result, "taxes", None):
+            duty["destination_taxes"] = result.taxes
+        if getattr(result, "documents", None):
+            duty["destination_documents"] = result.documents
+        return duty, {
+            "url": str(getattr(result, "source_url", "") or ""),
+            "retrieved_at": str(getattr(result, "fetched_at", "") or ""),
+            "sha256": str(getattr(result, "sha256", "") or ""),
+            "partner": EXPORTER_ISO2,
+        }
 
     async def _export_requirements(self, inquiry: CustomsInquiry) -> ExportRequirements:
         """Hedef ülke bloğunu kurar; oran YALNIZ resmî bir motordan okunduysa taşınır.
 
-        AB için ``archive_only=True`` kullanılır: ön değerlendirme rotası dakikada 20
-        istekle açıktır ve ücretli aktörü oradan tetiklemek TARIC bütçesini sınırsız
-        hâle getirirdi. Arşiv ıskasında kademe dürüstçe düşürülür ve kullanıcıya
-        ücretli canlı sorguyu kendi başlatma seçeneği (``on_demand_lookup``) verilir.
+        AB dalında sıra: **önce ücretsiz** Access2Markets (Komisyonun kendi canlı
+        portalı), sonra ücretli TARIC **arşivi** (``archive_only=True``). Ücretli
+        aktörün kendisi buradan asla tetiklenmez: ön değerlendirme rotası dakikada 20
+        isteğe açıktır ve onu buradan çağırmak TARIC bütçesini sınırsız hâle getirirdi.
+        İkisi de veremezse kademe dürüstçe düşürülür ve kullanıcıya ücretli canlı
+        sorguyu kendi başlatma seçeneği (``on_demand_lookup``) verilir.
         """
         profile = destination_profile(inquiry.destination_country)
         duty: dict[str, Any] | None = None
@@ -2662,18 +2710,25 @@ class CustomsAdvisor:
 
         if len(code) >= 6:
             try:
-                if profile.engine == "eu_taric" and self.eu_taric_engine is not None:
-                    result = await self.eu_taric_engine.lookup(
-                        code[:8], origin=EXPORTER_ISO2, archive_only=True
-                    )
-                    if getattr(result, "status", "") == "ok" and getattr(result, "summary", None):
-                        duty = dict(result.summary)
-                        source = {
-                            "url": "https://ec.europa.eu/taxation_customs/dds2/taric/",
-                            "retrieved_at": str(getattr(result, "fetched_at", "") or ""),
-                            "partner": EXPORTER_ISO2,
-                        }
-                    else:
+                if profile.engine == "eu_taric":
+                    # Önce ÜCRETSİZ kaynak (Komisyonun kendi canlı portalı), sonra ücretli
+                    # arşiv. Sıra böyle çünkü ölçüm ücretsiz kaynağın hem daha geniş
+                    # kapsadığını (120/120'ye karşı 7121 denemenin %62,3'ü) hem de daha
+                    # güncel olduğunu gösterdi (canlı portal ↔ aylık döküm). Ücretli yol
+                    # yine yedek: arşivde olup ücretsiz kaynakta okunamayan kod boşa düşmez.
+                    duty, source = await self._eu_free_duty(code, profile)
+                    if duty is None and self.eu_taric_engine is not None:
+                        result = await self.eu_taric_engine.lookup(
+                            code[:8], origin=EXPORTER_ISO2, archive_only=True
+                        )
+                        if getattr(result, "status", "") == "ok" and getattr(result, "summary", None):
+                            duty = dict(result.summary)
+                            source = {
+                                "url": "https://ec.europa.eu/taxation_customs/dds2/taric/",
+                                "retrieved_at": str(getattr(result, "fetched_at", "") or ""),
+                                "partner": EXPORTER_ISO2,
+                            }
+                    if duty is None:
                         profile = downgrade_profile(
                             profile, reason="archive_miss", note=archive_miss_note()
                         )

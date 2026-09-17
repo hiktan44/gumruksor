@@ -198,6 +198,98 @@ class ExportEvidencePackTests(unittest.IsolatedAsyncioTestCase):
         duty = next(f for f in requirements.declaration_fields if f.key == "third_country_duty")
         self.assertEqual(duty.certainty, "verified")
 
+    async def test_the_free_source_is_tried_before_the_paid_archive(self) -> None:
+        """Sıra ölçümle belirlendi: ücretsiz kaynak daha geniş kapsıyor ve daha güncel.
+
+        Ücretli arşiv yedekte kalır, ama ücretsiz kaynak cevap verdiyse ücretli tarafa
+        hiç gidilmez — sıranın tersine dönmesi sessizce eski/dar veriye düşmek olurdu.
+        """
+        service = customs_advisor.CustomsAdvisor()
+        paid_calls: list = []
+
+        class _Paid:
+            async def lookup(self, gtip, *, origin="TR", refresh=False, archive_only=False):
+                paid_calls.append(gtip)
+                return SimpleNamespace(status="ok", summary={"mfn_rate": "99 %"}, fetched_at=None, warnings=[])
+
+        class _Free:
+            async def lookup(self, code, *, origin="TR", destination=None, refresh=False, with_extras=True):
+                self.seen = {"code": code, "origin": origin, "destination": destination}
+                return SimpleNamespace(
+                    status="ok",
+                    summary={"mfn_rate": "12.00%", "match_level": "cn8"},
+                    taxes=[{"tax_type": "VAT", "rate": "19%"}],
+                    documents=[{"code": "cominvce", "label": "Commercial invoice"}],
+                    fetched_at="2026-09-17T10:00:00+00:00",
+                    source_url="https://trade.ec.europa.eu/access-to-markets/api/tariffs/get/6109100000/TR/DE",
+                    sha256="b" * 64,
+                    warnings=[],
+                )
+
+        free = _Free()
+        service.access2markets_engine = free
+        service.eu_taric_engine = _Paid()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(paid_calls, [], "ücretsiz kaynak cevap verdiyse ücretli tarafa gidilmez")
+        self.assertEqual(requirements.destination.tier, "rates")
+        self.assertEqual(requirements.destination_duty["mfn_rate"], "12.00%")
+        self.assertEqual(free.seen["origin"], "TR")
+        self.assertIn("trade.ec.europa.eu", requirements.duty_source["url"])
+
+    async def test_the_paid_archive_still_answers_when_the_free_source_cannot(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Free:
+            async def lookup(self, code, *, origin="TR", destination=None, refresh=False, with_extras=True):
+                return SimpleNamespace(status="not_found", summary={}, taxes=[], documents=[], warnings=[])
+
+        class _Paid:
+            async def lookup(self, gtip, *, origin="TR", refresh=False, archive_only=False):
+                assert archive_only is True, "ücretli aktör ön değerlendirmeden tetiklenemez"
+                return SimpleNamespace(
+                    status="ok", summary={"mfn_rate": "12.00 %"}, fetched_at="2026-09-10T00:00:00+00:00", warnings=[]
+                )
+
+        service.access2markets_engine = _Free()
+        service.eu_taric_engine = _Paid()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(requirements.destination.tier, "rates")
+        self.assertEqual(requirements.destination_duty["mfn_rate"], "12.00 %")
+
+    async def test_a_slow_free_source_does_not_stall_the_file(self) -> None:
+        # Kaynak yavaşlarsa dosya bekletilmez; ücretli arşive düşülür.
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Slow:
+            async def lookup(self, *args, **kwargs):
+                await asyncio.sleep(5)
+                raise AssertionError("zaman aşımından sonra sonuç kullanılmamalı")
+
+        class _Paid:
+            async def lookup(self, gtip, *, origin="TR", refresh=False, archive_only=False):
+                return SimpleNamespace(
+                    status="ok", summary={"mfn_rate": "12.00 %"}, fetched_at="2026-09-10T00:00:00+00:00", warnings=[]
+                )
+
+        service.access2markets_engine = _Slow()
+        service.eu_taric_engine = _Paid()
+        with patch.object(customs_advisor, "_A2M_EXPORT_TIMEOUT_SECONDS", 0.05):
+            requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(requirements.destination_duty["mfn_rate"], "12.00 %")
+
+    async def test_a_broken_free_source_never_invents_a_rate(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Broken:
+            async def lookup(self, *args, **kwargs):
+                raise RuntimeError("portal kapalı")
+
+        service.access2markets_engine = _Broken()
+        service.eu_taric_engine = None
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertIsNone(requirements.destination_duty)
+        self.assertEqual(requirements.destination.tier, "agreement_only")
+
     async def test_engine_failure_degrades_honestly_instead_of_guessing(self) -> None:
         service = customs_advisor.CustomsAdvisor()
 
