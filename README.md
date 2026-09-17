@@ -393,6 +393,17 @@ kalır. Ücretsiz çağrı `A2M_EXPORT_TIMEOUT_SECONDS` (varsayılan 12 sn) ile 
 kaynak yavaşlarsa dosya bekletilmez. Sıra ölçümle belirlendi — ücretsiz kaynak hem
 daha geniş kapsıyor hem daha güncel (canlı portal ↔ aylık döküm).
 
+**Toplu dolum ücretsiz olduğu için varsayılan açıktır** (`A2M_FILL_ENABLED=1`) ve
+bütçe kapısı yoktur; yerine kaynağa saygı sınırları vardır. Ölçülen maliyet kod başına
+**~2,3 sn** (istek 1,28 + kodların %42,5'inde CN8 düşmesi + 0,5 sn bekleme): 11.997
+kodluk katalog **sıralı 7,7 saat**, `A2M_CONCURRENCY=3` ile **~2,6 saat** sürer.
+Eş zamanlılık ücretsiz kaynakta maliyeti değiştirmez, yalnız duvar saatini kısaltır;
+bekleme semaforun **içinde** yapılır, böylece eş zamanlılık artsa da kaynağa giden
+istek sıklığı korunur. Döngü **iş varken** `A2M_FILL_BUSY_SECONDS` (10 sn) sonra
+tekrar çalışır, **kuyruk boşalınca** `A2M_FILL_INTERVAL_SECONDS` (15 dk) aralığına
+döner — sabit uzun aralık 200'lük turlarla kataloğu 15 güne yayıyordu. Bir kodun
+hatası turu düşürmez; o kod bir sonraki turda yeniden denenir.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
