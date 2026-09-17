@@ -404,6 +404,16 @@ tekrar çalışır, **kuyruk boşalınca** `A2M_FILL_INTERVAL_SECONDS` (15 dk) a
 döner — sabit uzun aralık 200'lük turlarla kataloğu 15 güne yayıyordu. Bir kodun
 hatası turu düşürmez; o kod bir sonraki turda yeniden denenir.
 
+**Geçici hatada yeniden deneme, kalıcı hatada değil.** Canlı dağıtımdan sonraki ilk
+ölçüm dolumun beklenenden çok yavaş ilerlediğini gösterdi (3,5 dakikada 5 kod) ve
+`status().errors` alanında aralıklı HTTP hataları vardı — oysa aynı istekler başka bir
+ağdan 24/24 başarılıydı (3 eş zamanlı, 4,2 sn). Yani sorun kodda değil, çıkış
+yolunda ya da karşı tarafın anlık sınırındaydı. Teşhis kör kalmasın diye hata metni
+artık **durum kodunu taşır** (`A2MHttpError(429)`; "HTTPStatusError" tek başına 403 mü
+429 mu söylemiyordu) ve `429/500/502/503/504` kodları `A2M_RETRY_ATTEMPTS` (3) kez,
+`Retry-After` başlığına uyarak, üstel geri çekilmeyle tekrarlanır. `403` gibi kalıcı
+kodlarda **yeniden denenmez** — kaynağı boşuna zorlamak doğru değil.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
