@@ -654,5 +654,84 @@ class RetryTests(unittest.TestCase):
 
 
 
+class AdaptivePaceTests(unittest.TestCase):
+    """429 görünce yavaşla, temiz turlarda geri aç.
+
+    Sabit hız canlıda işe yaramadı: dolum 124 kodda tamamen durdu, her istek 429
+    aldı. Kaynağın tepkisine göre kendini ayarlamayan bir dolum ya kataloğu hiç
+    bitirmez ya da kaynağı boşuna zorlar.
+    """
+
+    @staticmethod
+    def _no_sleep():
+        """Testte gerçekten beklemeyiz; ölçtüğümüz şey süre değil, ayarın kendisi."""
+
+        async def _sleep(_seconds):
+            return None
+
+        return unittest.mock.patch.object(a2m.asyncio, "sleep", _sleep)
+
+    def _rate_limited_engine(self, tmp: str, *, always: bool = True):
+        state = {"calls": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            state["calls"] += 1
+            if always:
+                return httpx.Response(429, text="slow down")
+            return httpx.Response(200, json=_tariff_body())
+
+        return _engine(
+            tmp,
+            transport=httpx.MockTransport(handler),
+            code_source=lambda: ["6109100000", "6109901000"],
+            fill_enabled=True,
+            delay_seconds=0.5,
+            concurrency=3,
+        )
+
+    def test_a_rate_limited_round_slows_down_and_drops_to_one_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._rate_limited_engine(tmp)
+            with self._no_sleep():
+                report = asyncio.run(engine.fill_once())
+        self.assertTrue(report["rate_limited"])
+        self.assertEqual(report["concurrency"], 1, "429 görülünce tek işçiye inilir")
+        self.assertGreater(report["delay_seconds"], 0.5, "bekleme artmalı")
+
+    def test_the_delay_doubles_but_never_passes_the_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._rate_limited_engine(tmp)
+            with self._no_sleep():
+                for _ in range(12):
+                    asyncio.run(engine.fill_once())
+        self.assertLessEqual(engine._delay_seconds, a2m.A2M_MAX_DELAY_SECONDS)
+
+    def test_clean_rounds_open_the_pace_back_up(self) -> None:
+        # Kalıcı olarak en yavaş ayara mahkûm kalmak da kataloğu bitirmezdi.
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._rate_limited_engine(tmp)
+            with self._no_sleep():
+                asyncio.run(engine.fill_once())
+                self.assertEqual(engine._effective_concurrency, 1)
+                engine._http = httpx.AsyncClient(transport=_transport(), follow_redirects=False)
+                for _ in range(a2m.A2M_PACE_RECOVER_ROUNDS * 3):
+                    asyncio.run(engine.fill_once())
+        self.assertGreater(engine._effective_concurrency, 1, "temiz turlarda hız geri açılmalı")
+
+    def test_a_rate_limit_waits_longer_than_an_ordinary_retry(self) -> None:
+        # "Yavaşla" diyen bir sunucuya 1 saniye sonra dönmek yavaşlamak değildir.
+        self.assertGreater(a2m._RATE_LIMIT_BASE_SECONDS, a2m._RETRY_BASE_SECONDS)
+
+    def test_the_status_shows_the_current_pace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._rate_limited_engine(tmp)
+            with self._no_sleep():
+                asyncio.run(engine.fill_once())
+            status = engine.status()
+        self.assertEqual(status["fill"]["effective_concurrency"], 1)
+        self.assertGreater(status["fill"]["delay_seconds"], 0.5)
+
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
