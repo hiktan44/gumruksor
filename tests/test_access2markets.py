@@ -119,7 +119,15 @@ _SCHEMA_BODY = {
 }
 
 
-def _transport(*, calls: list | None = None, tariff=None, fail: bool = False) -> httpx.MockTransport:
+def _transport(
+    *, calls: list | None = None, tariff=None, fail: bool = False, only_codes: set | None = None
+) -> httpx.MockTransport:
+    """``only_codes`` verilirse yalnız o kodlar veri döndürür; ötekiler boş liste.
+
+    Gerçek kaynağın davranışı bu: AB'de karşılığı olmayan kod hata değil **boş liste**
+    döndürüyor, daha kaba kod ise veri veriyor.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
         if calls is not None:
             calls.append(str(request.url))
@@ -127,6 +135,10 @@ def _transport(*, calls: list | None = None, tariff=None, fail: bool = False) ->
         if fail:
             return httpx.Response(503, text="down")
         if "/api/tariffs/get/" in path:
+            if only_codes is not None:
+                queried = path.split("/api/tariffs/get/")[1].split("/")[0]
+                if queried not in only_codes:
+                    return httpx.Response(200, json=[])
             body = _tariff_body() if tariff is None else tariff
             return httpx.Response(200, json=body)
         if "/api/taxes/get/" in path:
@@ -283,6 +295,58 @@ class LookupTests(unittest.TestCase):
             engine = _engine(tmp, transport=_transport(calls=calls))
             asyncio.run(engine.lookup("6109100000", origin="TR", destination="DE"))
         self.assertIn("trade.ec.europa.eu/access-to-markets/api/tariffs/get/6109100000/TR/DE", calls[0])
+
+
+class CodeLevelFallbackTests(unittest.TestCase):
+    """10 hanenin AB'de karşılığı yoksa oran CN8'den okunur — ölçümün zorunlu kıldığı dal.
+
+    40 fasla yayılmış 120 gerçek GTİP denendiğinde 51'i (%42,5) 10 hanede boş döndü ama
+    CN8'de veri verdi. Düşme olmasaydı bu kodlar "AB'de bulunamadı" diye raporlanacaktı.
+    """
+
+    def test_a_ten_digit_miss_falls_back_to_cn8(self) -> None:
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(calls=calls, only_codes={"52054100"}))
+            result = asyncio.run(engine.lookup("520541009000"))
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.summary["match_level"], "cn8")
+        self.assertEqual(result.summary["matched_code"], "52054100")
+        self.assertEqual(result.summary["queried_code"], "5205410090")
+        tariff_calls = [c for c in calls if "/api/tariffs/get/" in c]
+        self.assertEqual(len(tariff_calls), 2, "önce 10 hane, sonra CN8 denenir")
+
+    def test_the_user_is_told_the_rate_came_from_a_broader_code(self) -> None:
+        # Sessizce daha kaba bir oran vermek, bulunamadı demekten daha tehlikelidir.
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(only_codes={"52054100"}))
+            result = asyncio.run(engine.lookup("520541009000"))
+        self.assertTrue(any("CN8" in w for w in result.warnings), result.warnings)
+        self.assertTrue(any("5205410090" in w for w in result.warnings), result.warnings)
+
+    def test_an_exact_ten_digit_hit_does_not_fall_back_or_warn(self) -> None:
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(calls=calls, only_codes={"6109100000"}))
+            result = asyncio.run(engine.lookup("610910000011"))
+        self.assertEqual(result.summary["match_level"], "hs10")
+        tariff_calls = [c for c in calls if "/api/tariffs/get/" in c]
+        self.assertEqual(len(tariff_calls), 1, "tam isabet varsa daha kaba kod denenmez")
+        self.assertEqual(result.warnings, [])
+
+    def test_hs6_is_the_last_resort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(only_codes={"610910"}))
+            result = asyncio.run(engine.lookup("610910000011"))
+        self.assertEqual(result.summary["match_level"], "hs6")
+        self.assertEqual(result.summary["matched_code"], "610910")
+
+    def test_a_code_absent_at_every_level_is_still_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(only_codes=set()))
+            result = asyncio.run(engine.lookup("999999999900"))
+        self.assertEqual(result.status, "not_found")
+        self.assertEqual(result.summary, {})
 
 
 class OutboundGuardTests(unittest.TestCase):
