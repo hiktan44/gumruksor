@@ -195,3 +195,7 @@ ebti_decisions.sqlite3-*
 # AB TARIC sorgu arsivi (calisma aninda olusur).
 eu_taric.sqlite3
 eu_taric.sqlite3-*
+
+# Access2Markets arsivi (calisma aninda olusur).
+access2markets.sqlite3
+access2markets.sqlite3-*

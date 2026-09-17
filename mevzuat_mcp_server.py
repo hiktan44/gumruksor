@@ -58,6 +58,7 @@ from foreign_tariff import (
     ForeignTariffEngine,
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
+from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -108,6 +109,11 @@ ebti_engine = EbtiDecisionEngine()
 # AB TARIC oranları: sorgu başına ücretli dış kaynak; talep üzerine ve tavanlı toplu dolumla.
 eu_taric_engine = EuTaricEngine(
     # Aday AB kodları Türk tarife cetvelinden türetilir: GTİP'in ilk 10 hanesi AB TARIC kodudur.
+    code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
+)
+# Aynı AB verisinin ücretsiz kaynağı (Access2Markets açık uçları). Ücretli yolun yerine
+# geçmez; yanında durur ve ``/api/admin/eu-taric/compare`` ikisini karşılaştırır.
+access2markets_engine = Access2MarketsEngine(
     code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
 )
 # Unified, persistent change ledger shared by every official data engine.
@@ -171,6 +177,9 @@ if FOREIGN_TARIFF_SYNC_ENABLED and UK_MEASURES_ARCHIVE_ENABLED:
 if EU_TARIC_FILL_ENABLED:
     # AB oranları kod × ülke başına ücretlidir; döngü aylık harcama tavanına kadar ilerler.
     BACKGROUND_LOOPS.append(("eu-taric-fill", eu_taric_engine.fill_loop))
+if A2M_FILL_ENABLED:
+    # Aynı katalog, ücretsiz kaynaktan: tavan yok, yalnız kaynağa saygı için hız sınırı var.
+    BACKGROUND_LOOPS.append(("access2markets-fill", access2markets_engine.periodic_fill_loop))
 if storage_service.enabled:
     # Yeri doldurulamaz veritabanları (hesaplar, ücretli AB TARIC arşivi, defter,
     # geçmiş anlık görüntüler) günlük olarak aynı diskte yedeklenir.
@@ -2964,6 +2973,36 @@ async def lookup_eu_taric_measures(
     """
     try:
         result = await eu_taric_engine.lookup(gtip, origin=origin_country)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "AB vergisi, menşe kuralı ve belge şartlarını sorgula (ücretsiz kaynak)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_eu_access2markets(
+    gtip: str = Field(..., min_length=4, max_length=20, description="4-12 haneli kod; ilk 10 hane AB'ye sorulur."),
+    origin_country: str = Field("TR", max_length=4, description="Eşyanın menşei (varsayılan TR)."),
+    destination_country: str = Field("DE", max_length=4, description="AB üyesi varış ülkesi ISO kodu."),
+) -> dict:
+    """Look up EU duties, internal taxes and required documents from Access2Markets.
+
+    Komisyonun Access2Markets açık uçlarından gelir ve **ücret doğurmaz**. Varış ülkesi
+    AB üyesi değilse oran okunmaz (kaynak o yönde ölçü satırı değil tarife şeması
+    döndürüyor). Hiçbir değer Türkiye maliyet hesabına aktarılmaz.
+    """
+    try:
+        result = await access2markets_engine.lookup(
+            gtip, origin=origin_country, destination=destination_country
+        )
     except ValueError as exc:
         return {"error": str(exc)}
     return result.as_dict()
