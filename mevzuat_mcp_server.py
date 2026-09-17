@@ -221,6 +221,8 @@ customs_advisor_service.ebti_engine = ebti_engine
 # İhracat yönü: hedef ülke oranı yalnız bu iki resmî motordan okunur. AB tarafı
 # ön değerlendirmede archive_only ile çağrılır, yani ücretli aktör tetiklenmez.
 customs_advisor_service.eu_taric_engine = eu_taric_engine
+# AB dalında önce ücretsiz kaynak denenir; ücretli arşiv yedekte kalır.
+customs_advisor_service.access2markets_engine = access2markets_engine
 customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
 # AB-27 KDV oranları (tohum + TEDB'den otomatik yükseltme).
 eu_vat_index = EuVatRates()
