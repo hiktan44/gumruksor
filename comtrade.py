@@ -10,9 +10,18 @@ Uç ``https://comtradeapi.un.org/public/v1/preview/C/A/HS`` anahtarsız ve ücre
 
 * **Satırlar hem toplamı hem kırılımı içerir.** Körlemesine toplamak çift sayar:
   Almanya'ya 8517 ihracatı gerçek toplamda 19.154.002 USD iken tüm satırlar
-  toplandığında 55.768.235 USD çıkıyor (~3 katı). Doğru satır ``motCode == 0`` ve
-  ``customsCode == "C00"`` olandır; istek bu iki süzgeçle gönderilir ve gelen satırlar
-  **bir daha** süzülür (sunucu süzgeci yok sayarsa sessizce şişmiş rakam üretmeyelim).
+  toplandığında 55.768.235 USD çıkıyor (~3 katı). Kırılım **üç** boyutta oluyor ve
+  üçü de kapatılmalı: taşıma şekli (``motCode``), gümrük rejimi (``customsCode``) ve
+  **ikinci partner ülke** (``partner2Code``). Doğru satır üçünün de toplam olduğu
+  satırdır; istek bu üç süzgeçle gönderilir ve gelen satırlar **bir daha** süzülür
+  (sunucu bir süzgeci yok sayarsa sessizce şişmiş rakam üretmeyelim).
+* **``partner2Code`` unutulursa her ülke iki kez listelenir.** 17.09.2026 ölçümü,
+  851713 / 2024 / Türkiye ihracatı: üç süzgeçten yalnız ikisi gönderildiğinde 112 satır
+  ve 38 partnerin her biri **iki kez** (biri ``partner2Code=0``, biri kendi kodu) geliyor;
+  üçüncü süzgeçle 38 satır ve 38 ayrı partner kalıyor. Ayrıca ``partnerCode=0`` satırı
+  tek başına "Dünya toplamı" **değildir**: o kodun da ``partner2Code`` kırılımları var.
+  Gerçek dünya toplamı yalnız ``partnerCode=0`` **ve** ``partner2Code=0`` satırıdır —
+  ölçümde 16.595.026 USD, ki bu 37 partnerin toplamına birebir eşit.
 * Tek istek en fazla **500 satır** döndürür; daha fazlası kırpılır ve sonuç
   ``truncated`` ile işaretlenir — eksik sıralamayı tam sanmak yanlış karar verdirir.
 * **Tek dönem** kabul edilir; ``period=2020,2021`` isteği 400 döner. Eğilim için yıl
@@ -141,12 +150,18 @@ def _number(value: Any) -> float | None:
 # --------------------------------------------------------------------------- saf çözümleyiciler
 
 def is_total_row(row: dict[str, Any]) -> bool:
-    """Yalnız tam toplam satırı: taşıma şekli ve gümrük rejimi kırılımsız.
+    """Yalnız tam toplam satırı: taşıma şekli, gümrük rejimi ve ikinci partner kırılımsız.
 
-    Bu süzgeç olmadan aynı ticaret birden çok satırda sayılır. Ölçülen örnek: Almanya
-    19.154.002 USD (doğru) ↔ 55.768.235 USD (tüm satırlar toplanınca).
+    Üç boyut da kapatılmalı; biri açık kalırsa aynı ticaret birden çok satırda sayılır.
+    Ölçülen örnekler: taşıma şekli açıkken Almanya 19.154.002 yerine 55.768.235 USD
+    (~3 katı); ikinci partner açıkken 38 partnerin **her biri iki kez** listeleniyor ve
+    pay yüzdeleri yarıya düşüyor.
     """
-    return row.get("motCode") in (0, "0") and str(row.get("customsCode") or "") == "C00"
+    return (
+        row.get("motCode") in (0, "0")
+        and str(row.get("customsCode") or "") == "C00"
+        and row.get("partner2Code") in (0, "0", None)
+    )
 
 
 def parse_rows(payload: Any) -> list[dict[str, Any]]:
@@ -208,7 +223,12 @@ def rank_partners(
 
 
 def world_total(rows: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-    """Comtrade'in kendi 'Dünya' satırı: pay hesabının doğru paydası."""
+    """Comtrade'in kendi 'Dünya' satırı: pay hesabının doğru paydası.
+
+    Satırlar ``parse_rows`` tarafından zaten ``partner2Code=0`` ile süzüldüğü için
+    burada ``partnerCode=0`` tektir. Süzgeçsiz ham gövdede ``partnerCode=0`` satırı
+    **tek başına dünya toplamı değildir**; onun da ikinci partner kırılımları vardır.
+    """
     for row in rows:
         if row.get("partner_code") in (WORLD_CODE, str(WORLD_CODE)):
             return {"value_usd": row.get("value_usd"), "net_weight_kg": row.get("net_weight_kg")}
@@ -429,10 +449,12 @@ class ComtradeEngine:
                 "period": int(year),
                 "cmdCode": code,
                 "flowCode": flow,
-                # İKİSİ DE ŞART: sunucu yalnız tam toplam satırlarını döndürsün, yoksa
-                # 500 satırlık pencere kırılımlarla dolar ve sıralama eksik kalır.
+                # ÜÇÜ DE ŞART: sunucu yalnız tam toplam satırlarını döndürsün. Biri
+                # eksik kalırsa 500 satırlık pencere kırılımlarla dolar, sıralama eksik
+                # kalır ve aynı ülke birden çok kez listelenir.
                 "motCode": 0,
                 "customsCode": "C00",
+                "partner2Code": 0,
             }
         )
         return f"{COMTRADE_BASE}/public/v1/preview/C/A/HS?{query}"

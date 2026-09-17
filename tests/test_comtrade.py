@@ -37,6 +37,7 @@ def _row(
     weight: float | None = None,
     mot: int = 0,
     customs: str = "C00",
+    partner2: int = 0,
     year: int = 2024,
     flow: str = "X",
     code: str = "8517",
@@ -48,7 +49,7 @@ def _row(
         "reporterCode": comtrade.TURKIYE_CODE,
         "flowCode": flow,
         "partnerCode": partner,
-        "partner2Code": 0,
+        "partner2Code": partner2,
         "classificationCode": "H6",
         "cmdCode": code,
         "motCode": mot,
@@ -63,13 +64,17 @@ def _row(
 # Almanya'nın canlı ölçülmüş gerçek rakamları: toplam satır 19.154.002 USD / 107.318 kg.
 # Kırılım satırları eklenince körlemesine toplam 55.768.235 USD'ye çıkıyor (~3 katı).
 GERMANY_TRUE_VALUE = 19_154_002.0
-GERMANY_NAIVE_SUM = 55_768_235.0
+# Üç kırılım boyutu da toplanırsa (taşıma şekli ×2 + ikinci partner ×1):
+GERMANY_NAIVE_SUM = 74_922_237.0
 
 _GERMANY_ROWS = [
     _row(partner=276, value=GERMANY_TRUE_VALUE, weight=107_318.0),
     # Aynı ticaretin taşıma şekli kırılımları: toplam satırla ÇAKIŞIR, toplanmaz.
     _row(partner=276, value=20_000_000.0, weight=60_000.0, mot=1),
     _row(partner=276, value=16_614_233.0, weight=40_000.0, mot=5),
+    # İkinci partner (sevk/menşe ülkesi) kırılımı: AYNI değeri taşır. Süzülmezse
+    # Almanya tabloda iki kez çıkar ve pay yüzdeleri yarıya düşer (canlı ölçüldü).
+    _row(partner=276, value=GERMANY_TRUE_VALUE, weight=107_318.0, partner2=276),
 ]
 
 _MARKET_PAYLOAD = {
@@ -80,6 +85,8 @@ _MARKET_PAYLOAD = {
         _row(partner=784, value=22_813_803.0, weight=77_943.0),
         _row(partner=616, value=10_186_617.0, weight=66_612.0),
         _row(partner=0, value=120_000_000.0, weight=900_000.0),
+        # "Dünya" kodunun da ikinci partner kırılımı var: bu satır dünya toplamı DEĞİL.
+        _row(partner=0, value=11_451_512.0, weight=12_409.0, partner2=528),
     ],
 }
 
@@ -117,13 +124,15 @@ class PureFunctionTests(unittest.TestCase):
 
     def test_only_aggregate_rows_are_parsed(self) -> None:
         rows = comtrade.parse_rows(_MARKET_PAYLOAD)
-        self.assertEqual(len(rows), 4)  # 3 partner + Dünya; kırılımlar düştü
+        self.assertEqual(len(rows), 4)  # 3 partner + Dünya; üç boyuttaki kırılımlar düştü
         germany = [row for row in rows if row["partner_code"] == 276]
         self.assertEqual(len(germany), 1)
         self.assertEqual(germany[0]["value_usd"], GERMANY_TRUE_VALUE)
 
-    def test_naive_sum_would_have_tripled_germany(self) -> None:
+    def test_naive_sum_would_have_multiplied_germany(self) -> None:
         # Asıl hatanın gerileme kilidi: kırılım satırları süzülmezse rakam şişiyor.
+        # Canlıda ölçülen iki boyutlu hâli 55.768.235 USD idi (~3 kat); üçüncü boyut
+        # (ikinci partner) da eklenince 74.922.237 USD'ye, yani ~3,9 katına çıkıyor.
         naive = sum(
             float(row["fobvalue"])
             for row in _MARKET_PAYLOAD["data"]
@@ -138,9 +147,24 @@ class PureFunctionTests(unittest.TestCase):
         self.assertNotEqual(parsed, naive)
 
     def test_is_total_row_accepts_string_codes(self) -> None:
-        self.assertTrue(comtrade.is_total_row({"motCode": "0", "customsCode": "C00"}))
-        self.assertFalse(comtrade.is_total_row({"motCode": 1, "customsCode": "C00"}))
-        self.assertFalse(comtrade.is_total_row({"motCode": 0, "customsCode": "C01"}))
+        self.assertTrue(comtrade.is_total_row({"motCode": "0", "customsCode": "C00", "partner2Code": "0"}))
+        self.assertFalse(comtrade.is_total_row({"motCode": 1, "customsCode": "C00", "partner2Code": 0}))
+        self.assertFalse(comtrade.is_total_row({"motCode": 0, "customsCode": "C01", "partner2Code": 0}))
+        # Üçüncü boyut: ikinci partner kırılımı da toplam satırı değildir.
+        self.assertFalse(comtrade.is_total_row({"motCode": 0, "customsCode": "C00", "partner2Code": 276}))
+
+    def test_second_partner_breakdown_does_not_duplicate_a_country(self) -> None:
+        """Canlı ölçümün gerileme kilidi: partner2 süzülmezse her ülke iki kez çıkıyordu."""
+        ranked = comtrade.rank_partners(comtrade.parse_rows(_MARKET_PAYLOAD))
+        codes = [item["partner_code"] for item in ranked]
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertEqual(codes.count(276), 1)
+
+    def test_world_row_is_not_taken_from_a_second_partner_breakdown(self) -> None:
+        """``partnerCode=0`` satırı tek başına dünya toplamı DEĞİL; kırılımı da var."""
+        world = comtrade.world_total(comtrade.parse_rows(_MARKET_PAYLOAD))
+        self.assertEqual(world["value_usd"], 120_000_000.0)
+        self.assertNotEqual(world["value_usd"], 11_451_512.0)
 
     def test_rank_partners_drops_world_and_derives_unit_price(self) -> None:
         rows = comtrade.parse_rows(_MARKET_PAYLOAD)
@@ -190,9 +214,11 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(report.status, "ok")
         self.assertEqual(len(seen), 1)
         query = seen[0]
-        # Bu iki süzgeç olmadan 500 satırlık pencere kırılımlarla dolar.
+        # Bu üç süzgeç olmadan 500 satırlık pencere kırılımlarla dolar ve aynı ülke
+        # birden çok kez listelenir.
         self.assertEqual(query["motCode"], ["0"])
         self.assertEqual(query["customsCode"], ["C00"])
+        self.assertEqual(query["partner2Code"], ["0"])
         self.assertEqual(query["cmdCode"], ["851713"])
         self.assertEqual(query["period"], ["2024"])
         self.assertEqual(query["flowCode"], ["X"])

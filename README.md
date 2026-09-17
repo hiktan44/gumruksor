@@ -501,12 +501,19 @@ uyarısı taşır.
 
 17.09.2026'da canlı ölçülen ve kodun dayandığı olgular:
 
-* **Satırlar hem toplamı hem kırılımı içerir.** Körlemesine toplamak çift sayar: Türkiye'nin
-  Almanya'ya 8517 ihracatı gerçek toplamda **19.154.002 USD** iken tüm satırlar toplandığında
-  **55.768.235 USD** çıkıyor (~3 katı). Doğru satır `motCode == 0` ve `customsCode == "C00"`
-  olandır; istek bu iki süzgeçle gönderilir **ve** gelen satırlar bir daha süzülür (sunucu
-  süzgeci yok sayarsa sessizce şişmiş rakam üretmeyelim). Bu, testlerde gerileme kilidiyle
-  korunur.
+* **Satırlar hem toplamı hem kırılımı içerir ve kırılım üç boyutlu.** Körlemesine toplamak
+  çift sayar: Türkiye'nin Almanya'ya 8517 ihracatı gerçek toplamda **19.154.002 USD** iken
+  tüm satırlar toplandığında **55.768.235 USD** çıkıyor (~3 katı). Kapatılması gereken üç
+  boyut: taşıma şekli (`motCode`), gümrük rejimi (`customsCode`) ve **ikinci partner ülke**
+  (`partner2Code`). İstek üç süzgeçle gönderilir **ve** gelen satırlar bir daha süzülür
+  (sunucu bir süzgeci yok sayarsa sessizce şişmiş rakam üretmeyelim). Testlerde gerileme
+  kilidi var.
+* **`partner2Code` unutulursa her ülke iki kez listelenir.** 851713 / 2024 / Türkiye
+  ihracatı ölçümü: iki süzgeçle 112 satır ve 38 partnerin her biri **iki kez**; üç süzgeçle
+  38 satır, 38 ayrı partner. Ayrıca `partnerCode=0` satırı tek başına "Dünya toplamı"
+  **değildir** — onun da ikinci partner kırılımları vardır. Gerçek dünya toplamı yalnız
+  `partnerCode=0` **ve** `partner2Code=0` satırıdır (ölçümde 16.595.026 USD; 37 partnerin
+  toplamına birebir eşit).
 * Tek istek en fazla **500 satır** döndürür; kırpılma `truncated` ile bildirilir ve eksik
   sıralamayı tam sanmamak için uyarı yazılır.
 * **Tek dönem** kabul edilir (`period=2020,2021` → 400). Eğilim için yıl başına ayrı istek
