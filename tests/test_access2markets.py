@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+from types import SimpleNamespace
 from pathlib import Path
 
 import httpx
@@ -159,6 +160,8 @@ def _engine(tmp: str, **kwargs) -> a2m.Access2MarketsEngine:
         tmp,
         http=httpx.AsyncClient(transport=transport, follow_redirects=False),
         enabled=kwargs.pop("enabled", True),
+        # Testlerde geri çekilme beklemesi yok; yeniden deneme sayısı ayrı test edilir.
+        retry_base_seconds=kwargs.pop("retry_base_seconds", 0),
         **kwargs,
     )
 
@@ -586,6 +589,69 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status["archived_ok"], 1)
         self.assertEqual(status["fill"]["cost_usd"], 0.0)
         self.assertIn("trade.ec.europa.eu", status["base_url"])
+
+
+class RetryTests(unittest.TestCase):
+    """Geçici kodlarda (429/5xx) yeniden denenir; kalıcı kodlarda denenmez.
+
+    Canlı ölçüm sunucunun aralıklı hata aldığını, aynı isteklerin başka bir ağdan
+    %100 başarılı olduğunu gösterdi. Teşhisin kör kalmaması için durum kodu hata
+    metnine yazılır ve geçici kodlar kısa bir geri çekilmeyle tekrarlanır.
+    """
+
+    def _counting_transport(self, status: int, calls: list) -> httpx.MockTransport:
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(status)
+            if len(calls) >= 3:
+                return httpx.Response(200, json=_tariff_body())
+            return httpx.Response(status, text="busy")
+
+        return httpx.MockTransport(handler)
+
+    def test_a_rate_limit_is_retried_and_then_succeeds(self) -> None:
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=self._counting_transport(429, calls))
+            result = asyncio.run(engine.lookup("6109100000", with_extras=False))
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_server_error_is_retried(self) -> None:
+        calls: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=self._counting_transport(503, calls))
+            result = asyncio.run(engine.lookup("6109100000", with_extras=False))
+        self.assertEqual(result.status, "ok")
+
+    def test_a_permanent_error_is_not_retried(self) -> None:
+        calls: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(403)
+            return httpx.Response(403, text="forbidden")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=httpx.MockTransport(handler))
+            result = asyncio.run(engine.lookup("6109100000", with_extras=False))
+        self.assertEqual(result.status, "unavailable")
+        self.assertEqual(len(calls), 1, "403 geçici değildir; kaynağı boşuna zorlamayız")
+
+    def test_the_status_code_reaches_the_error_line(self) -> None:
+        # "HTTPStatusError" tek başına 403 mü 429 mu söylemiyordu; teşhis kör kalıyordu.
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, transport=_transport(fail=True))
+            asyncio.run(engine.lookup("6109100000", with_extras=False))
+            status = engine.status()
+        self.assertTrue(any("503" in line for line in status["errors"]), status["errors"])
+
+    def test_retry_after_is_obeyed_when_the_source_sends_one(self) -> None:
+        response = SimpleNamespace(headers={"retry-after": "7"})
+        self.assertEqual(a2m._retry_delay(response, 0, base=1.0), 7.0)
+
+    def test_an_unreadable_retry_after_falls_back_to_backoff(self) -> None:
+        response = SimpleNamespace(headers={"retry-after": "yarın"})
+        self.assertEqual(a2m._retry_delay(response, 1, base=1.0), 2.0)
+
 
 
 if __name__ == "__main__":  # pragma: no cover

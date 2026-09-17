@@ -170,6 +170,48 @@ def _sha256(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+
+# Geçici sayılan durum kodları: karşı tarafın anlık sınırı ya da geçici arızası.
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_RETRY_ATTEMPTS = max(1, _env_int("A2M_RETRY_ATTEMPTS", 3))
+_RETRY_BASE_SECONDS = max(0.1, _env_float("A2M_RETRY_BASE_SECONDS", 1.0))
+_RETRY_MAX_SECONDS = max(1.0, _env_float("A2M_RETRY_MAX_SECONDS", 20.0))
+
+
+class A2MHttpError(RuntimeError):
+    """Durum kodunu taşıyan hata: teşhis "HTTPStatusError" ile kör kalmasın."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _error_label(exc: Exception) -> str:
+    """Hata metni: durum kodu varsa onu da yazar, gövdeyi asla yazmaz."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    return f"{type(exc).__name__}({status})" if status else type(exc).__name__
+
+
+def _retry_delay(response: Any, attempt: int, *, base: float = _RETRY_BASE_SECONDS) -> float:
+    """``Retry-After`` varsa ona uyar, yoksa üstel geri çekilme."""
+    if base <= 0:
+        return 0.0
+    header = ""
+    try:
+        header = (response.headers.get("retry-after") or "").strip()
+    except Exception:
+        header = ""
+    if header:
+        try:
+            return min(_RETRY_MAX_SECONDS, max(0.0, float(header)))
+        except ValueError:
+            pass
+    return min(_RETRY_MAX_SECONDS, base * (2 ** attempt))
+
+
 # --------------------------------------------------------------------------- saf çözümleyiciler
 
 def measure_from_payload(raw: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +417,8 @@ class Access2MarketsEngine:
         fill_batch: int = A2M_FILL_BATCH,
         delay_seconds: float = A2M_DELAY_SECONDS,
         concurrency: int = A2M_CONCURRENCY,
+        retry_attempts: int = _RETRY_ATTEMPTS,
+        retry_base_seconds: float = _RETRY_BASE_SECONDS,
         destination: str = A2M_DEFAULT_DESTINATION,
         origins: Iterable[str] = ("TR",),
     ) -> None:
@@ -395,6 +439,8 @@ class Access2MarketsEngine:
         self.fill_batch = max(1, min(int(fill_batch or 1), 500))
         self.delay_seconds = max(0.0, float(delay_seconds or 0.0))
         self.concurrency = max(1, min(int(concurrency or 1), 6))
+        self.retry_attempts = max(1, int(retry_attempts or 1))
+        self.retry_base_seconds = max(0.0, float(retry_base_seconds or 0.0))
         self.destination = normalise_iso2(destination) or "DE"
         self.origins = tuple(dict.fromkeys(normalise_iso2(o) for o in origins if normalise_iso2(o))) or ("TR",)
         self._errors: list[str] = []
@@ -514,18 +560,39 @@ class Access2MarketsEngine:
 
     # ---- ağ
     async def _get_json(self, url: str, *, allowed_hosts: Iterable[str]) -> tuple[Any, str]:
-        """JSON çeker; **her yönlendirme adımında** hedef yeniden doğrulanır."""
+        """JSON çeker; **her yönlendirme adımında** hedef yeniden doğrulanır.
+
+        Geçici kabul edilen kodlarda (429 ve 5xx) kısa bir geri çekilmeyle yeniden
+        denenir. Sebep ölçüldü: canlı sunucudan gelen istekler aralıklı olarak hata
+        alırken aynı istekler başka bir ağdan %100 başarılıydı — yani sorun kodda
+        değil, çıkış yolunda/karşı tarafın anlık sınırında. Yeniden deneme sayısı
+        küçük ve `Retry-After` başlığı varsa ona uyulur; kaynağı biz zorlamayız.
+        """
         current = url
         for _ in range(_MAX_REDIRECTS):
             validate_outbound_url(current, allowed_hosts=allowed_hosts)
-            response = await self._http.get(current, headers={"Accept": "application/json"})
+            response: httpx.Response | None = None
+            for attempt in range(self.retry_attempts):
+                response = await self._http.get(current, headers={"Accept": "application/json"})
+                if response.status_code not in _RETRYABLE_STATUS or attempt == self.retry_attempts - 1:
+                    break
+                delay = _retry_delay(response, attempt, base=self.retry_base_seconds)
+                if delay:
+                    await asyncio.sleep(delay)
+            assert response is not None
             if response.is_redirect:
                 location = response.headers.get("location", "")
                 if not location:
                     raise ValueError("Access2Markets hedefsiz yönlendirme döndürdü.")
                 current = urljoin(str(response.url), location)
                 continue
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # Durum kodu hata metnine yazılır: "HTTPStatusError" tek başına
+                # 403 mü 429 mu 503 mü olduğunu söylemiyordu ve teşhisi kör bırakıyordu.
+                raise A2MHttpError(
+                    f"Access2Markets {response.status_code} döndürdü.",
+                    status_code=response.status_code,
+                )
             content = response.content
             if len(content) > _MAX_BYTES:
                 raise ValueError("Access2Markets yanıtı beklenenden büyük.")
@@ -611,7 +678,7 @@ class Access2MarketsEngine:
                 code, origin_iso, destination_iso
             )
         except Exception as exc:  # ağ/biçim hatası ürünü kırmamalı
-            message = f"Access2Markets tarife sorgusu başarısız: {type(exc).__name__}"
+            message = f"Access2Markets tarife sorgusu başarısız: {_error_label(exc)}"
             logger.warning("%s (%s)", message, code)
             self._errors = ([*self._errors, message])[-20:]
             if archived:
@@ -727,7 +794,7 @@ class Access2MarketsEngine:
         try:
             payload, _ = await self._get_json(url, allowed_hosts=_A2M_HOSTS)
         except Exception as exc:
-            self._errors = ([*self._errors, f"{type(exc).__name__}: yan uç alınamadı"])[-20:]
+            self._errors = ([*self._errors, f"{_error_label(exc)}: yan uç alınamadı"])[-20:]
             return []
         return parser(payload)
 
@@ -759,7 +826,7 @@ class Access2MarketsEngine:
         try:
             payload, final_url = await self._get_json(url, allowed_hosts=_ROO_HOSTS)
         except Exception as exc:
-            message = f"Menşe kuralı sorgusu başarısız: {type(exc).__name__}"
+            message = f"Menşe kuralı sorgusu başarısız: {_error_label(exc)}"
             self._errors = ([*self._errors, message])[-20:]
             return {"status": "unavailable", "chapter": chapter_code, "partner": partner_iso, "sections": [], "warnings": [message], "note": ROO_NOTE}
         sections = parse_rules_of_origin(payload)
@@ -831,6 +898,7 @@ class Access2MarketsEngine:
             "pending": len(pending),
             "batch": self.fill_batch,
             "concurrency": self.concurrency,
+            "retry_attempts": self.retry_attempts,
             "refresh_days": self.refresh_days,
             "cost_usd": 0.0,
             "cost_note": "Access2Markets ücretsizdir; bu dolum hiçbir ücret doğurmaz.",
@@ -856,7 +924,7 @@ class Access2MarketsEngine:
                         status = result.status
                     except Exception as exc:
                         self._fill_errors = (
-                            [*self._fill_errors, f"{code}: {type(exc).__name__}"]
+                            [*self._fill_errors, f"{code}: {_error_label(exc)}"]
                         )[-10:]
                         status = "error"
                     # Bekleme semaforun İÇİNDE: eş zamanlılık artsa da kaynağa giden
