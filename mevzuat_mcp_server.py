@@ -59,6 +59,7 @@ from foreign_tariff import (
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
+from comtrade import COMTRADE_MAX_YEARS, TURKIYE_CODE as COMTRADE_TURKIYE_CODE, ComtradeEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -116,6 +117,10 @@ eu_taric_engine = EuTaricEngine(
 access2markets_engine = Access2MarketsEngine(
     code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
 )
+# Dış ticaret istatistiği (UN Comtrade açık ``preview`` ucu): pazar araştırması ve rapor
+# içindir, oran değildir. Anahtarsız, ücretsiz; buradan gelen hiçbir sayı maliyet
+# hesabına girmez.
+comtrade_engine = ComtradeEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -3008,6 +3013,60 @@ async def lookup_eu_access2markets(
     except ValueError as exc:
         return {"error": str(exc)}
     return result.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "Dış ticaret istatistiği: pazar sıralaması ve birim fiyat (UN Comtrade)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_trade_statistics(
+    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; ilk 6 hane kullanılır."),
+    flow: str = Field("X", max_length=1, description="X = raporlayan ülkenin ihracatı, M = ithalatı."),
+    year: int | None = Field(None, ge=1990, le=2100, description="Yıl; boşsa son tamamlanmış yıl denenir."),
+    reporter: int = Field(COMTRADE_TURKIYE_CODE, description="Raporlayan ülkenin Comtrade kodu (Türkiye 792)."),
+    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
+) -> dict:
+    """Return official trade statistics for a code: top partner markets, value and USD/kg.
+
+    Kaynak Birleşmiş Milletler Comtrade'dir (ülkelerin kendi beyanı, yıllık). Bu bir
+    **istatistiktir, oran değildir**: gümrük vergisi, KDV ve maliyet kalemleri buradan
+    okunmaz. Tek istekte en fazla 500 satır gelir; kırpılma ``truncated`` ile bildirilir.
+    Aynı ticaret hem toplam hem kırılım satırında göründüğü için yalnız toplam satırlar
+    sayılır — kırılımlar da toplansa rakam katlanırdı.
+    """
+    report = await comtrade_engine.markets(gtip, reporter=reporter, flow=flow, year=year, limit=limit)
+    return report.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "Dış ticaret eğilimi: yıl yıl değer ve birim fiyat (UN Comtrade)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_trade_statistics_trend(
+    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; ilk 6 hane kullanılır."),
+    flow: str = Field("X", max_length=1, description="X = ihracat, M = ithalat."),
+    years: int = Field(5, ge=1, le=COMTRADE_MAX_YEARS, description="Kaç yıl geriye bakılsın."),
+    partner: int | None = Field(None, description="Tek bir partner ülkeye odaklan (Comtrade kodu)."),
+    reporter: int = Field(COMTRADE_TURKIYE_CODE, description="Raporlayan ülkenin Comtrade kodu (Türkiye 792)."),
+) -> dict:
+    """Return a year-by-year trade value series for a code (UN Comtrade).
+
+    Kaynak tek dönem kabul ettiği için **her yıl ayrı istektir** ve istekler arasında
+    beklenir; bu yüzden yavaştır. İstatistiktir, oran değildir.
+    """
+    return await comtrade_engine.trend(gtip, reporter=reporter, flow=flow, years=years, partner=partner)
 
 
 @app.tool(

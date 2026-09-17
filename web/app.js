@@ -3681,6 +3681,101 @@ function renderEuTaric(data) {
     </section>`;
 }
 
+function formatUsd(value) {
+  if (!Number.isFinite(Number(value))) return "—";
+  return `${Number(value).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} USD`;
+}
+
+function renderComtrade(data) {
+  if (data.status === "disabled") {
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || "İstatistik kaynağı şu anda kapalı.")}</p>`;
+  }
+  if (data.status !== "ok") {
+    const fallback = data.status === "rate_limited"
+      ? "Kaynak hız sınırı uyguladı; bir dakika sonra tekrar deneyin."
+      : "Bu kod ve yıl için beyan edilmiş istatistik bulunamadı.";
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || fallback)}</p>`;
+  }
+  const rows = (data.partners || []).map((p, index) => `<tr>
+    <td>${index + 1}</td>
+    <td>${escapeHtml(p.partner || "—")}</td>
+    <td>${formatUsd(p.value_usd)}</td>
+    <td>${p.net_weight_kg ? escapeHtml(Number(p.net_weight_kg).toLocaleString("tr-TR", { maximumFractionDigits: 0 })) + " kg" : "—"}</td>
+    <td>${p.unit_price_usd_per_kg ? escapeHtml(Number(p.unit_price_usd_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })) + " USD/kg" : "—"}</td>
+    <td>${p.share != null ? `%${(p.share * 100).toFixed(1)}` : "—"}</td>
+  </tr>`).join("");
+  const flowLabel = data.flow === "M" ? "ithalatı" : "ihracatı";
+  const world = data.world && data.world.value_usd ? `<p><b>Dünya toplamı:</b> ${formatUsd(data.world.value_usd)}</p>` : "";
+  return `<div class="answer-head"><span class="answer-status">${escapeHtml(String(data.year || ""))}</span><div><h2>Pazar istatistiği — ${escapeHtml(data.hs_code || "")} (${escapeHtml(flowLabel)})</h2><p>${escapeHtml(data.source_note || "")}</p></div></div>
+    <section class="answer-section">
+      ${world}
+      ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>#</th><th>Ülke</th><th>Değer</th><th>Net ağırlık</th><th>Birim fiyat</th><th>Pay</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      <p class="rate-warning">${escapeHtml(data.statistic_only_note || "")}</p>
+      <p class="rate-warning">${escapeHtml(data.mirror_note || "")}</p>
+      ${(data.warnings || []).length ? `<ul class="savings-list">${data.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+      <p><small>${data.from_archive ? `Arşivden (son alınma: ${escapeHtml(String(data.fetched_at || "").slice(0, 10))})` : "Kaynaktan yeni alındı"}.</small></p>
+    </section>`;
+}
+
+function renderComtradeTrend(data) {
+  const rows = (data.series || []).map((item) => `<tr>
+    <td>${escapeHtml(String(item.year))}</td>
+    <td>${item.value_usd ? formatUsd(item.value_usd) : "—"}</td>
+    <td>${item.unit_price_usd_per_kg ? escapeHtml(Number(item.unit_price_usd_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })) + " USD/kg" : "—"}</td>
+  </tr>`).join("");
+  const flowLabel = data.flow === "M" ? "ithalatı" : "ihracatı";
+  return `<div class="answer-head"><span class="answer-status">${(data.series || []).length} yıl</span><div><h2>Eğilim — ${escapeHtml(data.hs_code || "")} (${escapeHtml(flowLabel)})</h2><p>${escapeHtml(data.source_note || "")}</p></div></div>
+    <section class="answer-section">
+      <div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>Yıl</th><th>Değer</th><th>Birim fiyat</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="rate-warning">${escapeHtml(data.statistic_only_note || "")}</p>
+    </section>`;
+}
+
+function comtradeParams() {
+  const gtip = $("#tariffGtip")?.value.trim() || "";
+  if (gtip.replace(/\D/g, "").length < 4) return null;
+  const params = new URLSearchParams({ gtip });
+  const flow = $("#comtradeFlow")?.value;
+  if (flow) params.set("flow", flow);
+  return params;
+}
+
+$("#comtradeLookup")?.addEventListener("click", async () => {
+  const output = $("#comtradeOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const params = comtradeParams();
+  if (!params) {
+    output.innerHTML = '<p class="missing-list">İstatistik sorgusu için en az 4 haneli bir GTİP girin.</p>';
+    return;
+  }
+  const year = $("#comtradeYear")?.value.trim();
+  if (year) params.set("year", year);
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>İstatistik sorgulanıyor</b><span>BM Comtrade\'den ülke sıralaması ve birim fiyatlar alınıyor…</span></div></div>';
+  try {
+    output.innerHTML = renderComtrade(await fetchJson(`/api/foreign/comtrade?${params.toString()}`));
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "İstatistik sorgusu tamamlanamadı."))}</p></div>`;
+  }
+});
+
+$("#comtradeTrend")?.addEventListener("click", async () => {
+  const output = $("#comtradeOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const params = comtradeParams();
+  if (!params) {
+    output.innerHTML = '<p class="missing-list">Eğilim sorgusu için en az 4 haneli bir GTİP girin.</p>';
+    return;
+  }
+  params.set("years", "5");
+  // Kaynak tek dönem kabul ettiği için her yıl ayrı istektir; bekleme uzun sürebilir.
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>Eğilim çıkarılıyor</b><span>Kaynak tek dönem kabul ettiği için her yıl ayrı sorgulanıyor; bu biraz sürer…</span></div></div>';
+  try {
+    output.innerHTML = renderComtradeTrend(await fetchJson(`/api/foreign/comtrade/trend?${params.toString()}`));
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "Eğilim sorgusu tamamlanamadı."))}</p></div>`;
+  }
+});
+
 $("#euTaricLookup")?.addEventListener("click", async () => {
   const output = $("#euTaricOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
