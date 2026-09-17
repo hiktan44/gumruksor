@@ -763,5 +763,93 @@ class AdaptivePaceTests(unittest.TestCase):
 
 
 
+class CircuitBreakerTests(unittest.TestCase):
+    """Tamamen engellenmiş kaynağı dövmeye devam etme.
+
+    Canlıda hız tavana vurduğu hâlde (30 sn'de bir istek, tek işçi) arşive tek kayıt
+    eklenmedi; hepsi 429 döndü. O noktada doğru davranış durmak ve sonra yeniden
+    yoklamaktır — ısrar yasağı uzatmaktan başka işe yaramaz.
+    """
+
+    @staticmethod
+    def _no_sleep():
+        async def _sleep(_seconds):
+            return None
+
+        return unittest.mock.patch.object(a2m.asyncio, "sleep", _sleep)
+
+    def _blocked_engine(self, tmp: str):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, text="slow down")
+
+        return _engine(
+            tmp,
+            transport=httpx.MockTransport(handler),
+            code_source=lambda: ["6109100000", "6109901000"],
+            fill_enabled=True,
+            delay_seconds=0,
+        )
+
+    def test_the_fill_pauses_after_repeated_fully_blocked_rounds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._blocked_engine(tmp)
+            with self._no_sleep():
+                for _ in range(a2m.A2M_BLOCK_ROUNDS):
+                    report = asyncio.run(engine.fill_once())
+                self.assertEqual(report["ok"], 0)
+                paused = asyncio.run(engine.fill_once())
+        self.assertEqual(paused["status"], "paused")
+        self.assertGreater(paused["paused_seconds"], 0)
+
+    def test_a_paused_fill_sends_no_request_at_all(self) -> None:
+        calls: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return httpx.Response(429, text="slow down")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(
+                tmp,
+                transport=httpx.MockTransport(handler),
+                code_source=lambda: ["6109100000"],
+                fill_enabled=True,
+                delay_seconds=0,
+            )
+            with self._no_sleep():
+                for _ in range(a2m.A2M_BLOCK_ROUNDS):
+                    asyncio.run(engine.fill_once())
+                before = len(calls)
+                asyncio.run(engine.fill_once())
+        self.assertEqual(len(calls), before, "duraklatılmış dolum kaynağa dokunmamalı")
+
+    def test_one_successful_lookup_lifts_the_pause(self) -> None:
+        # Kullanıcı sorgusu yolu açık kalır ve yasağın kalkıp kalkmadığını ölçen
+        # sonda görevi görür; tek bir başarı dolumu geri açar.
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._blocked_engine(tmp)
+            with self._no_sleep():
+                for _ in range(a2m.A2M_BLOCK_ROUNDS):
+                    asyncio.run(engine.fill_once())
+                self.assertEqual(asyncio.run(engine.fill_once())["status"], "paused")
+                engine._http = httpx.AsyncClient(transport=_transport(), follow_redirects=False)
+                result = asyncio.run(engine.lookup("6109100000", with_extras=False))
+                self.assertEqual(result.status, "ok")
+                resumed = asyncio.run(engine.fill_once())
+        self.assertNotEqual(resumed["status"], "paused")
+
+    def test_a_productive_round_never_arms_the_breaker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(
+                tmp, code_source=lambda: ["6109100000"], fill_enabled=True, delay_seconds=0
+            )
+            with self._no_sleep():
+                for _ in range(a2m.A2M_BLOCK_ROUNDS + 2):
+                    report = asyncio.run(engine.fill_once())
+        self.assertNotEqual(report["status"], "paused")
+        self.assertEqual(engine._fill_paused_until, 0.0)
+
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
