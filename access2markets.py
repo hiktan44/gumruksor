@@ -104,11 +104,22 @@ A2M_TIMEOUT = max(10.0, _env_float("A2M_TIMEOUT_SECONDS", 45.0))
 # Alınmış bir kod × menşe × varış üçlüsü bu kadar gün taze sayılır. Ücretsiz olduğu için
 # tazeleme bir bütçe sorunu değil, yalnız kaynağa saygı sorunudur.
 A2M_REFRESH_DAYS = max(1, _env_int("A2M_REFRESH_DAYS", 45))
-A2M_FILL_ENABLED = _env_flag("A2M_FILL_ENABLED", "0")
-A2M_FILL_BATCH = max(1, min(_env_int("A2M_FILL_BATCH", 60), 500))
-A2M_FILL_INTERVAL_SECONDS = max(30.0, _env_float("A2M_FILL_INTERVAL_SECONDS", 300.0))
+# Ücretsiz olduğu için varsayılan AÇIK: bütçe kapısına gerek yok, kataloğun tamamı
+# bir kez doldurulunca kullanıcı sorgusu ağa hiç çıkmadan cevaplanır.
+A2M_FILL_ENABLED = _env_flag("A2M_FILL_ENABLED", "1")
+A2M_FILL_BATCH = max(1, min(_env_int("A2M_FILL_BATCH", 200), 1000))
+# İş BİTTİĞİNDE beklenen süre. İş varken bu kullanılmaz (aşağıdaki BUSY kullanılır):
+# boş beklemek kataloğu günlerce yarım bırakıyordu.
+A2M_FILL_INTERVAL_SECONDS = max(30.0, _env_float("A2M_FILL_INTERVAL_SECONDS", 900.0))
+# İş varken turlar arası kısa soluklanma.
+A2M_FILL_BUSY_SECONDS = max(0.0, _env_float("A2M_FILL_BUSY_SECONDS", 10.0))
 # Ardışık istekler arası bekleme: kaynağa yüklenmemek için (ölçülen yanıt süresi ~1,3 sn).
 A2M_DELAY_SECONDS = max(0.0, _env_float("A2M_DELAY_SECONDS", 0.5))
+# Eş zamanlı istek sayısı. Kaynak ücretsiz olduğu için eş zamanlılık maliyeti
+# değiştirmez, yalnız duvar saatini kısaltır: ölçülen kod başına ~2,3 sn ile sıralı
+# dolum 7,7 saat, 3 eş zamanlı ~2,6 saat sürer. Bekleme semaforun İÇİNDE yapılır,
+# böylece eş zamanlılık artsa da kaynağa giden istek sıklığı korunur.
+A2M_CONCURRENCY = max(1, min(_env_int("A2M_CONCURRENCY", 3), 6))
 A2M_DEFAULT_DESTINATION = (os.environ.get("A2M_DEFAULT_DESTINATION") or "DE").strip().upper()[:2] or "DE"
 
 # AB-27 (varış ülkesi bu kümede değilse ölçü satırı beklenmez).
@@ -363,6 +374,7 @@ class Access2MarketsEngine:
         fill_enabled: bool | None = None,
         fill_batch: int = A2M_FILL_BATCH,
         delay_seconds: float = A2M_DELAY_SECONDS,
+        concurrency: int = A2M_CONCURRENCY,
         destination: str = A2M_DEFAULT_DESTINATION,
         origins: Iterable[str] = ("TR",),
     ) -> None:
@@ -382,6 +394,7 @@ class Access2MarketsEngine:
         self.fill_enabled = A2M_FILL_ENABLED if fill_enabled is None else bool(fill_enabled)
         self.fill_batch = max(1, min(int(fill_batch or 1), 500))
         self.delay_seconds = max(0.0, float(delay_seconds or 0.0))
+        self.concurrency = max(1, min(int(concurrency or 1), 6))
         self.destination = normalise_iso2(destination) or "DE"
         self.origins = tuple(dict.fromkeys(normalise_iso2(o) for o in origins if normalise_iso2(o))) or ("TR",)
         self._errors: list[str] = []
@@ -817,6 +830,7 @@ class Access2MarketsEngine:
             "not_found": max(0, stored - ok_rows),
             "pending": len(pending),
             "batch": self.fill_batch,
+            "concurrency": self.concurrency,
             "refresh_days": self.refresh_days,
             "cost_usd": 0.0,
             "cost_note": "Access2Markets ücretsizdir; bu dolum hiçbir ücret doğurmaz.",
@@ -831,24 +845,37 @@ class Access2MarketsEngine:
             destination = self.destination
             codes = self._pending_codes(int(limit or self.fill_batch), origin, destination)
             processed = ok = missing = failed = 0
-            for code in codes:
-                try:
-                    result = await self.lookup(
-                        code, origin=origin, destination=destination, with_extras=False
-                    )
-                except Exception as exc:
+            gate = asyncio.Semaphore(self.concurrency)
+
+            async def _one(code: str) -> str:
+                async with gate:
+                    try:
+                        result = await self.lookup(
+                            code, origin=origin, destination=destination, with_extras=False
+                        )
+                        status = result.status
+                    except Exception as exc:
+                        self._fill_errors = (
+                            [*self._fill_errors, f"{code}: {type(exc).__name__}"]
+                        )[-10:]
+                        status = "error"
+                    # Bekleme semaforun İÇİNDE: eş zamanlılık artsa da kaynağa giden
+                    # istek sıklığı korunur.
+                    if self.delay_seconds:
+                        await asyncio.sleep(self.delay_seconds)
+                    return status
+
+            for status in await asyncio.gather(*(_one(code) for code in codes)):
+                if status == "error":
                     failed += 1
-                    self._fill_errors = ([*self._fill_errors, f"{code}: {type(exc).__name__}"])[-10:]
+                    continue
+                processed += 1
+                if status == "ok":
+                    ok += 1
+                elif status == "not_found":
+                    missing += 1
                 else:
-                    processed += 1
-                    if result.status == "ok":
-                        ok += 1
-                    elif result.status == "not_found":
-                        missing += 1
-                    else:
-                        failed += 1
-                if self.delay_seconds:
-                    await asyncio.sleep(self.delay_seconds)
+                    failed += 1
             return {
                 "status": "complete" if not codes else "ran",
                 "processed": processed,
@@ -859,16 +886,25 @@ class Access2MarketsEngine:
             }
 
     async def periodic_fill_loop(self, initial_delay: float = 180.0) -> None:
+        """İş varken kısa, iş bitince uzun bekler.
+
+        Sabit uzun aralık kataloğu günlerce yarım bırakıyordu: 11.997 kodluk katalog
+        200'lük turlarla 15 dakikada bir işlenirse 15 gün sürer. Ücretsiz kaynakta
+        boş beklemenin hiçbir karşılığı yok, o yüzden kuyrukta iş kaldıkça tur
+        `A2M_FILL_BUSY_SECONDS` sonra tekrarlanır; kuyruk boşalınca uzun aralığa döner.
+        """
         await asyncio.sleep(initial_delay)
         while True:
+            remaining = 0
             try:
                 if self.fill_enabled and self.enabled:
-                    await self.fill_once()
+                    report = await self.fill_once()
+                    remaining = int(report.get("remaining") or 0)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # döngü hiçbir hatada ölmemeli
                 logger.warning("Access2Markets dolum turu başarısız: %s", type(exc).__name__)
-            await asyncio.sleep(A2M_FILL_INTERVAL_SECONDS)
+            await asyncio.sleep(A2M_FILL_BUSY_SECONDS if remaining else A2M_FILL_INTERVAL_SECONDS)
 
     # ---- durum
     def status(self) -> dict[str, Any]:

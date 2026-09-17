@@ -18,6 +18,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import httpx
@@ -421,6 +422,103 @@ class FillTests(unittest.TestCase):
             plan = engine.fill_plan()
         self.assertEqual(plan["stored"], 2)
         self.assertEqual(plan["cost_usd"], 0.0, "bu kaynak ücretsizdir")
+
+
+class FillThroughputTests(unittest.TestCase):
+    """Kataloğun tamamı makul sürede dolmalı: 11.997 kod sıralı ~7,7 saat sürüyor.
+
+    Sabit uzun aralık + sıralı istek, kataloğu günlerce yarım bırakıyordu. Bu sınıf
+    iki kaldıracı kilitler: eş zamanlılık ve iş varken kısa bekleme.
+    """
+
+    def test_a_round_runs_codes_concurrently(self) -> None:
+        import time as _time
+
+        seen: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(_time.monotonic())
+            return httpx.Response(200, json=_tariff_body())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(
+                tmp,
+                transport=httpx.MockTransport(handler),
+                code_source=lambda: [f"61091000{i:02d}" for i in range(6)],
+                fill_enabled=True,
+                delay_seconds=0.05,
+                concurrency=3,
+            )
+            started = _time.monotonic()
+            report = asyncio.run(engine.fill_once())
+            elapsed = _time.monotonic() - started
+        self.assertEqual(report["ok"], 6)
+        # Sıralı olsaydı 6 × 0,05 = 0,30 sn'nin altına inemezdi.
+        self.assertLess(elapsed, 0.25, f"eş zamanlılık uygulanmıyor ({elapsed:.3f} sn)")
+
+    def test_concurrency_is_capped_so_the_source_is_not_flooded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, concurrency=99)
+        self.assertLessEqual(engine.concurrency, 6)
+
+    def test_the_loop_comes_back_quickly_while_work_remains(self) -> None:
+        # İş varken uzun aralık beklemek kataloğu günlerce yarım bırakıyordu.
+        sleeps: list = []
+
+        async def _fake_sleep(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) >= 3:
+                raise asyncio.CancelledError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(
+                tmp,
+                code_source=lambda: [f"61091000{i:02d}" for i in range(4)],
+                fill_enabled=True,
+                delay_seconds=0,
+                fill_batch=1,
+            )
+            with unittest.mock.patch.object(a2m.asyncio, "sleep", _fake_sleep):
+                with self.assertRaises(asyncio.CancelledError):
+                    asyncio.run(engine.periodic_fill_loop(initial_delay=0))
+        # sleeps[0] açılış gecikmesi; sonrakiler tur arası beklemeler.
+        self.assertEqual(sleeps[1], a2m.A2M_FILL_BUSY_SECONDS)
+
+    def test_the_loop_rests_long_once_the_queue_is_empty(self) -> None:
+        sleeps: list = []
+
+        async def _fake_sleep(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) >= 2:
+                raise asyncio.CancelledError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(tmp, code_source=lambda: [], fill_enabled=True, delay_seconds=0)
+            with unittest.mock.patch.object(a2m.asyncio, "sleep", _fake_sleep):
+                with self.assertRaises(asyncio.CancelledError):
+                    asyncio.run(engine.periodic_fill_loop(initial_delay=0))
+        self.assertEqual(sleeps[1], a2m.A2M_FILL_INTERVAL_SECONDS)
+
+    def test_a_failing_code_does_not_take_the_round_down(self) -> None:
+        calls: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            if "99999999" in str(request.url):
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, json=_tariff_body())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = _engine(
+                tmp,
+                transport=httpx.MockTransport(handler),
+                code_source=lambda: ["6109100000", "999999990000", "6109901000"],
+                fill_enabled=True,
+                delay_seconds=0,
+            )
+            report = asyncio.run(engine.fill_once())
+        self.assertEqual(report["ok"], 2)
+        self.assertEqual(report["failed"], 1)
 
 
 class ComparisonTests(unittest.TestCase):
