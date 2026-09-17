@@ -41,6 +41,7 @@
       <button type="button" class="admin-tab-btn" data-tab="changes">🗂️ Veri Değişiklikleri</button>
       <button type="button" class="admin-tab-btn" data-tab="reviews">🛡️ İnceleme Kuyruğu <span class="tab-badge" id="reviewBadge" hidden>0</span></button>
       <button type="button" class="admin-tab-btn" data-tab="storage">💾 Depolama & Yedek</button>
+      <button type="button" class="admin-tab-btn" data-tab="jobs">⚙️ Arka Plan İşleri <span class="tab-badge" id="jobsBadge" hidden>0</span></button>
     </nav>
 
     <!-- TAB 1: OVERVIEW -->
@@ -353,6 +354,32 @@
               </tr>
             </thead>
             <tbody id="adminConsultants"><tr><td colspan="5">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="admin-tab-content" id="tab-jobs">
+      <section class="results admin-section">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Arka Plan İşleri</h2>
+            <p>Sunucu açılışta bir dizi sonsuz döngü başlatır: resmî kaynak eşitlemeleri, arşiv dolumları, arama indeksi tazeleme ve bildirim gönderimi. Bu tablo üç şeyi görünür kılar — <strong>hangi iş çalışıyor</strong>, <strong>hangisi neden kapalı</strong> ve <strong>hangisi çöktü</strong>. Çöken bir döngü sunucuyu durdurmaz, yalnız o iş sessizce durur; bu yüzden burada listelenir. Durum çalışma anına aittir: sunucu yeniden başlarsa sayaçlar sıfırlanır, veriler kalır.</p>
+          </div>
+          <button type="button" class="btn-refresh" id="refreshJobsBtn">Yenile ⟳</button>
+        </header>
+        <div id="jobsSummary" class="empty-note">Yükleniyor…</div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>İş</th>
+                <th>Durum</th>
+                <th>Ne yapar</th>
+                <th>İlerleme</th>
+              </tr>
+            </thead>
+            <tbody id="jobsTable"><tr><td colspan="4">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </section>

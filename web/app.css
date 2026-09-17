@@ -1377,7 +1377,7 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
 .status-active, .status-success, .status-completed { background: rgba(16,185,129,0.2); color: #34d399; }
 .status-pending { background: rgba(245,158,11,0.2); color: #fbbf24; }
-.status-past_due, .status-failed, .status-cancelled { background: rgba(239,68,68,0.2); color: #f87171; }
+.status-past_due, .status-failed, .status-cancelled, .status-error { background: rgba(239,68,68,0.2); color: #f87171; }
 
 .plan-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 700; }
 .plan-starter { background: rgba(148,163,184,0.2); color: #cbd5e1; }
