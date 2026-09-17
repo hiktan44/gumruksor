@@ -175,7 +175,13 @@ def _sha256(payload: Any) -> str:
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 _RETRY_ATTEMPTS = max(1, _env_int("A2M_RETRY_ATTEMPTS", 3))
 _RETRY_BASE_SECONDS = max(0.1, _env_float("A2M_RETRY_BASE_SECONDS", 1.0))
-_RETRY_MAX_SECONDS = max(1.0, _env_float("A2M_RETRY_MAX_SECONDS", 20.0))
+_RETRY_MAX_SECONDS = max(1.0, _env_float("A2M_RETRY_MAX_SECONDS", 60.0))
+# 429 ayrı ele alınır: sunucu "yavaşla" diyorsa 1 saniyelik geri çekilme yetmez.
+_RATE_LIMIT_BASE_SECONDS = max(1.0, _env_float("A2M_RATE_LIMIT_BASE_SECONDS", 5.0))
+# Hız sınırı görülünce bekleme ikiye katlanır; bu tavana kadar.
+A2M_MAX_DELAY_SECONDS = max(1.0, _env_float("A2M_MAX_DELAY_SECONDS", 30.0))
+# Art arda bu kadar temiz turdan sonra hız kademeli olarak geri açılır.
+A2M_PACE_RECOVER_ROUNDS = max(1, _env_int("A2M_PACE_RECOVER_ROUNDS", 3))
 
 
 class A2MHttpError(RuntimeError):
@@ -441,6 +447,12 @@ class Access2MarketsEngine:
         self.concurrency = max(1, min(int(concurrency or 1), 6))
         self.retry_attempts = max(1, int(retry_attempts or 1))
         self.retry_base_seconds = max(0.0, float(retry_base_seconds or 0.0))
+        # Uyarlanabilir hız: kaynak 429 derse yavaşlarız, temiz turlarda geri açılırız.
+        # Sabit hız işe yaramadı — canlıda dolum 124 kodda tamamen durdu (hepsi 429).
+        self._delay_seconds = self.delay_seconds
+        self._effective_concurrency = self.concurrency
+        self._clean_rounds = 0
+        self._rate_limited = False
         self.destination = normalise_iso2(destination) or "DE"
         self.origins = tuple(dict.fromkeys(normalise_iso2(o) for o in origins if normalise_iso2(o))) or ("TR",)
         self._errors: list[str] = []
@@ -576,7 +588,12 @@ class Access2MarketsEngine:
                 response = await self._http.get(current, headers={"Accept": "application/json"})
                 if response.status_code not in _RETRYABLE_STATUS or attempt == self.retry_attempts - 1:
                     break
-                delay = _retry_delay(response, attempt, base=self.retry_base_seconds)
+                if response.status_code == 429:
+                    self._rate_limited = True
+                base = self.retry_base_seconds
+                if response.status_code == 429 and base:
+                    base = max(base, _RATE_LIMIT_BASE_SECONDS)
+                delay = _retry_delay(response, attempt, base=base)
                 if delay:
                     await asyncio.sleep(delay)
             assert response is not None
@@ -586,6 +603,8 @@ class Access2MarketsEngine:
                     raise ValueError("Access2Markets hedefsiz yönlendirme döndürdü.")
                 current = urljoin(str(response.url), location)
                 continue
+            if response.status_code == 429:
+                self._rate_limited = True
             if response.status_code >= 400:
                 # Durum kodu hata metnine yazılır: "HTTPStatusError" tek başına
                 # 403 mü 429 mu 503 mü olduğunu söylemiyordu ve teşhisi kör bırakıyordu.
@@ -898,6 +917,8 @@ class Access2MarketsEngine:
             "pending": len(pending),
             "batch": self.fill_batch,
             "concurrency": self.concurrency,
+            "effective_concurrency": self._effective_concurrency,
+            "delay_seconds": self._delay_seconds,
             "retry_attempts": self.retry_attempts,
             "refresh_days": self.refresh_days,
             "cost_usd": 0.0,
@@ -913,7 +934,9 @@ class Access2MarketsEngine:
             destination = self.destination
             codes = self._pending_codes(int(limit or self.fill_batch), origin, destination)
             processed = ok = missing = failed = 0
-            gate = asyncio.Semaphore(self.concurrency)
+            self._rate_limited = False
+            gate = asyncio.Semaphore(self._effective_concurrency)
+            delay = self._delay_seconds
 
             async def _one(code: str) -> str:
                 async with gate:
@@ -929,8 +952,8 @@ class Access2MarketsEngine:
                         status = "error"
                     # Bekleme semaforun İÇİNDE: eş zamanlılık artsa da kaynağa giden
                     # istek sıklığı korunur.
-                    if self.delay_seconds:
-                        await asyncio.sleep(self.delay_seconds)
+                    if delay:
+                        await asyncio.sleep(delay)
                     return status
 
             for status in await asyncio.gather(*(_one(code) for code in codes)):
@@ -944,14 +967,44 @@ class Access2MarketsEngine:
                     missing += 1
                 else:
                     failed += 1
+            self._adjust_pace()
             return {
                 "status": "complete" if not codes else "ran",
                 "processed": processed,
                 "ok": ok,
                 "not_found": missing,
                 "failed": failed,
+                "rate_limited": self._rate_limited,
+                "delay_seconds": self._delay_seconds,
+                "concurrency": self._effective_concurrency,
                 "remaining": max(0, len(self._pending_codes(10_000, origin, destination))),
             }
+
+
+    def _adjust_pace(self) -> None:
+        """Kaynağın tepkisine göre hızı ayarlar (``eu_taric`` chunk deseninin aynısı).
+
+        429 gören tur: bekleme ikiye katlanır (tavan ``A2M_MAX_DELAY_SECONDS``) ve eş
+        zamanlılık 1'e iner. Sabit hız işe yaramadı — canlıda dolum 124 kodda tamamen
+        durdu, her istek 429 aldı. Art arda ``A2M_PACE_RECOVER_ROUNDS`` temiz turdan
+        sonra hız kademeli olarak geri açılır; kalıcı olarak en yavaş ayara mahkûm
+        kalmak da kataloğu bitirmezdi.
+        """
+        if self._rate_limited:
+            self._clean_rounds = 0
+            self._delay_seconds = min(
+                A2M_MAX_DELAY_SECONDS, max(1.0, self._delay_seconds * 2)
+            )
+            self._effective_concurrency = 1
+            return
+        self._clean_rounds += 1
+        if self._clean_rounds < A2M_PACE_RECOVER_ROUNDS:
+            return
+        self._clean_rounds = 0
+        if self._effective_concurrency < self.concurrency:
+            self._effective_concurrency += 1
+        elif self._delay_seconds > self.delay_seconds:
+            self._delay_seconds = max(self.delay_seconds, self._delay_seconds / 2)
 
     async def periodic_fill_loop(self, initial_delay: float = 180.0) -> None:
         """İş varken kısa, iş bitince uzun bekler.

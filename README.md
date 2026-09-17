@@ -414,6 +414,18 @@ artık **durum kodunu taşır** (`A2MHttpError(429)`; "HTTPStatusError" tek baş
 `Retry-After` başlığına uyarak, üstel geri çekilmeyle tekrarlanır. `403` gibi kalıcı
 kodlarda **yeniden denenmez** — kaynağı boşuna zorlamak doğru değil.
 
+**Ölçülen sebep: `429`.** Durum kodu görünür olunca cevap hemen geldi — kaynak bu
+sunucunun çıkışına hız sınırı uyguluyor ve dolum 124 kodda **tamamen durmuştu**
+(her istek 429, yeniden denemeler de 429). Aynı desen başka bir ağdan 24/24 başarılı
+olduğu için sınır bu çıkışa özgü. Bu yüzden hız artık **sabit değil, uyarlanabilir**:
+429 gören tur beklemeyi ikiye katlar (tavan `A2M_MAX_DELAY_SECONDS`, 30 sn) ve eş
+zamanlılığı 1'e indirir; art arda `A2M_PACE_RECOVER_ROUNDS` (3) temiz turdan sonra
+önce eş zamanlılık, sonra bekleme kademeli olarak geri açılır. 429'un kendi geri
+çekilme tabanı ayrıdır (`A2M_RATE_LIMIT_BASE_SECONDS`, 5 sn): "yavaşla" diyen bir
+sunucuya 1 saniye sonra dönmek yavaşlamak değildir. Güncel hız `fill.delay_seconds`
+ve `fill.effective_concurrency` alanlarında görünür — katalog ne kadar sürede dolacağı
+bu iki sayıdan okunur, tahminden değil.
+
 `resolve_rates()` ölçü satırlarından **koşullu** bir özet çıkarır: üçüncü ülke vergisi (ERGA
 OMNES), menşeye özgü oran (gümrük birliği / tercihli / askıya alma), ek vergiler (damping,
 telafi edici, korunma, tarım bileşeni) ve gereken belgeler (ör. A.TR için `N018`). **Tek bir
