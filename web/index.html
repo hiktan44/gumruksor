@@ -603,6 +603,17 @@
             <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comextYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
             <button class="analyse-button" type="button" id="comextLookup"><span>AB pazarını sırala</span></button>
             <div id="comextOutput" aria-live="polite"></div>
+            <h3>Brezilya pazarı: Brezilya kimden alıyor? (ComexStat)</h3>
+            <p class="rate-warning">Brezilya Bakanlığı'nın resmî beyanından gelir (ComexStat, FOB USD): Brezilya bu ürünü hangi ülkelerden alıyor, <b>Türkiye'nin payı ve sırası</b> ne. Latin Amerika'da anahtarsız tek resmî kaynak. <b>Oran değildir</b>; hiçbir sayı maliyet hesabına aktarılmaz. GTİP'in ilk 8 hanesi Brezilya NCM listesinde aranır, yoksa HS6 altındaki NCM'lerin toplamı alınır ve bu yazılır. Kaynağın hız sınırı sıkıdır; "yavaşla" mesajı gelirse 15 saniye bekleyip tekrar deneyin.</p>
+            <label class="field"><span>Yön</span>
+              <select id="comexstatFlow">
+                <option value="M">Brezilya'nın ithalatı (kimden alıyor)</option>
+                <option value="X">Brezilya'nın ihracatı (kime satıyor)</option>
+              </select>
+            </label>
+            <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comexstatYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
+            <button class="analyse-button" type="button" id="comexstatLookup"><span>Brezilya pazarını sırala</span></button>
+            <div id="comexstatOutput" aria-live="polite"></div>
           </div>
         </section>
 

@@ -566,6 +566,31 @@ Değişkenler: `COMEXT_ENABLED`, `COMEXT_REFRESH_DAYS`, `COMEXT_DELAY_SECONDS`,
 `GET /api/foreign/comext/status`. MCP'de `lookup_eu_import_markets`. Arayüzde Tarife
 panelinde "AB pazarı: hedef ülke kimden alıyor?" bloğu; Türkiye satırı vurgulanır.
 
+### Brezilya pazarı istatistiği: ComexStat (`comexstat.py`)
+
+Latin Amerika'da anahtarsız ve makine okunur tek resmî dış ticaret kaynağı (MDIC ComexStat,
+`POST /general`). Sorusu: *Brezilya bu ürünü kimden alıyor / kime satıyor, Türkiye'nin payı ve
+sırası ne, kg başına ne ödeniyor?* **Ücretsizdir**; oran değildir, hiçbir sayı maliyet hesabına
+girmez.
+
+18.09.2026'da canlı ölçülen ve koda giren olgular:
+
+* Ürün süzgeci **NCM (8 hane)**, `heading` (4) ve `chapter` (2) kabul eder; **`sh6` yoktur**.
+  HS6 için NCM tablosu (`/tables/ncm`, 13.746 kayıt, ~1,8 MB) bir kez indirilip arşivlenir ve
+  HS6 altındaki NCM'ler tek sorguda gönderilir; sunucu ülke bazında toplar. 8 haneli kod NCM
+  listesinde yoksa HS6'ya, NCM tablosu alınamazsa pozisyona düşülür — her düşme sonuçta yazılır.
+* `language: en` ile ülke adları İngilizce gelir; sık ülkeler Türkçeye çevrilir, bilinmeyen ad
+  olduğu gibi kalır (uydurulmaz). Satırda ülke kodu yoktur; Türkiye odağı ad eşleşmesiyle bulunur.
+* Boş sonuç `{"list": []}` döner; hata değildir.
+* **Hız sınırı sıkıdır**: arka arkaya ~6 istekte 429 ("10 saniye sonra deneyin"), 4 sn ara
+  yetmiyor. İstekler seri, 6 sn aralı; 429'da ısrar yok, 15 sn soğuma; uç 6/dk ile sınırlı.
+
+Değişkenler: `COMEXSTAT_ENABLED`, `COMEXSTAT_REFRESH_DAYS`, `COMEXSTAT_NCM_REFRESH_DAYS`,
+`COMEXSTAT_DELAY_SECONDS`, `COMEXSTAT_COOLDOWN_SECONDS`, `COMEXSTAT_TIMEOUT_SECONDS`. Uçlar:
+`GET /api/foreign/comexstat?gtip=&flow=M|X&year=&limit=` (`foreign_tariff` yetkisi),
+`GET /api/foreign/comexstat/status`. MCP'de `lookup_brazil_import_markets`. Arayüzde Tarife
+panelinde "Brezilya pazarı" bloğu.
+
 **AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
 ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir
 ZIP/CSV dosyası olarak **herkese açık** yayımlar (giriş gerekmez). `ebti-sync` döngüsü listeyi okur,

@@ -3781,6 +3781,64 @@ function renderComext(data) {
     </section>`;
 }
 
+function renderComexStat(data) {
+  if (data.status === "disabled") {
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || "ComexStat kaynağı şu anda kapalı.")}</p>`;
+  }
+  if (data.status !== "ok") {
+    const fallback = data.status === "rate_limited"
+      ? "Brezilya kaynağı hız sınırı uyguladı; 15 saniye sonra tekrar deneyin."
+      : "Bu ürün ve yıl için ComexStat'ta beyan bulunamadı.";
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || fallback)}</p>`;
+  }
+  const rows = (data.partners || []).map((p) => `<tr${p.partner === "Türkiye" ? ' class="highlight-row"' : ""}>
+    <td>${p.rank}</td>
+    <td>${escapeHtml(p.partner || "—")}${p.partner === "Türkiye" ? " 🇹🇷" : ""}</td>
+    <td>${formatUsd(p.value_usd)}</td>
+    <td>${p.net_weight_kg ? escapeHtml(Number(p.net_weight_kg).toLocaleString("tr-TR", { maximumFractionDigits: 0 })) + " kg" : "—"}</td>
+    <td>${p.unit_price_usd_per_kg ? escapeHtml(Number(p.unit_price_usd_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })) + " USD/kg" : "—"}</td>
+    <td>${p.share != null ? `%${(p.share * 100).toFixed(1)}` : "—"}</td>
+  </tr>`).join("");
+  const flowLabel = data.flow === "X" ? "ihracatı" : "ithalatı";
+  const focus = data.focus || {};
+  const focusLine = focus.present
+    ? `<p><b>Türkiye:</b> ${formatUsd(focus.value_usd)} · pay %${(focus.share * 100).toFixed(2)} · sıra ${focus.rank}${focus.unit_price_usd_per_kg ? ` · ${Number(focus.unit_price_usd_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} USD/kg` : ""}</p>`
+    : `<p><b>Türkiye:</b> bu ürün için Brezilya beyanında Türkiye'den alım yok.</p>`;
+  const total = data.total && data.total.value_usd ? `<p><b>Brezilya toplam ${escapeHtml(flowLabel)}:</b> ${formatUsd(data.total.value_usd)}</p>` : "";
+  const level = String(data.match_level || "").toUpperCase();
+  const ncm = (data.ncm_codes || []).length > 1 ? `<p><small>Toplanan NCM kodları: ${escapeHtml(data.ncm_codes.join(", "))}</small></p>` : "";
+  return `<div class="answer-head"><span class="answer-status">${escapeHtml(String(data.year || ""))}</span><div><h2>Brezilya — ${escapeHtml(data.product || "")} (${escapeHtml(level)}) ${escapeHtml(flowLabel)}</h2><p>${escapeHtml(data.source_note || "")}</p></div></div>
+    <section class="answer-section">
+      ${total}
+      ${focusLine}
+      ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>#</th><th>Ülke</th><th>Değer</th><th>Net ağırlık</th><th>Birim fiyat</th><th>Pay</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      ${ncm}
+      <p class="rate-warning">${escapeHtml(data.statistic_only_note || "")}</p>
+      <p class="rate-warning">${escapeHtml(data.mirror_note || "")}</p>
+      ${(data.warnings || []).length ? `<ul class="savings-list">${data.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+      <p><small>${data.from_archive ? `Arşivden (son alınma: ${escapeHtml(String(data.fetched_at || "").slice(0, 10))})` : "Kaynaktan yeni alındı"}.</small></p>
+    </section>`;
+}
+
+$("#comexstatLookup")?.addEventListener("click", async () => {
+  const output = $("#comexstatOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const gtip = $("#tariffGtip")?.value.trim() || "";
+  if (gtip.replace(/\D/g, "").length < 4) {
+    output.innerHTML = '<p class="missing-list">Brezilya sorgusu için en az 4 haneli bir GTİP girin.</p>';
+    return;
+  }
+  const params = new URLSearchParams({ gtip, flow: $("#comexstatFlow")?.value || "M" });
+  const year = $("#comexstatYear")?.value.trim();
+  if (year) params.set("year", year);
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>ComexStat sorgulanıyor</b><span>Brezilya\'nın partner sıralaması ve Türkiye\'nin payı alınıyor; ilk sorguda NCM tablosu da indirildiği için biraz sürebilir…</span></div></div>';
+  try {
+    output.innerHTML = renderComexStat(await fetchJson(`/api/foreign/comexstat?${params.toString()}`));
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "Brezilya pazarı sorgusu tamamlanamadı."))}</p></div>`;
+  }
+});
+
 $("#comextLookup")?.addEventListener("click", async () => {
   const output = $("#comextOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }

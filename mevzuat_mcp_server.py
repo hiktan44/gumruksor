@@ -62,6 +62,7 @@ from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
 from background_jobs import registry as job_registry
 from comtrade import COMTRADE_MAX_YEARS, TURKIYE_CODE as COMTRADE_TURKIYE_CODE, ComtradeEngine
 from eurostat_comext import ComextEngine
+from comexstat import ComexStatEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -126,6 +127,9 @@ comtrade_engine = ComtradeEngine()
 # AB tarafındaki ayna istatistiği (Eurostat Comext): bir AB ülkesi bu ürünü kimden
 # alıyor, Türkiye'nin payı ne. Anahtarsız, ücretsiz; oran değil, maliyet hesabına girmez.
 comext_engine = ComextEngine()
+# Brezilya ayna istatistiği (ComexStat): Brezilya bu ürünü kimden alıyor, Türkiye'nin
+# payı ne. Latin Amerika'da anahtarsız tek resmî kaynak; oran değil.
+comexstat_engine = ComexStatEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -3139,6 +3143,32 @@ async def lookup_eu_import_markets(
     sırası ``focus`` altında ayrıca gelir; listede yoksa ``present: false`` denir.
     """
     report = await comext_engine.markets(gtip, reporter=reporter, flow=flow, year=year, limit=limit)
+    return report.as_dict()
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "Brezilya pazarı: Brezilya bu ürünü kimden alıyor, Türkiye'nin payı ne (ComexStat)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_brazil_import_markets(
+    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; 8 hane NCM olarak, yoksa HS6 altındaki NCM'ler, 4 hane pozisyon, 2 hane fasıl."),
+    flow: str = Field("M", max_length=1, description="M = Brezilya'nın ithalatı (kimden alıyor), X = ihracatı (kime satıyor)."),
+    year: int | None = Field(None, ge=1997, le=2100, description="Yıl; boşsa son tamamlanmış yıl."),
+    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
+) -> dict:
+    """Return Brazil's partner ranking for a product from the official ComexStat API.
+
+    Kaynak Brezilya MDIC ComexStat (resmî beyan, FOB USD, yıllık). **İstatistiktir, oran
+    değildir**. Türkiye'nin değeri, payı ve sırası ``focus`` altında; listede yoksa
+    ``present: false``. Kaynağın hız sınırı sıkıdır; sonuç 60 gün arşivde tutulur.
+    """
+    report = await comexstat_engine.markets(gtip, flow=flow, year=year, limit=limit)
     return report.as_dict()
 
 

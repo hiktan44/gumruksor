@@ -118,6 +118,11 @@ JOB_CATALOGUE: dict[str, dict[str, str]] = {
         "purpose": "Bekleyen veri incelemesi için yöneticiye hatırlatma gönderir.",
         "cost": "free",
     },
+    "comexstat": {
+        "label": "Brezilya dış ticaret istatistiği (ComexStat)",
+        "purpose": "Arka plan döngüsü yoktur; yalnız kullanıcı sorgusunda çalışır. NCM tablosu 30 gün, sorgular 60 gün arşivde.",
+        "cost": "free",
+    },
     "comext": {
         "label": "AB dış ticaret istatistiği (Eurostat)",
         "purpose": "Arka plan döngüsü yoktur; yalnız kullanıcı sorgusunda çalışır ve sonucu 60 gün arşivde tutar.",
