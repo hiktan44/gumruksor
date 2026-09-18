@@ -61,6 +61,7 @@ from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
 from background_jobs import registry as job_registry
 from comtrade import COMTRADE_MAX_YEARS, TURKIYE_CODE as COMTRADE_TURKIYE_CODE, ComtradeEngine
+from eurostat_comext import ComextEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -122,6 +123,9 @@ access2markets_engine = Access2MarketsEngine(
 # içindir, oran değildir. Anahtarsız, ücretsiz; buradan gelen hiçbir sayı maliyet
 # hesabına girmez.
 comtrade_engine = ComtradeEngine()
+# AB tarafındaki ayna istatistiği (Eurostat Comext): bir AB ülkesi bu ürünü kimden
+# alıyor, Türkiye'nin payı ne. Anahtarsız, ücretsiz; oran değil, maliyet hesabına girmez.
+comext_engine = ComextEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -3109,6 +3113,33 @@ async def lookup_trade_statistics_trend(
     beklenir; bu yüzden yavaştır. İstatistiktir, oran değildir.
     """
     return await comtrade_engine.trend(gtip, reporter=reporter, flow=flow, years=years, partner=partner)
+
+
+@app.tool(
+    app=True,
+    annotations={
+        "title": "AB pazarı: bir AB ülkesi bu ürünü kimden alıyor, Türkiye'nin payı ne (Eurostat)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def lookup_eu_import_markets(
+    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da CN/HS kodu; ilk 8 hane CN8 olarak denenir, boşsa HS6."),
+    reporter: str = Field("DE", max_length=2, description="AB-27 raporlayan ülke ISO kodu (Yunanistan için GR veya EL)."),
+    flow: str = Field("M", max_length=1, description="M = o ülkenin ithalatı (kimden alıyor), X = ihracatı (kime satıyor)."),
+    year: int | None = Field(None, ge=1988, le=2100, description="Yıl; boşsa son tamamlanmış yıl."),
+    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
+) -> dict:
+    """Return Eurostat Comext partner ranking for an EU member state and a product.
+
+    Kaynak Eurostat Comext'tir (üye devletlerin resmî beyanı, EUR, yıllık). **İstatistiktir,
+    oran değildir**: vergi ve maliyet buradan okunmaz. Yanıtta Türkiye'nin değeri, payı ve
+    sırası ``focus`` altında ayrıca gelir; listede yoksa ``present: false`` denir.
+    """
+    report = await comext_engine.markets(gtip, reporter=reporter, flow=flow, year=year, limit=limit)
+    return report.as_dict()
 
 
 @app.tool(

@@ -203,3 +203,7 @@ access2markets.sqlite3-*
 # UN Comtrade istatistik arsivi (calisma aninda olusur).
 comtrade.sqlite3
 comtrade.sqlite3-*
+
+# Eurostat Comext istatistik arsivi (calisma aninda olusur).
+eurostat_comext.sqlite3
+eurostat_comext.sqlite3-*

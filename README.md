@@ -539,6 +539,33 @@ yoktur — yalnız ülke × kod × yıl toplamı vardır. ABD Census dış ticar
 şekilde **toplamdır** (ay/yıl, ülke, gümrük bölgesi, taşıma şekli); gönderi bazlı
 konşimento verisi ticari sağlayıcılardan satılır ve ücretsiz değildir.
 
+### AB pazarı istatistiği: Eurostat Comext (`eurostat_comext.py`)
+
+Comtrade'in AB tarafındaki aynası. Sorusu: *bir AB ülkesi bu ürünü hangi ülkelerden alıyor,
+Türkiye'nin payı ve sırası ne, kilogram başına ne ödeniyor?* Kaynak Eurostat Comext'in
+anahtarsız API'si (`DS-045409`, "EU trade since 1988 by HS2-4-6 and CN8"); **ücretsizdir**.
+Oran değildir; hiçbir sayı maliyet hesabına girmez.
+
+18.09.2026'da canlı ölçülen ve koda giren olgular:
+
+* Yanıt **JSON-stat 2.0**; ülke adları yanıtın içinde gelir, ayrı referans tablosu gerekmez.
+* Partner boyutu 269 ISO2 ülke + 9 toplam kod (`WORLD`, `EXT_EU27_2020`…). **ISO2 toplamı
+  WORLD'e birebir eşit** (Almanya 851713 ithalatı 2024: 11.056.799.487 EUR); sıralamaya
+  yalnız ISO2 girer, toplam kodlar çift sayım kaynağıdır. Pay paydası WORLD'dür.
+* Ağırlık `QUANTITY_IN_100KG` biriminde; kilogram = ×100.
+* Türk GTİP'inin ilk 8 hanesi CN8'dir: önce CN8 denenir, boş dönerse HS6'ya düşülür ve
+  sonuç `match_level` ile işaretlenir, uyarı yazılır.
+* Geçersiz kod / veri olmayan yıl **200 ve boş `value`** döner; hata kodu yoktur.
+* Türkiye'nin payı `focus` altında ayrıca döner; listede yoksa `present: false` denir,
+  uydurulmaz. Küçük paylar 6 hanede tutulur (4 hanede sıfıra yuvarlanıyordu).
+
+Sonuçlar `eurostat_comext.sqlite3` içinde kalıcı; `COMEXT_REFRESH_DAYS` (60) taze sayılır.
+Değişkenler: `COMEXT_ENABLED`, `COMEXT_REFRESH_DAYS`, `COMEXT_DELAY_SECONDS`,
+`COMEXT_COOLDOWN_SECONDS`, `COMEXT_TIMEOUT_SECONDS`. Uçlar:
+`GET /api/foreign/comext?gtip=&reporter=DE&flow=M|X&year=&limit=` (`foreign_tariff` yetkisi),
+`GET /api/foreign/comext/status`. MCP'de `lookup_eu_import_markets`. Arayüzde Tarife
+panelinde "AB pazarı: hedef ülke kimden alıyor?" bloğu; Türkiye satırı vurgulanır.
+
 **AB Bağlayıcı Tarife Bilgisi (EBTI) kararları** (`ebti_decisions.py`): Avrupa Komisyonu, üye
 ülke gümrük idarelerinin verdiği BTB kararlarını `daily_publications.jsp` sayfasında her gün bir
 ZIP/CSV dosyası olarak **herkese açık** yayımlar (giriş gerekmez). `ebti-sync` döngüsü listeyi okur,
