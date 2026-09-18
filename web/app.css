@@ -1518,3 +1518,6 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .draft-row.draft-check_required td:nth-child(4) { color: var(--warn, #9a6b00); font-weight: 700; }
 .draft-row.draft-unavailable { opacity: .72; }
 .draft-row.draft-unavailable td:nth-child(4) { color: var(--ink-2); }
+
+/* Pazar istatistiği: Türkiye satırı */
+.evidence-table tr.highlight-row td { background: rgba(16,185,129,0.12); font-weight: 600; }

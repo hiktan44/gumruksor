@@ -3740,6 +3740,66 @@ function comtradeParams() {
   return params;
 }
 
+function formatEur(value) {
+  if (!Number.isFinite(Number(value))) return "—";
+  return `${Number(value).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} EUR`;
+}
+
+function renderComext(data) {
+  if (data.status === "disabled") {
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || "Eurostat kaynağı şu anda kapalı.")}</p>`;
+  }
+  if (data.status !== "ok") {
+    const fallback = data.status === "rate_limited"
+      ? "Kaynak hız sınırı uyguladı; bir dakika sonra tekrar deneyin."
+      : "Bu ürün, ülke ve yıl için Eurostat'ta beyan bulunamadı.";
+    return `<p class="missing-list">${escapeHtml((data.warnings || []).join(" ") || fallback)}</p>`;
+  }
+  const rows = (data.partners || []).map((p) => `<tr${p.partner_code === "TR" ? ' class="highlight-row"' : ""}>
+    <td>${p.rank}</td>
+    <td>${escapeHtml(p.partner || p.partner_code || "—")}${p.partner_code === "TR" ? " 🇹🇷" : ""}</td>
+    <td>${formatEur(p.value_eur)}</td>
+    <td>${p.net_weight_kg ? escapeHtml(Number(p.net_weight_kg).toLocaleString("tr-TR", { maximumFractionDigits: 0 })) + " kg" : "—"}</td>
+    <td>${p.unit_price_eur_per_kg ? escapeHtml(Number(p.unit_price_eur_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })) + " EUR/kg" : "—"}</td>
+    <td>${p.share != null ? `%${(p.share * 100).toFixed(1)}` : "—"}</td>
+  </tr>`).join("");
+  const flowLabel = data.flow === "X" ? "ihracatı" : "ithalatı";
+  const focus = data.focus || {};
+  const focusLine = focus.present
+    ? `<p><b>Türkiye:</b> ${formatEur(focus.value_eur)} · pay %${(focus.share * 100).toFixed(2)} · sıra ${focus.rank}${focus.unit_price_eur_per_kg ? ` · ${Number(focus.unit_price_eur_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} EUR/kg` : ""}</p>`
+    : `<p><b>Türkiye:</b> bu ürün için ${escapeHtml(data.reporter_name || data.reporter)} beyanında Türkiye'den alım yok.</p>`;
+  const world = data.world && data.world.value_eur ? `<p><b>${escapeHtml(data.reporter_name || data.reporter)} toplam ${escapeHtml(flowLabel)}:</b> ${formatEur(data.world.value_eur)}</p>` : "";
+  return `<div class="answer-head"><span class="answer-status">${escapeHtml(String(data.year || ""))}</span><div><h2>${escapeHtml(data.reporter_name || data.reporter)} — ${escapeHtml(data.product || "")} (${escapeHtml(String(data.match_level || "").toUpperCase())}) ${escapeHtml(flowLabel)}</h2><p>${escapeHtml(data.source_note || "")}</p></div></div>
+    <section class="answer-section">
+      ${world}
+      ${focusLine}
+      ${rows ? `<div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>#</th><th>Ülke</th><th>Değer</th><th>Net ağırlık</th><th>Birim fiyat</th><th>Pay</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      <p class="rate-warning">${escapeHtml(data.statistic_only_note || "")}</p>
+      <p class="rate-warning">${escapeHtml(data.mirror_note || "")}</p>
+      ${(data.warnings || []).length ? `<ul class="savings-list">${data.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+      <p><small>${data.from_archive ? `Arşivden (son alınma: ${escapeHtml(String(data.fetched_at || "").slice(0, 10))})` : "Kaynaktan yeni alındı"}.</small></p>
+    </section>`;
+}
+
+$("#comextLookup")?.addEventListener("click", async () => {
+  const output = $("#comextOutput");
+  if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }
+  const gtip = $("#tariffGtip")?.value.trim() || "";
+  if (gtip.replace(/\D/g, "").length < 4) {
+    output.innerHTML = '<p class="missing-list">AB pazarı sorgusu için en az 4 haneli bir GTİP girin.</p>';
+    return;
+  }
+  const params = new URLSearchParams({ gtip, reporter: $("#comextReporter")?.value || "DE", flow: $("#comextFlow")?.value || "M" });
+  const year = $("#comextYear")?.value.trim();
+  if (year) params.set("year", year);
+  output.innerHTML = '<div class="analysis-loading"><i></i><div><b>Eurostat sorgulanıyor</b><span>AB ülkesinin partner sıralaması ve Türkiye\'nin payı alınıyor…</span></div></div>';
+  try {
+    output.innerHTML = renderComext(await fetchJson(`/api/foreign/comext?${params.toString()}`));
+  } catch (error) {
+    output.innerHTML = `<div class="answer-error"><p>${escapeHtml(describeRequestError(error, "AB pazarı sorgusu tamamlanamadı."))}</p></div>`;
+  }
+});
+
 $("#comtradeLookup")?.addEventListener("click", async () => {
   const output = $("#comtradeOutput");
   if (!hasCapability("foreign_tariff")) { output.innerHTML = featureUpsellHtml("foreign_tariff"); return; }

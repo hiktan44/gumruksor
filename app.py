@@ -46,6 +46,7 @@ from mevzuat_mcp_server import (
     access2markets_engine,
     bedesten_client,
     comtrade_engine,
+    comext_engine,
     change_ledger,
     classification_engine,
     control_engine,
@@ -3024,6 +3025,46 @@ async def web_comtrade_trend(request: Request):
     return JSONResponse(result, headers={"Cache-Control": "private, max-age=600"})
 
 
+@mcp.custom_route("/api/foreign/comext", methods=["GET"])
+async def web_comext_markets(request: Request):
+    """AB pazarı: bir AB ülkesi bu ürünü kimden alıyor / kime satıyor; Türkiye'nin payı.
+
+    Kaynak Eurostat Comext (anahtarsız, ücretsiz). İstatistiktir, oran değildir; hiçbir
+    değer maliyet hesabına girmez.
+    """
+    limited = _rate_limit_response(request, "comext", limit=12, window_seconds=60)
+    if limited:
+        return limited
+    year_raw = str(request.query_params.get("year") or "").strip()
+    try:
+        require_feature(request, "foreign_tariff")
+        report = await comext_engine.markets(
+            str(request.query_params.get("gtip", "")),
+            reporter=str(request.query_params.get("reporter") or "DE"),
+            flow=str(request.query_params.get("flow") or "M"),
+            year=int(year_raw) if year_raw else None,
+            limit=max(1, min(int(request.query_params.get("limit") or 20), 100)),
+        )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Comext market lookup failed")
+        return JSONResponse({"error": "AB dış ticaret istatistiği şu anda alınamadı."}, status_code=502)
+    return JSONResponse(report.as_dict(), headers={"Cache-Control": "private, max-age=600"})
+
+
+@mcp.custom_route("/api/foreign/comext/status", methods=["GET"])
+async def web_comext_status(request: Request):
+    limited = _rate_limit_response(request, "comext-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(await asyncio.to_thread(comext_engine.status))
+
+
 @mcp.custom_route("/api/foreign/comtrade/status", methods=["GET"])
 async def web_comtrade_status(request: Request):
     limited = _rate_limit_response(request, "comtrade-status", limit=30, window_seconds=60)
@@ -3354,6 +3395,13 @@ def _job_details() -> dict[str, dict]:
         }
     except Exception:  # noqa: BLE001
         logger.exception("Access2Markets durumu okunamadı")
+    try:
+        details["comext"] = {
+            "progress": f"{comext_engine.status().get('archived_queries', 0)} sorgu arşivde",
+            "note": "Arka plan döngüsü yok; yalnız kullanıcı sorgusunda çalışır (Eurostat, anahtarsız).",
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("Comext durumu okunamadı")
     try:
         details["comtrade"] = {
             "progress": f"{comtrade_engine.status().get('archived_queries', 0)} sorgu arşivde",

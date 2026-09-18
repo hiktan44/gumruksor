@@ -118,6 +118,11 @@ JOB_CATALOGUE: dict[str, dict[str, str]] = {
         "purpose": "Bekleyen veri incelemesi için yöneticiye hatırlatma gönderir.",
         "cost": "free",
     },
+    "comext": {
+        "label": "AB dış ticaret istatistiği (Eurostat)",
+        "purpose": "Arka plan döngüsü yoktur; yalnız kullanıcı sorgusunda çalışır ve sonucu 60 gün arşivde tutar.",
+        "cost": "free",
+    },
     "comtrade": {
         "label": "Dış ticaret istatistiği",
         "purpose": "Arka plan döngüsü yoktur; yalnız kullanıcı sorgusunda çalışır ve sonucu 90 gün arşivde tutar.",
