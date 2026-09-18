@@ -207,3 +207,7 @@ comtrade.sqlite3-*
 # Eurostat Comext istatistik arsivi (calisma aninda olusur).
 eurostat_comext.sqlite3
 eurostat_comext.sqlite3-*
+
+# Brezilya ComexStat istatistik arsivi (calisma aninda olusur).
+comexstat.sqlite3
+comexstat.sqlite3-*
