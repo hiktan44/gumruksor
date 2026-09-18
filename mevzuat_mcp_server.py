@@ -60,9 +60,6 @@ from foreign_tariff import (
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
 from background_jobs import registry as job_registry
-from comtrade import COMTRADE_MAX_YEARS, TURKIYE_CODE as COMTRADE_TURKIYE_CODE, ComtradeEngine
-from eurostat_comext import ComextEngine
-from comexstat import ComexStatEngine
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -120,16 +117,6 @@ eu_taric_engine = EuTaricEngine(
 access2markets_engine = Access2MarketsEngine(
     code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
 )
-# Dış ticaret istatistiği (UN Comtrade açık ``preview`` ucu): pazar araştırması ve rapor
-# içindir, oran değildir. Anahtarsız, ücretsiz; buradan gelen hiçbir sayı maliyet
-# hesabına girmez.
-comtrade_engine = ComtradeEngine()
-# AB tarafındaki ayna istatistiği (Eurostat Comext): bir AB ülkesi bu ürünü kimden
-# alıyor, Türkiye'nin payı ne. Anahtarsız, ücretsiz; oran değil, maliyet hesabına girmez.
-comext_engine = ComextEngine()
-# Brezilya ayna istatistiği (ComexStat): Brezilya bu ürünü kimden alıyor, Türkiye'nin
-# payı ne. Latin Amerika'da anahtarsız tek resmî kaynak; oran değil.
-comexstat_engine = ComexStatEngine()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -3063,113 +3050,6 @@ async def lookup_eu_access2markets(
     except ValueError as exc:
         return {"error": str(exc)}
     return result.as_dict()
-
-
-@app.tool(
-    app=True,
-    annotations={
-        "title": "Dış ticaret istatistiği: pazar sıralaması ve birim fiyat (UN Comtrade)",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    }
-)
-async def lookup_trade_statistics(
-    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; ilk 6 hane kullanılır."),
-    flow: str = Field("X", max_length=1, description="X = raporlayan ülkenin ihracatı, M = ithalatı."),
-    year: int | None = Field(None, ge=1990, le=2100, description="Yıl; boşsa son tamamlanmış yıl denenir."),
-    reporter: int = Field(COMTRADE_TURKIYE_CODE, description="Raporlayan ülkenin Comtrade kodu (Türkiye 792)."),
-    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
-) -> dict:
-    """Return official trade statistics for a code: top partner markets, value and USD/kg.
-
-    Kaynak Birleşmiş Milletler Comtrade'dir (ülkelerin kendi beyanı, yıllık). Bu bir
-    **istatistiktir, oran değildir**: gümrük vergisi, KDV ve maliyet kalemleri buradan
-    okunmaz. Tek istekte en fazla 500 satır gelir; kırpılma ``truncated`` ile bildirilir.
-    Aynı ticaret hem toplam hem kırılım satırında göründüğü için yalnız toplam satırlar
-    sayılır — kırılımlar da toplansa rakam katlanırdı.
-    """
-    report = await comtrade_engine.markets(gtip, reporter=reporter, flow=flow, year=year, limit=limit)
-    return report.as_dict()
-
-
-@app.tool(
-    app=True,
-    annotations={
-        "title": "Dış ticaret eğilimi: yıl yıl değer ve birim fiyat (UN Comtrade)",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    }
-)
-async def lookup_trade_statistics_trend(
-    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; ilk 6 hane kullanılır."),
-    flow: str = Field("X", max_length=1, description="X = ihracat, M = ithalat."),
-    years: int = Field(5, ge=1, le=COMTRADE_MAX_YEARS, description="Kaç yıl geriye bakılsın."),
-    partner: int | None = Field(None, description="Tek bir partner ülkeye odaklan (Comtrade kodu)."),
-    reporter: int = Field(COMTRADE_TURKIYE_CODE, description="Raporlayan ülkenin Comtrade kodu (Türkiye 792)."),
-) -> dict:
-    """Return a year-by-year trade value series for a code (UN Comtrade).
-
-    Kaynak tek dönem kabul ettiği için **her yıl ayrı istektir** ve istekler arasında
-    beklenir; bu yüzden yavaştır. İstatistiktir, oran değildir.
-    """
-    return await comtrade_engine.trend(gtip, reporter=reporter, flow=flow, years=years, partner=partner)
-
-
-@app.tool(
-    app=True,
-    annotations={
-        "title": "AB pazarı: bir AB ülkesi bu ürünü kimden alıyor, Türkiye'nin payı ne (Eurostat)",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    }
-)
-async def lookup_eu_import_markets(
-    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da CN/HS kodu; ilk 8 hane CN8 olarak denenir, boşsa HS6."),
-    reporter: str = Field("DE", max_length=2, description="AB-27 raporlayan ülke ISO kodu (Yunanistan için GR veya EL)."),
-    flow: str = Field("M", max_length=1, description="M = o ülkenin ithalatı (kimden alıyor), X = ihracatı (kime satıyor)."),
-    year: int | None = Field(None, ge=1988, le=2100, description="Yıl; boşsa son tamamlanmış yıl."),
-    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
-) -> dict:
-    """Return Eurostat Comext partner ranking for an EU member state and a product.
-
-    Kaynak Eurostat Comext'tir (üye devletlerin resmî beyanı, EUR, yıllık). **İstatistiktir,
-    oran değildir**: vergi ve maliyet buradan okunmaz. Yanıtta Türkiye'nin değeri, payı ve
-    sırası ``focus`` altında ayrıca gelir; listede yoksa ``present: false`` denir.
-    """
-    report = await comext_engine.markets(gtip, reporter=reporter, flow=flow, year=year, limit=limit)
-    return report.as_dict()
-
-
-@app.tool(
-    app=True,
-    annotations={
-        "title": "Brezilya pazarı: Brezilya bu ürünü kimden alıyor, Türkiye'nin payı ne (ComexStat)",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    }
-)
-async def lookup_brazil_import_markets(
-    gtip: str = Field(..., min_length=2, max_length=20, description="GTİP ya da HS kodu; 8 hane NCM olarak, yoksa HS6 altındaki NCM'ler, 4 hane pozisyon, 2 hane fasıl."),
-    flow: str = Field("M", max_length=1, description="M = Brezilya'nın ithalatı (kimden alıyor), X = ihracatı (kime satıyor)."),
-    year: int | None = Field(None, ge=1997, le=2100, description="Yıl; boşsa son tamamlanmış yıl."),
-    limit: int = Field(20, ge=1, le=100, description="Kaç partner ülke listelensin."),
-) -> dict:
-    """Return Brazil's partner ranking for a product from the official ComexStat API.
-
-    Kaynak Brezilya MDIC ComexStat (resmî beyan, FOB USD, yıllık). **İstatistiktir, oran
-    değildir**. Türkiye'nin değeri, payı ve sırası ``focus`` altında; listede yoksa
-    ``present: false``. Kaynağın hız sınırı sıkıdır; sonuç 60 gün arşivde tutulur.
-    """
-    report = await comexstat_engine.markets(gtip, flow=flow, year=year, limit=limit)
-    return report.as_dict()
 
 
 @app.tool(

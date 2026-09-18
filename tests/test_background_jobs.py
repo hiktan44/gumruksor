@@ -199,8 +199,6 @@ class RouteTests(unittest.TestCase):
         # Kapalı ücretli dolum listede olmalı: görünmeyen iş teşhis edilemez.
         self.assertIn("eu-taric-fill", names)
         self.assertIn("trade-measures-sync", names)
-        # Döngüsü olmayan ama sorguda çalışan kaynak da listelenir.
-        self.assertIn("comtrade", names)
         for job in body["jobs"]:
             self.assertIn("state", job)
             self.assertIn("purpose", job)
