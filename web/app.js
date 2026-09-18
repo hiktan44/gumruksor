@@ -1562,6 +1562,25 @@ function renderExportCost(cost) {
     </section>`;
 }
 
+function renderDestinationMarket(market, countryName) {
+  if (!market || !(market.top_partners || []).length) return "";
+  const focus = market.focus || {};
+  const eur = (value) => Number.isFinite(Number(value)) ? `${Number(value).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} EUR` : "—";
+  const pct = (value) => value != null ? `%${(value * 100).toFixed(value * 100 < 1 ? 2 : 1)}` : "—";
+  const rows = market.top_partners.map((p) => `<tr${p.partner_code === "TR" ? ' class="highlight-row"' : ""}><td>${p.rank ?? ""}</td><td>${escapeHtml(p.partner || p.partner_code || "—")}</td><td>${eur(p.value_eur)}</td><td>${pct(p.share)}</td><td>${p.unit_price_eur_per_kg ? escapeHtml(Number(p.unit_price_eur_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })) + " EUR/kg" : "—"}</td></tr>`).join("");
+  const focusLine = focus.present
+    ? `<p><b>Türkiye:</b> ${eur(focus.value_eur)} · pay ${pct(focus.share)} · sıra ${focus.rank}${focus.unit_price_eur_per_kg ? ` · ${Number(focus.unit_price_eur_per_kg).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} EUR/kg` : ""}</p>`
+    : `<p><b>Türkiye:</b> ${escapeHtml(countryName)} beyanında bu ürün için Türkiye'den alım görünmüyor — pazar açık ya da rakip ülkeler kilitli; sunumda bunu bir gerekçeyle açıklayın.</p>`;
+  return `<section class="answer-section">
+    <h3>Hedef pazar: ${escapeHtml(market.reporter_name || countryName)} bu ürünü kimden alıyor? <small>(${escapeHtml(String(market.year || ""))}, Eurostat)</small></h3>
+    <p class="box-purpose"><b>İstatistiktir, oran değildir.</b> AB üye devletinin kendi beyanı (EUR, CIF); beyanname alanlarına ve maliyete girmez. Ürün ${escapeHtml(market.product || "")} (${escapeHtml(String(market.match_level || "").toUpperCase())}) düzeyinde.${market.total_value ? ` Toplam ithalat: <b>${eur(market.total_value)}</b>.` : ""}</p>
+    ${focusLine}
+    <div class="scenario-table-wrap"><table class="evidence-table"><thead><tr><th>#</th><th>Tedarikçi ülke</th><th>Değer</th><th>Pay</th><th>Birim fiyat</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${(market.warnings || []).length ? `<ul class="missing-list">${market.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+    <p><small>${market.from_archive ? `Arşivden (son alınma: ${escapeHtml(String(market.fetched_at || "").slice(0, 10))})` : "Kaynaktan yeni alındı"}. Tam sıralama için Tarife panelindeki "AB pazarı" bloğunu kullanın.</small></p>
+  </section>`;
+}
+
 function renderExportRequirements(req) {
   if (!req) return "";
   const dest = req.destination || {};
@@ -1596,6 +1615,7 @@ function renderExportRequirements(req) {
     : "";
 
   const cost = renderExportCost(req.cost);
+  const market = renderDestinationMarket(req.destination_market, name);
 
   return `<section class="answer-section export-block">
       <h3>Hedef ülke: ${escapeHtml(name)}</h3>
@@ -1609,6 +1629,7 @@ function renderExportRequirements(req) {
     ${documents(req.proof_documents, "Düzenlenecek menşe / dolaşım belgesi")}
     ${(req.commercial_documents || []).length ? `<section class="answer-section"><h3>Ticari ve taşıma belgeleri</h3><ul class="missing-list">${req.commercial_documents.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
     ${cost}
+    ${market}
     ${documents(req.turkish_procedure, "Türkiye tarafı ihracat işlemleri")}
     ${hints}
     ${(req.caveats || []).length ? `<div class="result-caution">${req.caveats.map((item) => escapeHtml(item)).join(" ")}</div>` : ""}`;

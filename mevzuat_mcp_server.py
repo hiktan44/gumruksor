@@ -279,6 +279,9 @@ customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
 # AB-27 KDV oranları (tohum + TEDB'den otomatik yükseltme).
 eu_vat_index = EuVatRates()
 customs_advisor_service.eu_vat_index = eu_vat_index
+# İhracat ön değerlendirmesinde hedef AB ülkesinin bu ürünü kimden aldığı (Eurostat):
+# arşiv öncelikli, ücretsiz, oran değil.
+customs_advisor_service.comext_engine = comext_engine
 _register_loop("eu-vat-sync", eu_vat_index.periodic_sync_loop)
 
 

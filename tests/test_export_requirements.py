@@ -315,6 +315,33 @@ class BuildTests(unittest.TestCase):
         result = build_export_requirements({"destination_country": "Çin"})
         self.assertTrue(any("vergi oranı verimiz yok" in note for note in result.caveats))
 
+    def test_destination_market_is_carried_but_never_touches_fields_or_readiness(self) -> None:
+        """İstatistik bloğu bilgi amaçlıdır: beyanname alanları ve hazırlık kapısı değişmez."""
+        base = build_export_requirements({"destination_country": "Almanya", "candidate_gtip": "610910000011"})
+        market = {
+            "reporter": "DE", "reporter_name": "Almanya", "product": "61091000", "match_level": "cn8",
+            "year": 2024, "total_value": 1_000_000.0,
+            "focus": {"present": True, "value_eur": 50_000.0, "share": 0.05, "rank": 4},
+            "top_partners": [{"partner": "Bangladeş", "partner_code": "BD", "value_eur": 400_000.0, "share": 0.4, "rank": 1}],
+        }
+        with_market = build_export_requirements(
+            {"destination_country": "Almanya", "candidate_gtip": "610910000011"}, destination_market=market
+        )
+        self.assertEqual(with_market.destination_market.reporter, "DE")
+        self.assertEqual(with_market.destination_market.focus["rank"], 4)
+        self.assertEqual(
+            [f.model_dump() for f in with_market.declaration_fields],
+            [f.model_dump() for f in base.declaration_fields],
+        )
+        self.assertEqual(with_market.readiness, base.readiness)
+        self.assertEqual(with_market.cost, base.cost)
+
+    def test_malformed_market_block_is_dropped_not_fatal(self) -> None:
+        result = build_export_requirements(
+            {"destination_country": "Almanya"}, destination_market={"reporter": None, "top_partners": "x"}
+        )
+        self.assertIsNone(result.destination_market)
+
     def test_procedure_list_is_stable(self) -> None:
         self.assertEqual(len(turkish_export_procedure({})), 8)
 

@@ -60,6 +60,9 @@ logger = logging.getLogger(__name__)
 # İhracat dosyasında ücretsiz AB kaynağına verilen süre. Ön değerlendirme rotası dakikada
 # 20 isteğe açık; kaynak yavaşlarsa dosya bekletilmez, ücretli arşive düşülür.
 _A2M_EXPORT_TIMEOUT_SECONDS = max(2.0, float(os.environ.get("A2M_EXPORT_TIMEOUT_SECONDS") or 12))
+# Hedef pazar istatistiği (Eurostat Comext) ön değerlendirmede arşiv öncelikli okunur;
+# kaynak yavaşlarsa dosya bekletilmez, blok sessizce boş kalır.
+_COMEXT_EXPORT_TIMEOUT_SECONDS = max(2.0, float(os.environ.get("COMEXT_EXPORT_TIMEOUT_SECONDS") or 8))
 
 _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
 # PRD Faz 3.2: hibrit indeksten (BM25 + embedding) çekilen dipnotlu kanıt.
@@ -2283,6 +2286,29 @@ def _evidence_prompt(pack: CustomsEvidencePack) -> str:
             f"Düzey: {destination.tier}\n"
             f"Açıklama: {destination.badge_text}\n\n"
         )
+        market = pack.export_requirements.destination_market
+        if market is not None:
+            # İstatistik bloğu: model pazar bağlamı verebilir ama bunu ORAN sanmamalı.
+            focus = market.focus or {}
+            focus_line = (
+                f"Türkiye: {focus.get('value_eur'):,.0f} EUR, pay %{(focus.get('share') or 0) * 100:.2f}, "
+                f"sıra {focus.get('rank')}"
+                if focus.get("present") and focus.get("value_eur")
+                else "Türkiye: bu ürün için hedef ülkenin beyanında Türkiye'den alım yok"
+            )
+            leaders = "; ".join(
+                f"{item.get('partner')} %{(item.get('share') or 0) * 100:.1f}"
+                for item in (market.top_partners or [])[:5]
+            )
+            tier_block += (
+                "HEDEF PAZAR İSTATİSTİĞİ (Eurostat Comext — istatistiktir, ORAN DEĞİLDİR; "
+                "vergi, KDV veya maliyet olarak yazma)\n"
+                f"{market.reporter_name or market.reporter} {market.year} ithalatı, ürün {market.product} "
+                f"({(market.match_level or '').upper()}): toplam "
+                f"{(market.total_value or 0):,.0f} EUR\n"
+                f"İlk tedarikçiler: {leaders or 'yok'}\n"
+                f"{focus_line}\n\n"
+            )
     return (
         f"{header}\n"
         f"{inquiry_json}\n\n"
@@ -2651,6 +2677,8 @@ class CustomsAdvisor:
         self.access2markets_engine: Any = None
         self.foreign_tariff_engine: Any = None
         self.eu_vat_index: Any = None
+        # Hedef pazar istatistiği (Eurostat Comext); sunucuda bağlanır. Oran değildir.
+        self.comext_engine: Any = None
 
 
     async def _eu_free_duty(
@@ -2690,6 +2718,70 @@ class CustomsAdvisor:
             "retrieved_at": str(getattr(result, "fetched_at", "") or ""),
             "sha256": str(getattr(result, "sha256", "") or ""),
             "partner": EXPORTER_ISO2,
+        }
+
+    async def _destination_market(self, code: str, profile: Any) -> dict[str, Any] | None:
+        """Hedef AB ülkesi bu ürünü kimden alıyor, Türkiye'nin payı ne (Eurostat Comext).
+
+        İstatistiktir, oran değildir: sonuç yalnız ``destination_market`` bloğuna gider;
+        beyanname alanlarına, hazırlık kapısına ve maliyete dokunmaz. Motor 60 günlük
+        kendi arşivini tuttuğu için aynı kod ikinci kez ağa çıkmaz; ilk sorguda kaynak
+        yavaşlarsa zaman aşımıyla vazgeçilir ve blok boş kalır.
+        """
+        engine = self.comext_engine
+        if engine is None or getattr(profile, "regime", None) != "eu":
+            return None
+        reporter = (getattr(profile, "iso2", None) or "").strip().upper()
+        if not reporter:
+            return None
+        try:
+            report = await asyncio.wait_for(
+                engine.markets(code, reporter=reporter, flow="M", limit=5, focus=EXPORTER_ISO2),
+                timeout=_COMEXT_EXPORT_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.info("Comext zaman aşımı; pazar bloğu boş bırakılıyor (%s)", code[:10])
+            return None
+        except Exception:
+            logger.exception("Comext ihracat pazar sorgusu başarısız")
+            return None
+        if getattr(report, "status", "") != "ok":
+            return None
+        data = report.as_dict() if hasattr(report, "as_dict") else dict(report)
+        world = data.get("world") or {}
+        focus = dict(data.get("focus") or {})
+        return {
+            "source": "eurostat_comext",
+            "reporter": str(data.get("reporter") or reporter),
+            "reporter_name": str(data.get("reporter_name") or ""),
+            "product": str(data.get("product") or ""),
+            "match_level": data.get("match_level"),
+            "year": data.get("year"),
+            "currency": "EUR",
+            "total_value": world.get("value_eur"),
+            "focus": {
+                "present": bool(focus.get("present")),
+                "value_eur": focus.get("value_eur"),
+                "share": focus.get("share"),
+                "rank": focus.get("rank"),
+                "unit_price_eur_per_kg": focus.get("unit_price_eur_per_kg"),
+            },
+            "top_partners": [
+                {
+                    "partner": item.get("partner"),
+                    "partner_code": item.get("partner_code"),
+                    "value_eur": item.get("value_eur"),
+                    "share": item.get("share"),
+                    "rank": item.get("rank"),
+                    "unit_price_eur_per_kg": item.get("unit_price_eur_per_kg"),
+                }
+                for item in (data.get("partners") or [])[:5]
+            ],
+            "from_archive": bool(data.get("from_archive")),
+            "fetched_at": data.get("fetched_at"),
+            "source_url": data.get("source_url"),
+            "note": str(data.get("statistic_only_note") or ""),
+            "warnings": list(data.get("warnings") or [])[:6],
         }
 
     async def _export_requirements(self, inquiry: CustomsInquiry) -> ExportRequirements:
@@ -2790,6 +2882,12 @@ class CustomsAdvisor:
             except Exception:
                 logger.exception("AB KDV oranı okunamadı")
 
+        # Hedef pazar istatistiği: yalnız AB-27 için (Eurostat), arşiv öncelikli, ücret yok.
+        # Oran değildir ve hiçbir beyanname/maliyet alanına girmez.
+        destination_market: dict[str, Any] | None = None
+        if len(code) >= 4:
+            destination_market = await self._destination_market(code, profile)
+
         return build_export_requirements(
             inquiry.model_dump(),
             profile=profile,
@@ -2798,6 +2896,7 @@ class CustomsAdvisor:
             on_demand_lookup=on_demand,
             destination_vat=destination_vat,
             preference_proof_confirmed=bool(inquiry.export_preference_proof),
+            destination_market=destination_market,
         )
 
     async def close(self) -> None:

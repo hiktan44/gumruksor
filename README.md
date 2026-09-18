@@ -566,6 +566,14 @@ Değişkenler: `COMEXT_ENABLED`, `COMEXT_REFRESH_DAYS`, `COMEXT_DELAY_SECONDS`,
 `GET /api/foreign/comext/status`. MCP'de `lookup_eu_import_markets`. Arayüzde Tarife
 panelinde "AB pazarı: hedef ülke kimden alıyor?" bloğu; Türkiye satırı vurgulanır.
 
+**İhracat ön değerlendirmesine bağlantı.** Hedef ülke AB-27 üyesiyse `customs_advisor._destination_market`
+Comext'ten *o ülkenin bu ürün ithalatını* (ilk 5 tedarikçi + Türkiye'nin değeri/payı/sırası) okur ve
+`export_requirements.destination_market` bloğuna yazar; arayüzde "Hedef pazar: … bu ürünü kimden
+alıyor?" bölümü, istemde "HEDEF PAZAR İSTATİSTİĞİ" bloğu olarak görünür. **İstatistiktir, oran
+değildir**: beyanname alanlarına, hazırlık kapısına ve maliyete girmez (test bunu kilitler). Arşiv
+öncelikli; kaynak yavaşsa `COMEXT_EXPORT_TIMEOUT_SECONDS` (8 sn) sonra vazgeçilir ve blok boş kalır.
+AB dışı hedefte Eurostat hiç sorulmaz.
+
 ### Brezilya pazarı istatistiği: ComexStat (`comexstat.py`)
 
 Latin Amerika'da anahtarsız ve makine okunur tek resmî dış ticaret kaynağı (MDIC ComexStat,

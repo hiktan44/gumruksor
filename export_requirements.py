@@ -99,6 +99,32 @@ class MarketHint(BaseModel):
     source_url: str | None = None
 
 
+class DestinationMarket(BaseModel):
+    """Hedef ülkenin bu ürünü kimden aldığı: resmî istatistik, oran DEĞİL.
+
+    Kaynak Eurostat Comext (AB üye devletlerinin kendi beyanı). Buradan gelen hiçbir sayı
+    beyanname alanına, vergi kalemine ya da maliyet hesabına girmez; pazar büyüklüğü,
+    rakip ülke ve Türkiye'nin payı göstergesidir. Türkiye listede yoksa ``focus.present``
+    açıkça ``False`` olur — uydurulmaz.
+    """
+
+    source: str = "eurostat_comext"
+    reporter: str
+    reporter_name: str = ""
+    product: str = ""
+    match_level: str | None = None
+    year: int | None = None
+    currency: str = "EUR"
+    total_value: float | None = None
+    focus: dict[str, Any] = Field(default_factory=dict)
+    top_partners: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    from_archive: bool = False
+    fetched_at: str | None = None
+    source_url: str | None = None
+    note: str = ""
+    warnings: list[str] = Field(default_factory=list, max_length=6)
+
+
 class DeclarationField(BaseModel):
     """Hedef ülke beyannamesine girecek tek bir veri kalemi ve ne kadar emin olduğumuz."""
 
@@ -142,6 +168,9 @@ class ExportRequirements(BaseModel):
     commercial_documents: list[str] = Field(default_factory=list, max_length=10)
     turkish_procedure: list[ExportDocument] = Field(default_factory=list, max_length=12)
     market_hints: list[MarketHint] = Field(default_factory=list, max_length=10)
+    # Hedef ülkenin bu ürünü kimden aldığı (Eurostat Comext). İstatistiktir; beyanname
+    # alanlarına, hazırlık kapısına ve maliyete hiçbir şekilde girmez.
+    destination_market: DestinationMarket | None = None
     # Hedef ülke gümrük yükü; `rates` dışındaki kademede sebebini taşıyan bir
     # "hesaplanmadı" sonucudur, asla uydurma bir sayı değildir.
     cost: ExportCostEstimate | None = None
@@ -1004,8 +1033,13 @@ def build_export_requirements(
     on_demand_lookup: dict[str, str] | None = None,
     destination_vat: dict[str, Any] | None = None,
     preference_proof_confirmed: bool = False,
+    destination_market: DestinationMarket | dict[str, Any] | None = None,
 ) -> ExportRequirements:
-    """Hedef ülke bloğunu birleştirir. ``destination_duty`` yalnız ``rates`` düzeyinde kabul edilir."""
+    """Hedef ülke bloğunu birleştirir. ``destination_duty`` yalnız ``rates`` düzeyinde kabul edilir.
+
+    ``destination_market`` çağıranın enjekte ettiği istatistiktir; burada ağ çağrısı yoktur
+    ve bu blok beyanname alanlarını, hazırlık kapısını ve maliyeti **etkilemez**.
+    """
     data = inquiry_like if isinstance(inquiry_like, dict) else getattr(inquiry_like, "__dict__", {}) or {}
     if profile is None:
         profile = destination_profile(data.get("destination_country"))
@@ -1039,8 +1073,19 @@ def build_export_requirements(
     )
 
     caveats = doc_caveats + _caveats(profile)
+    market: DestinationMarket | None = None
+    if destination_market:
+        try:
+            market = (
+                destination_market
+                if isinstance(destination_market, DestinationMarket)
+                else DestinationMarket(**destination_market)
+            )
+        except Exception:  # noqa: BLE001 - istatistik bloğu dosyayı düşürmemeli
+            market = None
     return ExportRequirements(
         destination=profile,
+        destination_market=market,
         destination_duty=destination_duty,
         duty_source=duty_source,
         on_demand_lookup=on_demand_lookup,
@@ -1062,6 +1107,7 @@ __all__ = [
     "DataTier",
     "DeclarationField",
     "DeclarationReadiness",
+    "DestinationMarket",
     "DestinationProfile",
     "ExportCostEstimate",
     "ExportDocument",

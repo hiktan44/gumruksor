@@ -302,6 +302,89 @@ class ExportEvidencePackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(requirements.destination_duty)
         self.assertIn("ulaşılamadı", requirements.destination.badge_text)
 
+    def _comext_stub(self, calls: list):
+        class _Comext:
+            async def markets(self, gtip, *, reporter="DE", flow="M", year=None, limit=20, focus="TR", refresh=False):
+                calls.append({"gtip": gtip, "reporter": reporter, "flow": flow, "limit": limit, "focus": focus})
+                return SimpleNamespace(
+                    status="ok",
+                    as_dict=lambda: {
+                        "reporter": reporter, "reporter_name": "Almanya", "product": "61091000",
+                        "match_level": "cn8", "year": 2024, "status": "ok",
+                        "world": {"value_eur": 2_000_000.0},
+                        "focus": {"present": True, "value_eur": 80_000.0, "share": 0.04, "rank": 3, "unit_price_eur_per_kg": 12.5},
+                        "partners": [
+                            {"partner": "Bangladeş", "partner_code": "BD", "value_eur": 900_000.0, "share": 0.45, "rank": 1},
+                            {"partner": "Çin", "partner_code": "CN", "value_eur": 500_000.0, "share": 0.25, "rank": 2},
+                            {"partner": "Türkiye", "partner_code": "TR", "value_eur": 80_000.0, "share": 0.04, "rank": 3},
+                        ],
+                        "from_archive": True, "fetched_at": "2026-09-18T06:00:00+00:00",
+                        "source_url": "https://ec.europa.eu/eurostat/api/comext/x",
+                        "statistic_only_note": "istatistik", "warnings": [],
+                    },
+                )
+        return _Comext()
+
+    async def test_eu_destination_gets_the_market_block_from_comext(self) -> None:
+        """Hedef AB ülkesi bu ürünü kimden alıyor: Türkiye'nin payı ve ilk tedarikçiler dosyaya girer."""
+        service = customs_advisor.CustomsAdvisor()
+        calls: list = []
+        service.comext_engine = self._comext_stub(calls)
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertEqual(calls[0]["reporter"], "DE")
+        self.assertEqual(calls[0]["flow"], "M", "hedef ülkenin İTHALATI sorulur")
+        self.assertEqual(calls[0]["focus"], "TR")
+        market = requirements.destination_market
+        self.assertIsNotNone(market)
+        self.assertEqual(market.focus["rank"], 3)
+        self.assertEqual(market.top_partners[0]["partner"], "Bangladeş")
+        self.assertEqual(market.total_value, 2_000_000.0)
+        # İstatistik beyanname alanlarına sızmaz: hiçbir alan değeri EUR taşımaz.
+        self.assertFalse(any("EUR" in str(f.value or "") for f in requirements.declaration_fields))
+
+    async def test_market_block_is_only_asked_for_eu_destinations(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+        calls: list = []
+        service.comext_engine = self._comext_stub(calls)
+        requirements = await service._export_requirements(self._inquiry(destination_country="Çin"))
+        self.assertEqual(calls, [], "AB dışı hedefte Eurostat sorulmaz")
+        self.assertIsNone(requirements.destination_market)
+
+    async def test_a_slow_market_source_does_not_stall_the_file(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Slow:
+            async def markets(self, *args, **kwargs):
+                await asyncio.sleep(5)
+                raise AssertionError("zaman aşımından sonra sonuç kullanılmamalı")
+
+        service.comext_engine = _Slow()
+        with patch.object(customs_advisor, "_COMEXT_EXPORT_TIMEOUT_SECONDS", 0.05):
+            requirements = await service._export_requirements(self._inquiry())
+        self.assertIsNone(requirements.destination_market)
+        self.assertIsNotNone(requirements.readiness, "dosyanın kalanı normal kurulur")
+
+    async def test_a_broken_market_source_is_silent(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+
+        class _Broken:
+            async def markets(self, *args, **kwargs):
+                raise RuntimeError("eurostat kapalı")
+
+        service.comext_engine = _Broken()
+        requirements = await service._export_requirements(self._inquiry())
+        self.assertIsNone(requirements.destination_market)
+
+    async def test_export_prompt_carries_market_statistics_labelled_as_not_a_rate(self) -> None:
+        service = customs_advisor.CustomsAdvisor()
+        service.comext_engine = self._comext_stub([])
+        pack = await self._pack(service, self._inquiry())
+        prompt = customs_advisor._evidence_prompt(pack)
+        self.assertIn("HEDEF PAZAR İSTATİSTİĞİ", prompt)
+        self.assertIn("ORAN DEĞİLDİR", prompt)
+        self.assertIn("Bangladeş %45.0", prompt)
+        self.assertIn("sıra 3", prompt)
+
     async def test_export_missing_information_is_direction_aware(self) -> None:
         missing = customs_advisor._missing_information(self._inquiry())
         joined = " ".join(missing)
