@@ -575,45 +575,6 @@
             <p class="rate-warning">Avrupa Komisyonu'nun resmî aylık TARIC ham veri çıkarımından gelir. <b>TARIC'te tek bir "nihai vergi" sayısı yoktur</b>: oran ek koda, tarife kontenjanına, ibraz edilen belgeye ve nihai kullanıma göre değişir. Bu yüzden üçüncü ülke vergisi, menşeye özgü oran, ek vergiler ve gereken belgeler ayrı ayrı gösterilir. Sonuç <b>Türkiye maliyet hesabına aktarılmaz</b>. Bu kaynak sorgu başına ücretlidir; aynı kod için sonuç arşivden sunulur.</p>
             <button class="analyse-button" type="button" id="euTaricLookup"><span>AB oranlarını sorgula</span></button>
             <div id="euTaricOutput" aria-live="polite"></div>
-            <h3>Pazar istatistiği (BM Comtrade)</h3>
-            <p class="rate-warning">Birleşmiş Milletler Comtrade'in resmî istatistiğinden gelir: bu kodu hangi ülkeler ne kadar alıyor, kilogram başına ne ödüyor. <b>Bu bir oran değildir</b> — vergi, KDV ve maliyet kalemleri buradan okunmaz ve hiçbir sayı maliyet hesabına aktarılmaz. Rakamlar ülkelerin kendi beyanıdır; ihracatçı ve ithalatçı ülke aynı ticareti farklı bildirebilir. Kaynak tek istekte en fazla 500 satır verir; kırpılma varsa uyarı yazılır.</p>
-            <label class="field"><span>Yön</span>
-              <select id="comtradeFlow">
-                <option value="X">Türkiye'nin ihracatı (hangi pazarlar alıyor)</option>
-                <option value="M">Türkiye'nin ithalatı (nereden geliyor)</option>
-              </select>
-            </label>
-            <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comtradeYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
-            <button class="analyse-button" type="button" id="comtradeLookup"><span>Pazarları sırala</span></button>
-            <button class="analyse-button" type="button" id="comtradeTrend"><span>Son 5 yıl eğilimi</span></button>
-            <div id="comtradeOutput" aria-live="polite"></div>
-            <h3>AB pazarı: hedef ülke kimden alıyor? (Eurostat Comext)</h3>
-            <p class="rate-warning">AB üye devletlerinin resmî beyanından gelir (Eurostat Comext, EUR): seçtiğiniz AB ülkesi bu ürünü hangi ülkelerden alıyor, <b>Türkiye'nin payı ve sırası</b> ne, kilogram başına ne ödeniyor. Rakip ülkeleri ve pazar büyüklüğünü gösterir; <b>oran değildir</b> ve hiçbir sayı maliyet hesabına aktarılmaz. GTİP'in ilk 8 hanesi (CN8) denenir, beyan yoksa HS6'ya düşülür ve bu açıkça yazılır.</p>
-            <label class="field"><span>AB ülkesi</span>
-              <select id="comextReporter">
-                <option value="DE">Almanya</option><option value="FR">Fransa</option><option value="NL">Hollanda</option><option value="IT">İtalya</option><option value="ES">İspanya</option><option value="PL">Polonya</option><option value="BE">Belçika</option><option value="AT">Avusturya</option><option value="RO">Romanya</option><option value="CZ">Çekya</option><option value="SE">İsveç</option><option value="HU">Macaristan</option><option value="PT">Portekiz</option><option value="EL">Yunanistan</option><option value="DK">Danimarka</option><option value="IE">İrlanda</option><option value="FI">Finlandiya</option><option value="SK">Slovakya</option><option value="BG">Bulgaristan</option><option value="HR">Hırvatistan</option><option value="LT">Litvanya</option><option value="SI">Slovenya</option><option value="LV">Letonya</option><option value="EE">Estonya</option><option value="CY">Güney Kıbrıs</option><option value="LU">Lüksemburg</option><option value="MT">Malta</option>
-              </select>
-            </label>
-            <label class="field"><span>Yön</span>
-              <select id="comextFlow">
-                <option value="M">Bu ülkenin ithalatı (kimden alıyor)</option>
-                <option value="X">Bu ülkenin ihracatı (kime satıyor)</option>
-              </select>
-            </label>
-            <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comextYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
-            <button class="analyse-button" type="button" id="comextLookup"><span>AB pazarını sırala</span></button>
-            <div id="comextOutput" aria-live="polite"></div>
-            <h3>Brezilya pazarı: Brezilya kimden alıyor? (ComexStat)</h3>
-            <p class="rate-warning">Brezilya Bakanlığı'nın resmî beyanından gelir (ComexStat, FOB USD): Brezilya bu ürünü hangi ülkelerden alıyor, <b>Türkiye'nin payı ve sırası</b> ne. Latin Amerika'da anahtarsız tek resmî kaynak. <b>Oran değildir</b>; hiçbir sayı maliyet hesabına aktarılmaz. GTİP'in ilk 8 hanesi Brezilya NCM listesinde aranır, yoksa HS6 altındaki NCM'lerin toplamı alınır ve bu yazılır. Kaynağın hız sınırı sıkıdır; "yavaşla" mesajı gelirse 15 saniye bekleyip tekrar deneyin.</p>
-            <label class="field"><span>Yön</span>
-              <select id="comexstatFlow">
-                <option value="M">Brezilya'nın ithalatı (kimden alıyor)</option>
-                <option value="X">Brezilya'nın ihracatı (kime satıyor)</option>
-              </select>
-            </label>
-            <label class="field"><span>Yıl (boş bırakılırsa son tamamlanmış yıl)</span><input id="comexstatYear" maxlength="4" inputmode="numeric" placeholder="Örn. 2024"></label>
-            <button class="analyse-button" type="button" id="comexstatLookup"><span>Brezilya pazarını sırala</span></button>
-            <div id="comexstatOutput" aria-live="polite"></div>
           </div>
         </section>
 
