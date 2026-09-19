@@ -1,0 +1,1485 @@
+[
+ {
+  "page": 22,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "G.T.İ.P. NO",
+     "Mal İsmi",
+     "Vergi Tutarı (TL)",
+     "Uygulanacak Vergi Tutarı (TL)",
+     "Birimi"
+    ],
+    [
+     "",
+     "(Hafif yağlar ve müstahzarları)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.11.00.00",
+     "Özel bir işleme tabi tutulacak olanlar",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "2710.12.31.00.00",
+     "Uçak benzini",
+     "2,5000",
+     "0",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.41.00.00",
+     "Oktanı (RON) 95’den az olanlar",
+     "2,1500",
+     "12,6179",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.45.00.11",
+     "Kurşunsuz benzin 95 oktan",
+     "2,3765",
+     "14,8277",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "Kurşunsuz benzin 95 oktan (E10)",
+     "2,3765",
+     "14,8277",
+     "Litre"
+    ],
+    [
+     "2710.12.45.00.13",
+     "",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 95 veya daha",
+     "",
+     "",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 23,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "fazla fakat 98’den az olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.45.00.18",
+     "Diğerleri",
+     "2,3765",
+     "14,8277",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 98 veya daha fazla olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.49.00.11",
+     "Kurşunsuz benzin 98 oktan",
+     "2,4985",
+     "15,5437",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 98 veya daha fazla olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.49.00.12",
+     "Kurşunsuz benzin 98 oktan (E10)",
+     "2,4985",
+     "15,5437",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Oktanı (RON) 98 veya daha fazla olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.49.00.18",
+     "Diğerleri",
+     "2,4985",
+     "15,5437",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.51.00.00",
+     "Oktanı (RON) 98’den az olanlar",
+     "2,1800",
+     "12,7941",
+     "Litre"
+    ],
+    [
+     "",
+     "(İçindeki kurşun miktarı litrede 0,013 gramı geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.12.59.00.00",
+     "Oktanı (RON) 98 veya daha fazla olanlar",
+     "2,1800",
+     "12,7941",
+     "Litre"
+    ],
+    [
+     "2710.12.70.00.00",
+     "Benzin tipi jet yakıtı",
+     "2,5000",
+     "0",
+     "Litre"
+    ],
+    [
+     "",
+     "(Kerosen)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.21.00.00",
+     "Jet yakıtı",
+     "2,5000",
+     "0",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 24,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "2710.19.43.00.11",
+     "Motorin",
+     "1,7945",
+     "13,9006",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.43.00.17",
+     "Damıtık denizcilik yakıtı",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.43.00.29",
+     "Diğerleri",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.46.00.18",
+     "Damıtık denizcilik yakıtı",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.46.00.29",
+     "Diğerleri",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.47.00.18",
+     "Damıtık denizcilik yakıtı",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.47.00.19",
+     "Diğerleri",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 25,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,1’i geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.48.00.11",
+     "Damıtık denizcilik yakıtı",
+     "1,7245",
+     "11,6597",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,1’i geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.48.00.18",
+     "Diğerleri",
+     "1,7245",
+     "11,6597",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.11.00.11",
+     "Motorin",
+     "1,7945",
+     "13,9006",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.11.00.19",
+     "Diğerleri",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.15.00.00",
+     "Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.17.00.00",
+     "Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler",
+     "1,7945",
+     "12,1331",
+     "Litre"
+    ],
+    [
+     "",
+     "(Gaz oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.19.00.00",
+     "Ağırlık itibariyle kükürt oranı %0,1’i geçenler",
+     "1,7245",
+     "11,6597",
+     "Litre"
+    ],
+    [
+     "2710.20.90.00.00",
+     "Diğer yağlar (2710.12.90.00.11, 2710.12.90.00.19, 2710.19.29.00.00 G.T.İ.P. numaralı malların biodizel ihtiva edenleri ile 2710.19.81,",
+     "1,7245",
+     "11,6597",
+     "Litre"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 26,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri hariç)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.62.00.10",
+     "Kalorifer Yakıtı",
+     "0,4760",
+     "3,2181",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.62.00.11",
+     "Fuel oil",
+     "0,4760",
+     "3,2181",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.62.00.31",
+     "Artık denizcilik yakıtı",
+     "0,4760",
+     "3,2181",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.62.00.39",
+     "Diğerleri",
+     "0,4760",
+     "3,2181",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.64.00.10",
+     "Kalorifer Yakıtı",
+     "0,2370",
+     "1,6023",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.64.00.11",
+     "Fuel oil",
+     "0,2370",
+     "1,6023",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 27,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.64.00.31",
+     "Artık denizcilik yakıtı",
+     "0,2370",
+     "1,6023",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.64.00.39",
+     "Diğerleri",
+     "0,2370",
+     "1,6023",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.68.00.11",
+     "Yüksek kükürtlü fuel oil",
+     "0,2240",
+     "1,5143",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.68.00.31",
+     "Artık denizcilik yakıtı",
+     "0,2240",
+     "1,5143",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.19.68.00.39",
+     "Diğerleri",
+     "0,2240",
+     "1,5143",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.31.00.00",
+     "Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler",
+     "0,4760",
+     "3,2181",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.35.00.00",
+     "Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler",
+     "0,2370",
+     "1,6023",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Fuel oiller)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2710.20.39.00.00",
+     "Ağırlık itibariyle kükürt miktarı %1’i geçenler",
+     "0,2240",
+     "1,5143",
+     "Kilogram"
+    ],
+    [
+     "27.11",
+     "Petrol gazları ve diğer gazlı",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 28,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "hidrokarbonlar",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(2711.11.00.00.00; 2711.12; 2711.13; 2711.19.00.00.11; 2711.21.00.00.00; 2711.29.00.00.11 ve 2711.29.00.00.12 hariç)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Sıvılaştırılmış)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.11.00.00.00",
+     "Doğal gaz",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "Motorlu taşıtlarda yakıt olarak kullanılacak olanlar",
+     "0,8599",
+     "5,5049",
+     "Standart Metreküp"
+    ],
+    [
+     "",
+     "Diğerleri",
+     "0,0230",
+     "0,1468",
+     "Standart Metreküp"
+    ],
+    [
+     "",
+     "(Sıvılaştırılmış)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.12",
+     "Propan",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Sıvılaştırılmış)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.13",
+     "Bütan",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ],
+    [
+     "2711.19.00.00.11",
+     "Sıvılaştırılmış petrol gazı (L.P.G.)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "Motorlu taşıtlarda yakıt olarak kullanılacak olanlar (Otogaz)",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ],
+    [
+     "",
+     "Diğerleri",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Gaz halinde olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.21.00.00.00",
+     "Doğal gaz",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "Motorlu taşıtlarda yakıt olarak kullanılacak olanlar",
+     "0,8599",
+     "5,5049",
+     "Standart Metreküp"
+    ],
+    [
+     "",
+     "Diğerleri",
+     "0,0230",
+     "0,1468",
+     "Standart Metreküp"
+    ],
+    [
+     "",
+     "(Gaz halinde olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.29.00.00.11",
+     "Propan",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Gaz halinde olanlar)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2711.29.00.00.12",
+     "Bütan",
+     "1,7780",
+     "11,3830",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 29,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "27.13",
+     "Petrol koku, petrol bitümeni ve petrol yağlarının veya bitümenli minerallerden elde edilen yağların diğer kalıntıları (2713.11.00.00.00; 2713.12.00.00.00; 2713.20.00.00.19; 2713.90 hariç)",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Petrol koku)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2713.11.00.00.00",
+     "Kalsine edilmemiş",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Petrol koku)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2713.12.00.00.00",
+     "Kalsine edilmiş",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(Petrol bitümeni)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2713.20.00.00.19",
+     "Diğerleri",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "2713.90",
+     "Petrol yağlarının veya bitümenli minerallerden elde edilen yağların diğer kalıntıları",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "",
+     "(28.03 pozisyonundaki her nevi karbon imaline mahsus olanlar hariç)",
+     "",
+     "",
+     ""
+    ],
+    [
+     "2715.00.00.00.00",
+     "Esasını tabii asfalt, tabii bitümen, petrol bitümeni, mineral katran veya mineral katran zifti (bitümenli sakızlar, cut-backs gibi) teşkil eden bitümenli karışımlar",
+     "2,5000",
+     "0",
+     "Kilogram"
+    ],
+    [
+     "38.26",
+     "Biodizel ve bunların karışımları (Ağırlık itibariyle %70’den az petrol yağları veya bitümenli minerallerden elde edilen yağları içerenler veya içermeyenler",
+     "1,1209",
+     "7,5787",
+     "Litre"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 30,
+  "cetvel_b": true,
+  "tables": [
+   [
+    [
+     "G.T.İ.P. NO",
+     "Mal İsmi",
+     "Vergi Tutarı (TL)",
+     "Uygulanacak Vergi Tutarı (TL)",
+     "Birimi"
+    ],
+    [
+     "2707.10.00.00.00",
+     "Benzol (Benzen)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.20.00.00.00",
+     "Toluol (Toluen)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.30.00.00.00",
+     "Ksilol (Ksilen)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.50.00.00.11",
+     "Solvent nafta (Çözücü nafta)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.50.00.00.19",
+     "Diğerleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.99.19.00.00",
+     "Diğerleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2707.99.20.00.00",
+     "Sülfürik asitle diğer kısımları alınmış petrol eterleri; Antrasen",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2709.00.10.00.00",
+     "Tabii gazın kondanseleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.12.21.00.00",
+     "White spirit",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.12.25.00.00",
+     "Diğerleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.12.90.00.11",
+     "Diğer solventler (Çözücüler)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.12.90.00.19",
+     "Diğerleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.19.29.00.00",
+     "Diğerleri",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2710.20.90.00.00",
+     "Diğer yağlar [Yalnız; -2710.12.90.00.11, 2710.12.90.00.19 ve 2710.19.29.00.00 G.T.İ.P. numaralı malların biodizel ihtiva edenleri,",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 31,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "-2710.19.81, 2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri.]",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2901.10.00.90.11",
+     "Hekzan",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2901.10.00.90.12",
+     "Heptan",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2901.10.00.90.13",
+     "Pentan",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2901.10.00.90.19",
+     "Diğer doymuş asiklik hidrokarbonlar",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2902.20.00.00.00",
+     "Benzen (Benzol)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2902.30.00.00.00",
+     "Toluen (Toluol)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2902.60.00.00.00",
+     "Etilbenzen",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "2909.19.90.00.13",
+     "Metil tersiyer bütil eter (MTBE)",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "38.11",
+     "Vuruntuyu önleyici müstahzarlar, oksidasyonu durdurucu maddeler, peptizan katkılar, akışkanlığı düzenleyici maddeler, aşınmayı önleyici katkılar ve mineral yağlar (benzin dahil) veya mineral yağlar gibi aynı amaçla kullanılan diğer sıvı yağlar için diğer müstahzar katkılar",
+     "2,4985",
+     "14,6633",
+     "Kilogram"
+    ],
+    [
+     "3814.00",
+     "Tarifenin başka yerinde belirtilmeyen veya yer almayan organik karma çözücüler ve incelticiler; boya ve vernik çıkarmada kullanılan müstahzarlar",
+     "0,9390",
+     "5,5107",
+     "Kilogram"
+    ],
+    [
+     "3824.99.96.90.68",
+     "Diğerleri",
+     "0,9390",
+     "5,5107",
+     "Kilogram"
+    ],
+    [
+     "2710.19.71.00.00",
+     "(Yağlama yağları; diğer yağlar) Özel bir işleme tabi tutulacak olanlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 32,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "2710.19.75.00.00",
+     "(Yağlama yağları; diğer yağlar) 2710.19.71.00 alt pozisyonunda belirtilen işlemlerden başka bir işlemle kimyasal değişime tabi tutulacak olanlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.81.00.00",
+     "(Yağlama yağları; diğer yağlar) Motor yağları, kompresör yağlama yağları, türbin yağlama yağları",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.83.00.00",
+     "(Yağlama yağları; diğer yağlar) Hidrolik yağları",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.85.00.00",
+     "(Yağlama yağları; diğer yağlar) Beyaz yağlar, sıvı parafin",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.87.00.00",
+     "(Yağlama yağları; diğer yağlar) Dişli yağları ve redüktör yağları",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.91.00.00",
+     "(Yağlama yağları; diğer yağlar) Metal işlemeye mahsus bileşikler, kalıp çıkarma yağları, aşınmayı önleyici yağlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.93.00.00",
+     "(Yağlama yağları; diğer yağlar) Elektrik izolasyonuna mahsus yağlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.99.00.25",
+     "(Yağlama yağları; diğer yağlar) Diğer madeni yağlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.99.00.11",
+     "(Yağlama yağları; diğer yağlar) Spindle Oil, Light Neutral, Heavy Neutral, Bright Stock",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.99.00.98",
+     "(Yağlama yağları; diğer yağlar) Diğerleri",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2712.20",
+     "Ağırlık itibariyle %0,75’den az yağ içeren parafin",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "3801.20.10.00.00",
+     "Sıvı yağ içinde çözelti halinde olan kolloidal grafit; yarı-",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 33,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "kolloidal grafit",
+     "",
+     "",
+     ""
+    ],
+    [
+     "3819.00.00.00.00",
+     "Hidrolik fren sıvıları ve hidrolik transmisyonlar için petrol yağları veya bitümenli minerallerden elde edilen yağları içermeyen veya ağırlık itibariyle % 70’den az oranda içeren müstahzar sıvılar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "2710.19.25.00.11",
+     "Gazyağı",
+     "1,1367",
+     "7,6854",
+     "Litre"
+    ],
+    [
+     "2710.19.25.00.19",
+     "Diğerleri",
+     "1,1367",
+     "7,6854",
+     "Litre"
+    ],
+    [
+     "3403.11.00.00.00",
+     "(Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin, post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "3403.19.10.00.00",
+     "(Yağlama müstahzarları) Esas madde olarak kabul edilmemek şartıyla, ağırlık itibariyle % 70 veya daha fazla petrol yağları veya bitümenli minerallerden elde edilen yağları içerenler",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "3403.19.20.00.00",
+     "(Yağlama müstahzarları) Hacim olarak en az %25 biyo temelli karbon içeriğine sahip ve en az %60’a kadar geri dönüştürülebilir yağlayıcılar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "3403.19.80.00.00",
+     "(Yağlama müstahzarları) Diğerleri",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 34,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "3403.91.00.00.00",
+     "(Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin, post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ],
+    [
+     "3403.99.00.00.00",
+     "(Yağlama müstahzarları) Diğerleri",
+     "1,5007",
+     "10,1465",
+     "Kilogram"
+    ]
+   ]
+  ]
+ }
+]

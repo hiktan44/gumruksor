@@ -1,8 +1,10 @@
 {
  "source": "4760 sayılı Özel Tüketim Vergisi Kanunu ekli (I)-(IV) sayılı listeler",
  "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
- "parser_version": 1,
- "note": "Kanun metnindeki oran/tutarlar. 'applied_*' sütunları Cumhurbaşkanı kararlarıyla güncellenen değerlerdir; boşsa kanuni değer uygulanır. (III) sayılı listede bazı hücreler tek span'da birleşik basıldığı için oran eşlemesi doğrulanmamıştır (rates_verified=false).",
+ "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+ "retrieved_at": "2026-09-19",
+ "parser_version": 3,
+ "note": "Dört liste de 19.09.2026'da resmî PDF'in tablo kılavuz çizgilerinden okundu (excise_lists.py): dipnot üstsimgeleri font boyutuna göre ayıklandı, satır kayması giderildi. 'applied_*' sütunları Cumhurbaşkanı kararlarıyla güncellenen değerlerdir; boşsa kanuni değer uygulanır. rates_verified=false olan bölüm ve rates_verified=false olan satır yalnız kapsam bildirir, oran göstermez; sebebi parse_warnings alanındadır. (II) sayılı liste (motorlu taşıtlar) makine tarafından güvenilir okunamıyor: iki sayfada tablo kılavuz çizgisi yok, başlıkta iki oran sütunu aynı metni taşıyor ve alt kırılım oranları tek hücrede birleşiyor.",
  "sections": [
   {
    "list": "I",
@@ -13,399 +15,433 @@
     "unit"
    ],
    "rates_verified": true,
-   "row_count": 57,
+   "row_count": 60,
    "rows": [
     {
      "code": "2710.12.11.00.00",
-     "description": "I, II, III ve IV sayılı listelerde daha önce yapılan değişikliklerin yayımlandığı Resmî Gazetelerin tarih ve sayılarını görmek için Kanunun sonundaki “MEVZUAT İZLEME (Hafif yağlar ve müstahzarları) Özel bir işleme tabi tutulacak",
+     "description": "Özel bir işleme tabi tutulacak olanlar",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2710.12.31.00.00",
-     "description": "olanlar Uçak benzini",
+     "description": "Uçak benzini (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Litre"
     },
     {
      "code": "2710.12.41.00.00",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) Oktanı (RON) 95’den az olanlar",
+     "description": "Oktanı (RON) 95’den az olanlar (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar)",
      "tax_amount": "2,1500",
      "applied_tax_amount": "12,6179",
      "unit": "Litre"
     },
     {
      "code": "2710.12.45.00.11",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar) Kurşunsuz benzin 95 oktan",
+     "description": "Kurşunsuz benzin 95 oktan (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar)",
      "tax_amount": "2,3765",
      "applied_tax_amount": "14,8277",
      "unit": "Litre"
     },
     {
      "code": "2710.12.45.00.13",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar) Kurşunsuz benzin 95 oktan",
+     "description": "Kurşunsuz benzin 95 oktan (E10) (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha fazla fakat 98’den az olanlar)",
      "tax_amount": "2,3765",
      "applied_tax_amount": "14,8277",
      "unit": "Litre"
     },
     {
      "code": "2710.12.45.00.18",
-     "description": "(E10) (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 95 veya daha Bu mallara ilişkin ÖTV tutarları 31/12/2025 tarihli ve 33124 (5.Mükerrer) sayılı Resmî Gazete’de yayımlanan 31/12/2025 tarihli ve 10799 sayılı Cumhurbaşkanı Kararı eki Kararın 1 inci maddesiyle yayımı tarihinde yürürlüğe girmek üzere metne işlendiği şekilde tespit edilmiştir. fazla fakat 98’den az olanlar) Diğerleri",
+     "description": "Diğerleri (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar)",
      "tax_amount": "2,3765",
      "applied_tax_amount": "14,8277",
      "unit": "Litre"
     },
     {
      "code": "2710.12.49.00.11",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar) Kurşunsuz benzin 98 oktan",
+     "description": "Kurşunsuz benzin 98 oktan (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar)",
      "tax_amount": "2,4985",
      "applied_tax_amount": "15,5437",
      "unit": "Litre"
     },
     {
      "code": "2710.12.49.00.12",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar) Kurşunsuz benzin 98 oktan",
+     "description": "Kurşunsuz benzin 98 oktan (E10) (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar)",
      "tax_amount": "2,4985",
      "applied_tax_amount": "15,5437",
      "unit": "Litre"
     },
     {
      "code": "2710.12.49.00.18",
-     "description": "(E10) (İçindeki kurşun miktarı litrede 0,013 gramı geçmeyenler) (Oktanı (RON) 98 veya daha fazla olanlar) Diğerleri",
+     "description": "Diğerleri (İçindeki kurşun miktarı litrede 0,013 gramı geçenler)",
      "tax_amount": "2,4985",
      "applied_tax_amount": "15,5437",
      "unit": "Litre"
     },
     {
      "code": "2710.12.51.00.00",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçenler) Oktanı (RON) 98’den az olanlar",
+     "description": "Oktanı (RON) 98’den az olanlar (İçindeki kurşun miktarı litrede 0,013 gramı geçenler)",
      "tax_amount": "2,1800",
      "applied_tax_amount": "12,7941",
      "unit": "Litre"
     },
     {
      "code": "2710.12.59.00.00",
-     "description": "(İçindeki kurşun miktarı litrede 0,013 gramı geçenler) Oktanı (RON) 98 veya daha",
+     "description": "Oktanı (RON) 98 veya daha fazla olanlar",
      "tax_amount": "2,1800",
      "applied_tax_amount": "12,7941",
      "unit": "Litre"
     },
     {
      "code": "2710.12.70.00.00",
-     "description": "fazla olanlar Benzin tipi jet yakıtı",
+     "description": "Benzin tipi jet yakıtı (Kerosen)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Litre"
     },
     {
      "code": "2710.19.21.00.00",
-     "description": "(Kerosen) Jet yakıtı",
+     "description": "Jet yakıtı (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Litre"
     },
     {
      "code": "2710.19.43.00.11",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler) Motorin",
+     "description": "Motorin (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "13,9006",
      "unit": "Litre"
     },
     {
      "code": "2710.19.43.00.17",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler) Damıtık denizcilik yakıtı",
+     "description": "Damıtık denizcilik yakıtı (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.43.00.29",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.46.00.18",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler) Damıtık denizcilik yakıtı",
+     "description": "Damıtık denizcilik yakıtı (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.46.00.29",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.47.00.18",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler) Damıtık denizcilik yakıtı",
+     "description": "Damıtık denizcilik yakıtı (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.47.00.19",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,1’i geçenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.19.48.00.11",
-     "description": "Bu motorin türü mallara ilişkin ÖTV tutarları 13/8/2026 tarihli ve 33339 sayılı Resmî Gazete’de yayımlanan 12/8/2026 tarihli ve 11606 sayılı Cumhurbaşkanı Kararı eki Kararın 1 inci maddesiyle yayımı tarihinde yürürlüğe girmek üzere tespit edilmiştir. Tutarları görmek için Kararın yayımlandığı Resmî Gazete’ye bakınız. (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,1’i geçenler) Damıtık denizcilik yakıtı",
+     "description": "Damıtık denizcilik yakıtı (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,1’i geçenler)",
      "tax_amount": "1,7245",
      "applied_tax_amount": "11,6597",
      "unit": "Litre"
     },
     {
      "code": "2710.19.48.00.18",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,1’i geçenler) Diğerleri",
+     "description": "Diğerleri (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
      "tax_amount": "1,7245",
      "applied_tax_amount": "11,6597",
      "unit": "Litre"
     },
     {
      "code": "2710.20.11.00.11",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler) Motorin",
+     "description": "Motorin (Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "13,9006",
      "unit": "Litre"
     },
     {
      "code": "2710.20.11.00.19",
-     "description": "(Gaz oiller) (Ağırlık itibariyle kükürt oranı %0,001’i geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Gaz oiller)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.20.15.00.00",
-     "description": "(Gaz oiller) Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat",
+     "description": "Ağırlık itibariyle kükürt oranı %0,001’i geçen fakat %0,002’yi geçmeyenler (Gaz oiller)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.20.17.00.00",
-     "description": "%0,002’yi geçmeyenler (Gaz oiller) Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i",
+     "description": "Ağırlık itibariyle kükürt oranı %0,002’yi geçen fakat %0,1’i geçmeyenler (Gaz oiller)",
      "tax_amount": "1,7945",
      "applied_tax_amount": "12,1331",
      "unit": "Litre"
     },
     {
      "code": "2710.20.19.00.00",
-     "description": "geçmeyenler (Gaz oiller) Ağırlık itibariyle kükürt oranı",
+     "description": "Ağırlık itibariyle kükürt oranı %0,1’i geçenler",
      "tax_amount": "1,7245",
      "applied_tax_amount": "11,6597",
      "unit": "Litre"
     },
     {
      "code": "2710.20.90.00.00",
-     "description": "%0,1’i geçenler Diğer yağlar (2710.12.90.00.11, 2710.12.90.00.19,",
+     "description": "Diğer yağlar (2710.12.90.00.11, 2710.12.90.00.19, 2710.19.29.00.00 G.T.İ.P. numaralı malların biodizel ihtiva edenleri ile 2710.19.81, 2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri hariç) (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
      "tax_amount": "1,7245",
      "applied_tax_amount": "11,6597",
      "unit": "Litre"
     },
     {
      "code": "2710.19.62.00.10",
-     "description": "numaralı malların biodizel ihtiva edenleri ile 2710.19.81, 2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri hariç) (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler) Kalorifer Yakıtı",
+     "description": "Kalorifer Yakıtı (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
      "tax_amount": "0,4760",
      "applied_tax_amount": "3,2181",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.62.00.11",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler) Fuel oil",
+     "description": "Fuel oil (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
      "tax_amount": "0,4760",
      "applied_tax_amount": "3,2181",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.62.00.31",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler) Artık denizcilik yakıtı",
+     "description": "Artık denizcilik yakıtı (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler)",
      "tax_amount": "0,4760",
      "applied_tax_amount": "3,2181",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.62.00.39",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
      "tax_amount": "0,4760",
      "applied_tax_amount": "3,2181",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.64.00.10",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler) Kalorifer Yakıtı",
+     "description": "Kalorifer Yakıtı (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
      "tax_amount": "0,2370",
      "applied_tax_amount": "1,6023",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.64.00.11",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler) Fuel oil",
+     "description": "Fuel oil (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
      "tax_amount": "0,2370",
      "applied_tax_amount": "1,6023",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.64.00.31",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler) Artık denizcilik yakıtı",
+     "description": "Artık denizcilik yakıtı (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler)",
      "tax_amount": "0,2370",
      "applied_tax_amount": "1,6023",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.64.00.39",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler) Diğerleri",
+     "description": "Diğerleri (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
      "tax_amount": "0,2370",
      "applied_tax_amount": "1,6023",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.68.00.11",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler) Yüksek kükürtlü fuel oil",
+     "description": "Yüksek kükürtlü fuel oil (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
      "tax_amount": "0,2240",
      "applied_tax_amount": "1,5143",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.68.00.31",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler) Artık denizcilik yakıtı",
+     "description": "Artık denizcilik yakıtı (Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler)",
      "tax_amount": "0,2240",
      "applied_tax_amount": "1,5143",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.68.00.39",
-     "description": "(Fuel oiller) (Ağırlık itibariyle kükürt miktarı %1’i geçenler) Diğerleri",
+     "description": "Diğerleri (Fuel oiller)",
      "tax_amount": "0,2240",
      "applied_tax_amount": "1,5143",
      "unit": "Kilogram"
     },
     {
      "code": "2710.20.31.00.00",
-     "description": "(Fuel oiller) Ağırlık itibariyle kükürt",
+     "description": "Ağırlık itibariyle kükürt miktarı %0,1’i geçmeyenler (Fuel oiller)",
      "tax_amount": "0,4760",
      "applied_tax_amount": "3,2181",
      "unit": "Kilogram"
     },
     {
      "code": "2710.20.35.00.00",
-     "description": "miktarı %0,1’i geçmeyenler (Fuel oiller) Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat",
+     "description": "Ağırlık itibariyle kükürt miktarı %0,1’i geçen fakat %1’i geçmeyenler (Fuel oiller)",
      "tax_amount": "0,2370",
      "applied_tax_amount": "1,6023",
      "unit": "Kilogram"
     },
     {
      "code": "2710.20.39.00.00",
-     "description": "%1’i geçmeyenler (Fuel oiller) Ağırlık itibariyle kükürt",
+     "description": "Ağırlık itibariyle kükürt miktarı %1’i geçenler",
      "tax_amount": "0,2240",
      "applied_tax_amount": "1,5143",
      "unit": "Kilogram"
     },
     {
      "code": "27.11",
-     "description": "miktarı %1’i geçenler Petrol gazları ve diğer gazlı",
+     "description": "Petrol gazları ve diğer gazlı hidrokarbonlar (2711.11.00.00.00; 2711.12; 2711.13; 2711.19.00.00.11; 2711.21.00.00.00; 2711.29.00.00.11 ve 2711.29.00.00.12 hariç) (Sıvılaştırılmış)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2711.11.00.00.00",
-     "description": "hidrokarbonlar (2711.11.00.00.00; 2711.12; 2711.13; 2711.19.00.00.11; 2711.21.00.00.00; 2711.29.00.00.11 ve 2711.29.00.00.12 hariç) (Sıvılaştırılmış) Doğal gaz"
+     "description": "Doğal gaz Motorlu taşıtlarda yakıt olarak kullanılacak olanlar",
+     "tax_amount": "0,8599",
+     "applied_tax_amount": "5,5049",
+     "unit": "Standart Metreküp"
+    },
+    {
+     "code": "2711.11.00.00.00",
+     "description": "Doğal gaz Diğerleri (Sıvılaştırılmış)",
+     "tax_amount": "0,0230",
+     "applied_tax_amount": "0,1468",
+     "unit": "Standart Metreküp"
     },
     {
      "code": "2711.12",
-     "description": "Motorlu taşıtlarda yakıt olarak kullanılacak olanlar Diğerleri (Sıvılaştırılmış) Propan",
+     "description": "Propan (Sıvılaştırılmış)",
      "tax_amount": "1,7780",
      "applied_tax_amount": "11,3830",
      "unit": "Kilogram"
     },
     {
      "code": "2711.13",
-     "description": "(Sıvılaştırılmış) Bütan",
+     "description": "Bütan",
      "tax_amount": "1,7780",
      "applied_tax_amount": "11,3830",
      "unit": "Kilogram"
     },
     {
      "code": "2711.19.00.00.11",
-     "description": "Sıvılaştırılmış petrol gazı"
+     "description": "Sıvılaştırılmış petrol gazı (L.P.G.) Motorlu taşıtlarda yakıt olarak kullanılacak olanlar (Otogaz)",
+     "tax_amount": "1,7780",
+     "applied_tax_amount": "11,3830",
+     "unit": "Kilogram"
+    },
+    {
+     "code": "2711.19.00.00.11",
+     "description": "Sıvılaştırılmış petrol gazı (L.P.G.) Diğerleri (Gaz halinde olanlar)",
+     "tax_amount": "1,7780",
+     "applied_tax_amount": "11,3830",
+     "unit": "Kilogram"
     },
     {
      "code": "2711.21.00.00.00",
-     "description": "(L.P.G.) Motorlu taşıtlarda yakıt olarak kullanılacak olanlar (Otogaz) Diğerleri (Gaz halinde olanlar) Doğal gaz"
+     "description": "Doğal gaz Motorlu taşıtlarda yakıt olarak kullanılacak olanlar",
+     "tax_amount": "0,8599",
+     "applied_tax_amount": "5,5049",
+     "unit": "Standart Metreküp"
+    },
+    {
+     "code": "2711.21.00.00.00",
+     "description": "Doğal gaz Diğerleri (Gaz halinde olanlar)",
+     "tax_amount": "0,0230",
+     "applied_tax_amount": "0,1468",
+     "unit": "Standart Metreküp"
     },
     {
      "code": "2711.29.00.00.11",
-     "description": "Motorlu taşıtlarda yakıt olarak kullanılacak olanlar Diğerleri (Gaz halinde olanlar) Propan",
+     "description": "Propan (Gaz halinde olanlar)",
      "tax_amount": "1,7780",
      "applied_tax_amount": "11,3830",
      "unit": "Kilogram"
     },
     {
      "code": "2711.29.00.00.12",
-     "description": "(Gaz halinde olanlar) Bütan",
+     "description": "Bütan",
      "tax_amount": "1,7780",
      "applied_tax_amount": "11,3830",
      "unit": "Kilogram"
     },
     {
      "code": "27.13",
-     "description": "Petrol koku, petrol bitümeni ve petrol yağlarının veya bitümenli minerallerden elde edilen yağların diğer kalıntıları",
+     "description": "Petrol koku, petrol bitümeni ve petrol yağlarının veya bitümenli minerallerden elde edilen yağların diğer kalıntıları (2713.11.00.00.00; 2713.12.00.00.00; 2713.20.00.00.19; 2713.90 hariç) (Petrol koku)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2713.11.00.00.00",
-     "description": "(2713.11.00.00.00; 2713.12.00.00.00; 2713.20.00.00.19; 2713.90 hariç) (Petrol koku) Kalsine edilmemiş",
+     "description": "Kalsine edilmemiş (Petrol koku)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2713.12.00.00.00",
-     "description": "(Petrol koku) Kalsine edilmiş",
+     "description": "Kalsine edilmiş (Petrol bitümeni)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2713.20.00.00.19",
-     "description": "(Petrol bitümeni) Diğerleri",
+     "description": "Diğerleri",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2713.90",
-     "description": "Petrol yağlarının veya bitümenli minerallerden elde",
+     "description": "Petrol yağlarının veya bitümenli minerallerden elde edilen yağların diğer kalıntıları (28.03 pozisyonundaki her nevi karbon imaline mahsus olanlar hariç)",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "2715.00.00.00.00",
-     "description": "edilen yağların diğer kalıntıları (28.03 pozisyonundaki her nevi karbon imaline mahsus olanlar hariç) Esasını tabii asfalt, tabii bitümen, petrol bitümeni, mineral katran veya mineral",
+     "description": "Esasını tabii asfalt, tabii bitümen, petrol bitümeni, mineral katran veya mineral katran zifti (bitümenli sakızlar, cut-backs gibi) teşkil eden bitümenli karışımlar",
      "tax_amount": "2,5000",
      "applied_tax_amount": "0",
      "unit": "Kilogram"
     },
     {
      "code": "38.26",
-     "description": "katran zifti (bitümenli sakızlar, cut-backs gibi) teşkil eden bitümenli karışımlar Biodizel ve bunların karışımları (Ağırlık itibariyle %70’den az petrol yağları veya",
+     "description": "Biodizel ve bunların karışımları (Ağırlık itibariyle %70’den az petrol yağları veya bitümenli minerallerden elde edilen yağları içerenler veya içermeyenler",
      "tax_amount": "1,1209",
      "applied_tax_amount": "7,5787",
      "unit": "Litre"
     }
-   ]
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)"
   },
   {
    "list": "I",
@@ -416,7 +452,7 @@
     "unit"
    ],
    "rates_verified": true,
-   "row_count": 47,
+   "row_count": 48,
    "rows": [
     {
      "code": "2707.10.00.00.00",
@@ -462,14 +498,14 @@
     },
     {
      "code": "2707.99.20.00.00",
-     "description": "Sülfürik asitle diğer kısımları alınmış petrol eterleri;",
+     "description": "Sülfürik asitle diğer kısımları alınmış petrol eterleri; Antrasen",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
     },
     {
      "code": "2709.00.10.00.00",
-     "description": "Antrasen Tabii gazın kondanseleri",
+     "description": "Tabii gazın kondanseleri",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
@@ -511,14 +547,21 @@
     },
     {
      "code": "2710.20.90.00.00",
-     "description": "Diğer yağlar [ Yalnız; -2710.12.90.00.11, 2710.12.90.00.19 ve",
+     "description": "Diğer yağlar [Yalnız; -2710.12.90.00.11, 2710.12.90.00.19 ve 2710.19.29.00.00 G.T.İ.P. numaralı malların biodizel ihtiva edenleri,",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
     },
     {
+     "code": "2710.20.90.00.00",
+     "description": "Diğer yağlar [Yalnız; -2710.12.90.00.11, 2710.12.90.00.19 ve 2710.19.29.00.00 G.T.İ.P. numaralı malların biodizel ihtiva edenleri, -2710.19.81, 2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri.]",
+     "tax_amount": "1,5007",
+     "applied_tax_amount": "10,1465",
+     "unit": "Kilogram"
+    },
+    {
      "code": "2901.10.00.90.11",
-     "description": "numaralı malların biodizel ihtiva edenleri, -2710.19.81, 2710.19.83, 2710.19.85, 2710.19.87, 2710.19.91, 2710.19.93 ve 2710.19.99 alt pozisyonlarında yer alan malların biodizel ihtiva edenleri.] Hekzan",
+     "description": "Hekzan",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
@@ -539,13 +582,14 @@
     },
     {
      "code": "2901.10.00.90.19",
-     "description": "Diğer doymuş asiklik",
+     "description": "Diğer doymuş asiklik hidrokarbonlar",
      "tax_amount": "2,4985",
+     "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
     },
     {
      "code": "2902.20.00.00.00",
-     "description": "hidrokarbonlar Benzen (Benzol)",
+     "description": "Benzen (Benzol)",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
@@ -566,132 +610,133 @@
     },
     {
      "code": "2909.19.90.00.13",
-     "description": "Metil tersiyer bütil eter",
+     "description": "Metil tersiyer bütil eter (MTBE)",
      "tax_amount": "2,4985",
+     "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
     },
     {
      "code": "38.11",
-     "description": "(MTBE) Vuruntuyu önleyici müstahzarlar, oksidasyonu durdurucu maddeler, peptizan katkılar, akışkanlığı düzenleyici maddeler, aşınmayı önleyici",
+     "description": "Vuruntuyu önleyici müstahzarlar, oksidasyonu durdurucu maddeler, peptizan katkılar, akışkanlığı düzenleyici maddeler, aşınmayı önleyici katkılar ve mineral yağlar (benzin dahil) veya mineral yağlar gibi aynı amaçla kullanılan diğer sıvı yağlar için diğer müstahzar katkılar",
      "tax_amount": "2,4985",
      "applied_tax_amount": "14,6633",
      "unit": "Kilogram"
     },
     {
      "code": "3814.00",
-     "description": "katkılar ve mineral yağlar (benzin dahil) veya mineral yağlar gibi aynı amaçla kullanılan diğer sıvı yağlar için diğer müstahzar katkılar Tarifenin başka yerinde belirtilmeyen veya yer almayan organik karma çözücüler ve",
+     "description": "Tarifenin başka yerinde belirtilmeyen veya yer almayan organik karma çözücüler ve incelticiler; boya ve vernik çıkarmada kullanılan müstahzarlar",
      "tax_amount": "0,9390",
      "applied_tax_amount": "5,5107",
      "unit": "Kilogram"
     },
     {
      "code": "3824.99.96.90.68",
-     "description": "incelticiler; boya ve vernik çıkarmada kullanılan müstahzarlar Diğerleri",
+     "description": "Diğerleri",
      "tax_amount": "0,9390",
      "applied_tax_amount": "5,5107",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.71.00.00",
-     "description": "(Yağlama yağları; diğer yağlar) Özel bir işleme tabi tutulacak",
+     "description": "(Yağlama yağları; diğer yağlar) Özel bir işleme tabi tutulacak olanlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.75.00.00",
-     "description": "olanlar (Yağlama yağları; diğer yağlar) 2710.19.71.00 alt pozisyonunda belirtilen işlemlerden başka",
+     "description": "(Yağlama yağları; diğer yağlar) 2710.19.71.00 alt pozisyonunda belirtilen işlemlerden başka bir işlemle kimyasal değişime tabi tutulacak olanlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.81.00.00",
-     "description": "bir işlemle kimyasal değişime tabi tutulacak olanlar (Yağlama yağları; diğer yağlar) Motor yağları, kompresör",
+     "description": "(Yağlama yağları; diğer yağlar) Motor yağları, kompresör yağlama yağları, türbin yağlama yağları",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.83.00.00",
-     "description": "yağlama yağları, türbin yağlama yağları (Yağlama yağları; diğer yağlar)",
+     "description": "(Yağlama yağları; diğer yağlar) Hidrolik yağları",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.85.00.00",
-     "description": "Hidrolik yağları (Yağlama yağları; diğer yağlar)",
+     "description": "(Yağlama yağları; diğer yağlar) Beyaz yağlar, sıvı parafin",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.87.00.00",
-     "description": "Beyaz yağlar, sıvı parafin (Yağlama yağları; diğer yağlar)",
+     "description": "(Yağlama yağları; diğer yağlar) Dişli yağları ve redüktör yağları",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.91.00.00",
-     "description": "Dişli yağları ve redüktör yağları (Yağlama yağları; diğer yağlar) Metal işlemeye mahsus",
+     "description": "(Yağlama yağları; diğer yağlar) Metal işlemeye mahsus bileşikler, kalıp çıkarma yağları, aşınmayı önleyici yağlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.93.00.00",
-     "description": "bileşikler, kalıp çıkarma yağları, aşınmayı önleyici yağlar (Yağlama yağları; diğer yağlar) Elektrik izolasyonuna mahsus",
+     "description": "(Yağlama yağları; diğer yağlar) Elektrik izolasyonuna mahsus yağlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.99.00.25",
-     "description": "yağlar (Yağlama yağları; diğer yağlar)",
+     "description": "(Yağlama yağları; diğer yağlar) Diğer madeni yağlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.99.00.11",
-     "description": "Diğer madeni yağlar (Yağlama yağları; diğer yağlar) Spindle Oil, Light Neutral,",
+     "description": "(Yağlama yağları; diğer yağlar) Spindle Oil, Light Neutral, Heavy Neutral, Bright Stock",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.99.00.98",
-     "description": "Heavy Neutral, Bright Stock (Yağlama yağları; diğer yağlar)",
+     "description": "(Yağlama yağları; diğer yağlar) Diğerleri",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2712.20",
-     "description": "Diğerleri Ağırlık itibariyle %0,75’den az",
+     "description": "Ağırlık itibariyle %0,75’den az yağ içeren parafin",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3801.20.10.00.00",
-     "description": "yağ içeren parafin Sıvı yağ içinde çözelti halinde",
+     "description": "Sıvı yağ içinde çözelti halinde olan kolloidal grafit; yarı- kolloidal grafit",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3819.00.00.00.00",
-     "description": "olan kolloidal grafit; yarı- kolloidal grafit Hidrolik fren sıvıları ve hidrolik transmisyonlar için petrol yağları veya bitümenli minerallerden elde edilen",
+     "description": "Hidrolik fren sıvıları ve hidrolik transmisyonlar için petrol yağları veya bitümenli minerallerden elde edilen yağları içermeyen veya ağırlık itibariyle % 70’den az oranda içeren müstahzar sıvılar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "2710.19.25.00.11",
-     "description": "yağları içermeyen veya ağırlık itibariyle % 70’den az oranda içeren müstahzar sıvılar Gazyağı",
+     "description": "Gazyağı",
      "tax_amount": "1,1367",
      "applied_tax_amount": "7,6854",
      "unit": "Litre"
@@ -705,153 +750,136 @@
     },
     {
      "code": "3403.11.00.00.00",
-     "description": "(Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin,",
+     "description": "(Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin, post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3403.19.10.00.00",
-     "description": "post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar (Yağlama müstahzarları) Esas madde olarak kabul edilmemek şartıyla, ağırlık itibariyle % 70 veya daha fazla",
+     "description": "(Yağlama müstahzarları) Esas madde olarak kabul edilmemek şartıyla, ağırlık itibariyle % 70 veya daha fazla petrol yağları veya bitümenli minerallerden elde edilen yağları içerenler",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3403.19.20.00.00",
-     "description": "petrol yağları veya bitümenli minerallerden elde edilen yağları içerenler (Yağlama müstahzarları) Hacim olarak en az %25 biyo temelli karbon içeriğine sahip",
+     "description": "(Yağlama müstahzarları) Hacim olarak en az %25 biyo temelli karbon içeriğine sahip ve en az %60’a kadar geri dönüştürülebilir yağlayıcılar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3403.19.80.00.00",
-     "description": "ve en az %60’a kadar geri dönüştürülebilir yağlayıcılar (Yağlama müstahzarları)",
+     "description": "(Yağlama müstahzarları) Diğerleri",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3403.91.00.00.00",
-     "description": "Diğerleri (Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin,",
+     "description": "(Yağlama müstahzarları) Dokumaya elverişli maddelerin, deri ve köselenin, post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     },
     {
      "code": "3403.99.00.00.00",
-     "description": "post ve kürklerin veya diğer maddelerin işlenmesine mahsus müstahzarlar (Yağlama müstahzarları)",
+     "description": "(Yağlama müstahzarları) Diğerleri",
      "tax_amount": "1,5007",
      "applied_tax_amount": "10,1465",
      "unit": "Kilogram"
     }
-   ]
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)"
   },
   {
    "list": "II",
    "cetvel": null,
-   "value_columns": [
-    "tax_rate",
-    "applied_tax_rate"
-   ],
-   "rates_verified": true,
+   "value_columns": [],
+   "rates_verified": false,
    "row_count": 17,
    "rows": [
     {
      "code": "87.01",
-     "description": "Traktörler (87.09 pozisyonuna giren traktörler hariç)",
-     "tax_rate": "25"
+     "description": "Traktörler (87.09 pozisyonuna giren traktörler hariç) [Yalnız ATV (her türlü arazide kullanılan araç) ve UTV (çok amaçlı hizmet aracı)]"
     },
     {
      "code": "8701.20",
-     "description": "[Yalnız ATV (her türlü arazide kullanılan araç) ve UTV (çok amaçlı hizmet aracı)] Yarı römorkler için çekiciler",
-     "tax_rate": "4",
-     "applied_tax_rate": "4"
+     "description": "Yarı römorkler için çekiciler"
     },
     {
      "code": "87.02",
-     "description": "10 veya daha fazla kişi taşımaya mahsus (sürücü dahil) motorlu taşıtlar - Otobüs",
-     "tax_rate": "1",
-     "applied_tax_rate": "1"
+     "description": "10 veya daha fazla kişi taşımaya mahsus (sürücü dahil) motorlu taşıtlar - Otobüs - Midibüs - Minibüs"
     },
     {
      "code": "87.03",
-     "description": "- Midibüs - Minibüs Binek otomobilleri ve esas itibariyle insan taşımak üzere imal edilmiş diğer motorlu taşıtlar (87.02 pozisyonuna girenler hariç) (steyşın vagonlar ve yarış arabaları dahil) [Yalnız binek otomobilleri, steyşın vagonlar, yarış arabaları, arazi taşıtları vb., (Para arabaları dahil), motorlu karavanlar, elektrik, gaz, güneş enerjili vb. motorlu taşıtlar.] [Ambulanslar, mahkum taşımaya mahsus"
+     "description": "Binek otomobilleri ve esas itibariyle insan taşımak üzere imal edilmiş diğer motorlu taşıtlar (87.02 pozisyonuna girenler hariç) (steyşın vagonlar ve yarış arabaları dahil) [Yalnız binek otomobilleri, steyşın vagonlar, yarış arabaları, arazi taşıtları vb., (Para arabaları dahil), motorlu karavanlar, elektrik, gaz, güneş enerjili vb. motorlu taşıtlar.] [Ambulanslar, mahkum taşımaya mahsus arabalar, cenaze arabaları, itfaiye öncü arabaları gibi özel amaçla yapılmış motorlu taşıtlar, özellikle kar üzerinde hareket etmek için dizayn edilmiş sıkıştırma ateşlemeli içten yanmalı pistonlu motorlu olanlar (dizel veya yarı dizel) veya kıvılcım ateşlemeli içten yanmalı pistonlu motorlu taşıtlar, diğerleri (Golf arabaları vb. taşıtlar) hariç] - Yük taşımasında kullanılıp azami ağırlığı 3,5 tonu --- Elektrik motoru da olanlardan elektrik motor gücü 100 kW’ı geçip motor silindir hacmi 2500 cm³’ü geçmeyenler ---- Özel tüketim vergisi matrahı 1.000.000 (1.650.000) TL’yi aşmayanlar ---- Diğerleri --- Diğerleri -- Elektrik motoru da bulunan araç dışından şarj edilebilir araçlardan, ağırlıklı birleşik kilometre başına karbondioksit emisyonu 25 gramın altında, eşdeğer elektrik enerjisiyle katedilebilir menzili 70 kilometre ve üzerinde olanlardan --- Motor silindir hacmi 1600 cm³’ü geçmeyenler ---- Özel tüketim vergisi matrahı 1.350.000 TL’yi aşmayanlar ---- Diğerleri --- Motor silindir hacmi 1600 cm³’ü geçen fakat 1800 cm³’ü geçmeyenlerden özel tüketim vergisi matrahı 1.350.000 TL’yi aşmayanlar -- Sadece elektrik motorlu olanlar --- Motor gücü 160 kW’ı geçmeyenler ---- Özel tüketim vergisi matrahı 700.000 (1.650.000) TL’yi aşmayanlar ---- Diğerleri --- Motor gücü 160 kW’ı geçenler ---- Özel tüketim vergisi matrahı 750.000 (1.650.000) TL’yi aşmayanlar ---- Diğerleri"
     },
     {
      "code": "8703.10.11.00.00",
-     "description": "--- Motor silindir hacmi 1600 cm³’ü geçen fakat 1800 cm³’ü geçmeyenlerden özel tüketim vergisi matrahı 1.350.000 TL’yi aşmayanlar -- Sadece elektrik motorlu olanlar --- Motor gücü 160 kW’ı geçmeyenler ---- Özel tüketim vergisi matrahı 700.000 (1.650.000) TL’yi aşmayanlar ---- Diğerleri --- Motor gücü 160 kW’ı geçenler ---- Özel tüketim vergisi matrahı 750.000 (1.650.000) TL’yi aşmayanlar ---- Diğerleri Özellikle kar üzerinde hareket etmek için dizayn edilmiş sıkıştırma ateşlemeli içten yanmalı p",
-     "tax_rate": "6,7",
-     "applied_tax_rate": "6,7"
+     "description": "Özellikle kar üzerinde hareket etmek için dizayn edilmiş sıkıştırma ateşlemeli içten yanmalı pistonlu motorlu olanlar (dizel veya yarı dizel) veya kıvılcım ateşlemeli içten yanmalı pistonlu motorlu taşıtlar"
     },
     {
      "code": "8703.10.18.00.00",
-     "description": "yarı dizel) veya kıvılcım ateşlemeli içten yanmalı pistonlu motorlu taşıtlar Diğerleri (Golf arabaları vb. taşıtlar)",
-     "tax_rate": "6,7",
-     "applied_tax_rate": "6,7"
+     "description": "Diğerleri (Golf arabaları vb. taşıtlar)"
     },
     {
      "code": "87.04",
-     "description": "Diğerleri” satırında yer alan “-- Sadece elektrik motorlu olanlar” alt satırından önce gelmek üzere karşılarında gösterilen oranlarıyla birlikte bu alt satırlar eklenmiştir. Eşya taşımaya mahsus motorlu taşıtlar"
+     "description": "Eşya taşımaya mahsus motorlu taşıtlar (Yalnız kayıt ve tescile tabi olanlar) - Azami yüklü kütlesi 4700 kilogramı geçmeyip, sürücü sırasından başka oturma yeri veya sürücü sırası dışında yanda pencereleri olanlar (kapalı kasalı olmayanlardan motor silindir hacmi 3200 cm³’ü geçmeyenler hariç); -- Motor silindir hacmi 3000 cm³’ü geçmeyenler -- Motor silindir hacmi 3000 cm³’ü geçen fakat 4000 cm³’ü geçmeyenler -- Motor silindir hacmi 4000 cm³’ü geçenler -- Sadece elektrik motorlu olanlar --- Motor gücü 85 kW’ı geçmeyenler --- Motor gücü 85 kW’ı geçen fakat 120 kW’ı geçmeyenler --- Motor gücü 120 kW’ı geçenler - Kapalı kasalı olup istiap haddi 620 kilogramın altında olanlar -- Sadece elektrik motorlu olanlar -- Diğerleri - ATV (her türlü arazide kullanılan araç) ve UTV (çok amaçlı hizmet aracı) - Diğerleri -- Azami yüklü kütlesi 3500 kilogramı geçmeyen arazi taşıtları -- Sadece elektrik motorlu olanlar -- Diğerleri"
     },
     {
      "code": "87.05",
-     "description": "- Kapalı kasalı olup istiap haddi 620 kilogramın altında olanlar -- Sadece elektrik motorlu olanlar -- Diğerleri - ATV (her türlü arazide kullanılan araç) ve UTV (çok amaçlı hizmet aracı) - Diğerleri -- Azami yüklü kütlesi 3500 kilogramı geçmeyen arazi taşıtları -- Sadece elektrik motorlu olanlar -- Diğerleri Özel amaçlı motorlu taşıtlar (insan veya eşya taşımak üzere özel olarak yapılmış olanlar hariç) (örneğin; kurtarıcılar, vinçli taşıtlar, itfaiye taşıtları, beton karıştırıcı ile mücehhez",
-     "tax_rate": "4",
-     "applied_tax_rate": "4"
+     "description": "Özel amaçlı motorlu taşıtlar (insan veya eşya taşımak üzere özel olarak yapılmış olanlar hariç) (örneğin; kurtarıcılar, vinçli taşıtlar, itfaiye taşıtları, beton karıştırıcı ile mücehhez taşıtlar, yol süpürmeye mahsus arabalar, püskürtme yapan arabalar, seyyar atölyeler, seyyar radyoloji üniteleri) [(Yalnız kayıt ve tescile tabi olanlar) (İtfaiye taşıtları hariç)]"
     },
     {
      "code": "87.09",
-     "description": "taşıtlar, yol süpürmeye mahsus arabalar, püskürtme yapan arabalar, seyyar atölyeler, seyyar radyoloji üniteleri) [(Yalnız kayıt ve Diğerleri” satırından önce gelmek üzere karşısında gösterilen oranıyla birlikte bu satır eklenmiştir. 20/7/2025 tarihli ve 7555 sayılı Kanunun 15 inci maddesiyle “- Diğerleri” satırından sonra gelmek üzere karşısında gösterilen oranıyla birlikte satır eklenmiştir. tescile tabi olanlar) (İtfaiye taşıtları hariç)] Fabrika, antrepo, liman veya hava limanlarında kısa mes",
-     "tax_rate": "4",
-     "applied_tax_rate": "4"
+     "description": "Fabrika, antrepo, liman veya hava limanlarında kısa mesafelerde eşya taşımaya mahsus, kaldırma tertibatı ile donatılmamış kendinden hareketli yük arabaları; demiryolu istasyon platformlarında kullanılan türde çekiciler; bu taşıtların aksam ve parçaları"
     },
     {
      "code": "87.11",
-     "description": "kendinden hareketli yük arabaları; demiryolu istasyon platformlarında kullanılan türde çekiciler; bu taşıtların aksam ve parçaları Motosikletler (mopedler dahil) ve bir yardımcı motoru bulunan tekerlekli taşıtlar (sepetli olsun olmasın); sepetler (sepetler hariç) (Sadece elektrik motorlu olanlar hariç)"
+     "description": "Motosikletler (mopedler dahil) ve bir yardımcı motoru bulunan tekerlekli taşıtlar (sepetli olsun olmasın); sepetler (sepetler hariç) (Sadece elektrik motorlu olanlar hariç) - Motor silindir hacmi 250 cm³’ü geçmeyenler - Motor silindir hacmi 250 cm³’ü geçenler"
     },
     {
      "code": "8711.60.10.00.00",
-     "description": "- Motor silindir hacmi 250 cm³’ü geçmeyenler - Motor silindir hacmi 250 cm³’ü geçenler Sürekli nominal gücü 250 watt.ı geçmeyen yardımcı bir elektrik motoru olan pedal",
-     "tax_rate": "22",
-     "applied_tax_rate": "0"
+     "description": "Sürekli nominal gücü 250 watt.ı geçmeyen yardımcı bir elektrik motoru olan pedal yardımlı, iki, üç ve dört tekerlekli taşıtlar"
     },
     {
      "code": "8711.60.90.00.11",
-     "description": "yardımlı, iki, üç ve dört tekerlekli taşıtlar Motor gücü 20 kW’ı geçenler",
-     "tax_rate": "37",
-     "applied_tax_rate": "37"
+     "description": "Motor gücü 20 kW’ı geçenler"
     },
     {
      "code": "8711.60.90.00.12",
-     "description": "Motor gücü 20 kW’ı geçmeyenler",
-     "tax_rate": "22",
-     "applied_tax_rate": "0"
+     "description": "Motor gücü 20 kW’ı geçmeyenler"
     },
     {
      "code": "88.02",
-     "description": "Diğer hava taşıtları (helikopterler, uçaklar gibi); uzay araçları (uydular dahil), uzay araçlarını fırlatıcı araçlar ve yörünge-altı",
-     "tax_rate": "0,5",
-     "applied_tax_rate": "0,5"
+     "description": "Diğer hava taşıtları (helikopterler, uçaklar gibi); uzay araçları (uydular dahil), uzay araçlarını fırlatıcı araçlar ve yörünge-altı araçları [(Yalnız helikopterler ve uçaklar) (Askeri, zirai, yangınla mücadelede kullanılan özel yapıdaki helikopterler ve uçaklar hariç)]"
     },
     {
      "code": "8901.10.10.00.11",
-     "description": "araçları [(Yalnız helikopterler ve uçaklar) (Askeri, zirai, yangınla mücadelede kullanılan özel yapıdaki helikopterler ve uçaklar hariç)] 18 Gros tonilatoyu geçmeyen gezinti",
-     "tax_rate": "6,7",
-     "applied_tax_rate": "8"
+     "description": "18 Gros tonilatoyu geçmeyen gezinti gemileri (Denizde seyretmeye mahsus olanlar)"
     },
     {
      "code": "8901.10.90.00.11",
-     "description": "gemileri (Denizde seyretmeye mahsus olanlar) Yolcu ve gezinti gemileri (Denizde seyretmeye",
-     "tax_rate": "6,7",
-     "applied_tax_rate": "8"
+     "description": "Yolcu ve gezinti gemileri (Denizde seyretmeye mahsus olmayanlar)"
     },
     {
      "code": "89.03",
-     "description": "mahsus olmayanlar) Yatlar ve diğer eğlence ve spor amaçlı deniz taşıtları; kürekli kayıklar ve kanolar",
-     "tax_rate": "8",
-     "applied_tax_rate": "8"
+     "description": "Yatlar ve diğer eğlence ve spor amaçlı deniz taşıtları; kürekli kayıklar ve kanolar (Şişirilebilir olanlar, birim ağırlığı 100 kg.ı geçmeyenler, kürekli kayıklar ve kanolar hariç) - Yatlar, kotralar, tekneler ve gezinti gemileri"
     }
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)",
+   "parse_warnings": [
+    "Başlık satırı beklenen sütunlara oturmadı: Uygulanacak Vergi Oranı (%) | Uygulanacak Vergi Oranı (%)",
+    "36. sayfada tablo kılavuz çizgisi bulunamadı.",
+    "37. sayfada tablo kılavuz çizgisi bulunamadı."
    ]
   },
   {
@@ -863,12 +891,12 @@
     "applied_tax_rate",
     "applied_minimum_specific_tax"
    ],
-   "rates_verified": false,
+   "rates_verified": true,
    "row_count": 24,
    "rows": [
     {
      "code": "20.09",
-     "description": "Meyva suları (üzüm şırası dahil) ve sebze suları (fermente edilmemiş ve alkol katılmamış), ilave şeker veya diğer tatlandırıcı maddeler katılmış olsun olmasın (Yalnız",
+     "description": "Meyva suları (üzüm şırası dahil) ve sebze suları (fermente edilmemiş ve alkol katılmamış), ilave şeker veya diğer tatlandırıcı maddeler katılmış olsun olmasın (Yalnız ambalajlanmış olanlar ve/veya toptan teslime konu edilenler) (Sebze suları ve Türk Gıda Kodeksine göre % 100 meyve suyu sayılanlar hariç)",
      "tax_rate": "10",
      "minimum_specific_tax": "-",
      "applied_tax_rate": "10",
@@ -876,7 +904,7 @@
     },
     {
      "code": "22.02",
-     "description": "ambalajlanmış olanlar ve/veya toptan teslime konu edilenler) (Sebze suları ve Türk Gıda Kodeksine göre % 100 meyve suyu sayılanlar hariç) Sular (mineral sular ve gazlı sular dahil) (ilave şeker veya diğer tatlandırıcı maddeler katılmış veya aromalandırılmış) ve alkolsüz",
+     "description": "Sular (mineral sular ve gazlı sular dahil) (ilave şeker veya diğer tatlandırıcı maddeler katılmış veya aromalandırılmış) ve alkolsüz diğer içecekler (20.09 pozisyonundaki meyve ve sebze suları hariç) (Yalnız ambalajlanmış olanlar ve/veya toptan teslime konu edilenler) (Doğal mineralli doğal maden suyu ile üretilmiş, tatlandırılmış, aromalandırılmış meyveli gazlı içecekler; şalgam suyu; Türk Gıda Kodeksine göre çeşnili ve aromalı/aromalandırılmış içme sütleri, bebek ve devam sütleri sayılanlar ile 2202.10.00.00.11, 2202.10.00.00.12, 2202.10.00.00.13, 2202.91.00.00.00 hariç)",
      "tax_rate": "10",
      "minimum_specific_tax": "-",
      "applied_tax_rate": "10",
@@ -884,7 +912,7 @@
     },
     {
      "code": "2202.10.00.00.11",
-     "description": "vergi tutarları hakkında bu Kanunun 12 nci maddesinin (3) numaralı fıkrası hükmünün 2026 yılı Ocak- Haziran dönemi için uygulanmayacağı hükme bağlanmıştır. toptan teslime konu edilenler) (Doğal mineralli doğal maden suyu ile üretilmiş, tatlandırılmış, aromalandırılmış meyveli gazlı içecekler; şalgam suyu; Türk Gıda Kodeksine göre çeşnili ve aromalı/aromalandırılmış içme sütleri, bebek ve devam sütleri sayılanlar ile 2202.10.00.00.11, 2202.10.00.00.12, 2202.10.00.00.13, 2202.91.00.00.00 hariç) Sa",
+     "description": "Sade gazozlar",
      "tax_rate": "10",
      "minimum_specific_tax": "-",
      "applied_tax_rate": "10",
@@ -917,204 +945,278 @@
     {
      "code": "2203.00",
      "description": "Malttan üretilen biralar",
+     "tax_rate": "63,3",
+     "minimum_specific_tax": "1,3498",
      "applied_tax_rate": "63",
      "applied_minimum_specific_tax": "12,4849"
     },
     {
      "code": "22.04",
-     "description": "Taze üzüm şarabı (kuvvetlendirilmiş şaraplar dahil); üzüm şırası (20.09 pozisyonunda yer",
+     "description": "Taze üzüm şarabı (kuvvetlendirilmiş şaraplar dahil); üzüm şırası (20.09 pozisyonunda yer alanlar hariç) (2204.10 köpüklü şaraplar ve 2204.30 diğer üzüm şıraları hariç)",
+     "tax_rate": "63,3",
+     "minimum_specific_tax": "6,6363",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "61,3914"
     },
     {
      "code": "2204.10",
-     "description": "alanlar hariç) (2204.10 köpüklü şaraplar ve 2204.30 diğer üzüm şıraları hariç) Köpüklü şaraplar",
+     "description": "Köpüklü şaraplar",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "44,8351",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "414,7770"
     },
     {
      "code": "22.05",
-     "description": "17/1/2019 tarihli ve 7161 sayılı Kanunun 37 nci maddesiyle beşinci parantez içi hükümde yer alan “meyveli gazlı içecekler” ibaresi “meyveli gazlı içecekler; şalgam suyu; Türk Gıda Kodeksine göre çeşnili ve aromalı/aromalandırılmış içme sütleri, bebek ve devam sütleri sayılanlar” şeklinde değiştirilmiştir. Vermut ve diğer taze üzüm şarapları (bitkiler veya kokulu maddelerle",
+     "description": "Vermut ve diğer taze üzüm şarapları (bitkiler veya kokulu maddelerle aromalandırılmış) (2205.10.10.00.00, 2205.10.90.00.12 hariç)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "67,6673",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "626,0018"
     },
     {
      "code": "2205.10.10.00.00",
-     "description": "aromalandırılmış) (2205.10.10.00.00, 2205.10.90.00.12 hariç) Alkol derecesi hacim itibariyle %18 veya daha az",
+     "description": "Alkol derecesi hacim itibariyle %18 veya daha az olanlar",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "53,7356",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "497,1163"
     },
     {
      "code": "2205.10.90.00.12",
-     "description": "olanlar Alkol derecesi hacim itibariyle %22 ve fazla",
+     "description": "Alkol derecesi hacim itibariyle %22 ve fazla olanlar",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2206.00",
-     "description": "olanlar Fermente edilmiş diğer içecekler (elma şarabı, armut şarabı, bal şarabı, sake gibi), tarifenin başka yerinde belirtilmeyen veya yer",
+     "description": "Fermente edilmiş diğer içecekler (elma şarabı, armut şarabı, bal şarabı, sake gibi), tarifenin başka yerinde belirtilmeyen veya yer almayan fermente edilmiş içeceklerin karışımları ve fermente edilmiş içeceklerle alkolsüz içeceklerin karışımları",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "6,6363",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "135,4355"
     },
     {
      "code": "2207.20",
-     "description": "almayan fermente edilmiş içeceklerin karışımları ve fermente edilmiş içeceklerle alkolsüz içeceklerin karışımları Alkol derecesi ne olursa olsun tağyir (denatüre) edilmiş etil alkol ve damıtım yoluyla elde edilen diğer alkollü içkiler",
+     "description": "Alkol derecesi ne olursa olsun tağyir (denatüre) edilmiş etil alkol ve damıtım yoluyla elde edilen diğer alkollü içkiler [Alkol derecesi ne olursa olsun tağyir (denatüre) edilmiş etil alkol hariç]",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "22.08",
-     "description": "[Alkol derecesi ne olursa olsun tağyir (denatüre) edilmiş etil alkol hariç] Alkol derecesi hacim itibariyle %80’den az olan tağyir (denatüre) edilmemiş",
+     "description": "Alkol derecesi hacim itibariyle %80’den az olan tağyir (denatüre) edilmemiş etil alkol; damıtım yoluyla elde edilen alkollü içkiler, likörler ve diğer alkollü içecekler [(2208.90.91; 2208.90.99) Alkol derecesi hacim itibariyle %80’den az olan tağyir (denatüre) edilmemiş etil alkol hariç, (2208.20; 2208.50; 2208.60; 2208.70 ve 2208.90 hariç)]",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.20",
-     "description": "etil alkol; damıtım yoluyla elde edilen alkollü içkiler, likörler ve diğer alkollü içecekler [(2208.90.91; 2208.90.99) Alkol derecesi hacim itibariyle %80’den az olan tağyir (denatüre) edilmemiş etil alkol hariç, (2208.20; 2208.50; 2208.60; 2208.70 ve 2208.90 hariç)] Üzüm şarabı veya üzüm cibresinin damıtılması yolu",
+     "description": "Üzüm şarabı veya üzüm cibresinin damıtılması yolu ile elde edilen alkollü içkiler",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.50",
-     "description": "ile elde edilen alkollü içkiler Cin ve Geneva",
+     "description": "Cin ve Geneva",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "175,6630",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.60",
-     "description": "Votka (2208.60.91.00.00,",
+     "description": "Votka (2208.60.91.00.00, 2208.60.99.00.00 hariç)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "175,6630",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.60.91.00.00",
-     "description": "2208.60.99.00.00 hariç) Muhtevası 2 litreyi geçmeyen kaplarda olanlar (Alkol",
+     "description": "Muhtevası 2 litreyi geçmeyen kaplarda olanlar (Alkol derecesi hacim itibariyle %45.4’den fazla olanlar)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.60.99.00.00",
-     "description": "derecesi hacim itibariyle %45.4’den fazla olanlar) Muhtevası 2 litreyi geçen kaplarda olanlar (Alkol",
+     "description": "Muhtevası 2 litreyi geçen kaplarda olanlar (Alkol derecesi hacim itibariyle %45.4’den fazla olanlar)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.70",
-     "description": "derecesi hacim itibariyle %45.4’den fazla olanlar) Likörler",
+     "description": "Likörler",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.90",
-     "description": "Diğerleri (2208.90.48.00.11,",
+     "description": "Diğerleri (2208.90.48.00.11, 2208.90.71.00.11 hariç)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "197,5242",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.919,1384"
     },
     {
      "code": "2208.90.48.00.11",
-     "description": "2208.90.71.00.11 hariç) Rakı (Muhtevası 2 litreyi",
+     "description": "Rakı (Muhtevası 2 litreyi geçmeyen kaplarda olanlar)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "171,2723",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.705,9025"
     },
     {
      "code": "2208.90.71.00.11",
-     "description": "geçmeyen kaplarda olanlar) Rakı (Muhtevası 2 litreyi",
+     "description": "Rakı (Muhtevası 2 litreyi geçen kaplarda olanlar)",
+     "tax_rate": "275,6",
+     "minimum_specific_tax": "171,2723",
      "applied_tax_rate": "0",
      "applied_minimum_specific_tax": "1.705,9025"
     }
-   ]
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)"
   },
   {
    "list": "III",
    "cetvel": "B",
    "value_columns": [
     "tax_rate",
-    "specific_tax",
+    "minimum_specific_tax",
     "applied_tax_rate",
-    "applied_specific_tax",
-    "applied_minimum_specific_tax"
+    "applied_minimum_specific_tax",
+    "applied_specific_tax"
    ],
-   "rates_verified": false,
+   "rates_verified": true,
    "row_count": 12,
    "rows": [
     {
      "code": "2402.10.00.00.11",
-     "description": "Tütün içeren 65,25 0,2429",
-     "tax_rate": "45",
-     "specific_tax": "1,8644",
-     "applied_tax_rate": "2,6909"
+     "description": "Tütün içeren purolar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "45",
+     "applied_minimum_specific_tax": "1,8644",
+     "applied_specific_tax": "2,6909"
     },
     {
      "code": "2402.10.00.00.12",
-     "description": "purolar Uçları açık 65,25 0,2429",
-     "tax_rate": "45",
-     "specific_tax": "1,8644",
-     "applied_tax_rate": "2,6909"
+     "description": "Uçları açık purolar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "45",
+     "applied_minimum_specific_tax": "1,8644",
+     "applied_specific_tax": "2,6909"
     },
     {
      "code": "2402.10.00.00.19",
-     "description": "purolar Sigarillolar 65,25 0,2429",
-     "tax_rate": "45",
-     "specific_tax": "1,8644",
-     "applied_tax_rate": "2,6909"
+     "description": "Sigarillolar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "45",
+     "applied_minimum_specific_tax": "1,8644",
+     "applied_specific_tax": "2,6909"
     },
     {
      "code": "2402.20",
-     "description": "Tütün içeren 65,25 0,4883",
-     "tax_rate": "42",
-     "specific_tax": "2,2953",
-     "applied_tax_rate": "23,7404"
+     "description": "Tütün içeren sigaralar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,4883",
+     "applied_tax_rate": "42",
+     "applied_minimum_specific_tax": "2,2953",
+     "applied_specific_tax": "23,7404"
     },
     {
      "code": "2402.90.00.00.00",
-     "description": "sigaralar Diğerleri (Tütün yerine geçen maddelerden yapılmış purolar, uçları açık purolar, sigarillolar ve sigaralar) -Tütün yerine"
+     "description": "Diğerleri (Tütün yerine geçen maddelerden yapılmış purolar, uçları açık purolar, sigarillolar ve sigaralar) -Tütün yerine geçen maddelerden yapılmış purolar, uçları açık purolar ve sigarillolar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "45",
+     "applied_minimum_specific_tax": "1,8644",
+     "applied_specific_tax": "2,6909"
+    },
+    {
+     "code": "2402.90.00.00.00",
+     "description": "Diğerleri (Tütün yerine geçen maddelerden yapılmış purolar, uçları açık purolar, sigarillolar ve sigaralar) -Tütün yerine geçen maddelerden yapılmış sigaralar",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "42",
+     "applied_minimum_specific_tax": "2,2953",
+     "applied_specific_tax": "23,7404"
     },
     {
      "code": "24.03",
-     "description": "Bu mallara ilişkin asgari maktu vergi tutarları ile maktu vergi tutarları 3/7/2026 tarihli ve 33299 (Mükerrer) sayılı Resmî Gazete’de yayımlanan 3/7/2026 tarihli ve 11489 sayılı Cumhurbaşkanı Kararının 1 inci maddesiyle yayımı tarihinde yürürlüğe girmek üzere metne işlendiği şekilde tespit edilmiş, aynı Karar ile vergi oran ve tutarları yeniden tespit edilen bu malların asgari maktu ve maktu vergi tutarları hakkında bu Kanunun 12 nci maddesinin (3) numaralı fıkrası hükmünün 2026 yılı Temmuz-Aral",
-     "tax_rate": "42",
-     "specific_tax": "2,2953",
-     "applied_tax_rate": "23,7404"
-    },
-    {
-     "code": "2403.99.90.00.00",
-     "description": "esansları (2403.11.00.00.00, 2403.19.10.00.19, 2403.19.90.00.19, 2403.91.00.00.00, 2403.99.10.00.00,"
+     "description": "Diğer mamul tütün ve mamul tütün yerine geçen maddeler; “homojenize” veya yeniden tertip edilmiş tütün; tütün hülasa ve esansları (2403.11.00.00.00, 2403.19.10.00.19, 2403.19.90.00.19, 2403.91.00.00.00, 2403.99.10.00.00, 2403.99.90.00.00 hariç)",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "42",
+     "applied_minimum_specific_tax": "2,2953",
+     "applied_specific_tax": "23,7404"
     },
     {
      "code": "2403.11.00.00.00",
-     "description": "hariç) Bu faslın 1 nolu alt pozisyon notunda 65,25 0,2429",
-     "tax_rate": "0",
-     "specific_tax": "0,7008"
+     "description": "Bu faslın 1 nolu alt pozisyon notunda belirtilen nargile tütünleri",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "0",
+     "applied_minimum_specific_tax": "0,7008"
     },
     {
      "code": "2403.19.10.00.19",
-     "description": "belirtilen nargile tütünleri Diğerleri (Net muhtevası 500 gr.ı geçmeyen 65,25 0,2429",
-     "tax_rate": "55",
-     "specific_tax": "0,2652",
-     "applied_tax_rate": "2,6064"
+     "description": "Diğerleri (Net muhtevası 500 gr.ı geçmeyen ambalajlarda olanlar)",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "55",
+     "applied_minimum_specific_tax": "0,2652",
+     "applied_specific_tax": "2,6064"
     },
     {
      "code": "2403.19.90.00.19",
-     "description": "ambalajlarda olanlar) Diğerleri (Net muhtevası 500 gr.ı 65,25 0,2429",
-     "tax_rate": "55",
-     "specific_tax": "0,2652",
-     "applied_tax_rate": "2,6064"
+     "description": "Diğerleri (Net muhtevası 500 gr.ı geçen ambalajlarda olanlar)",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "55",
+     "applied_minimum_specific_tax": "0,2652",
+     "applied_specific_tax": "2,6064"
     },
     {
      "code": "2403.99.10.00.00",
-     "description": "geçen ambalajlarda olanlar) Enfiye ve çiğnemeye 65,25 0,2429",
-     "tax_rate": "42",
-     "specific_tax": "2,2953",
-     "applied_tax_rate": "23,7404"
+     "description": "Enfiye ve çiğnemeye mahsus tütün",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,2429",
+     "applied_tax_rate": "42",
+     "applied_minimum_specific_tax": "2,2953",
+     "applied_specific_tax": "23,7404"
     },
     {
      "code": "4813.10.00.80.00",
-     "description": "mahsus tütün Diğerleri 65,25 0,0994",
-     "tax_rate": "0",
-     "specific_tax": "0,2861",
+     "description": "Diğerleri (Makaron)",
+     "tax_rate": "65,25",
+     "minimum_specific_tax": "0,0994",
+     "applied_tax_rate": "0",
+     "applied_minimum_specific_tax": "0,2861",
      "applied_specific_tax": "-"
     }
-   ]
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)"
   },
   {
    "list": "IV",
@@ -1138,17 +1240,17 @@
     },
     {
      "code": "3303.00",
-     "description": "Parfümler ve tuvalet suları (3303.00.90.00.11",
+     "description": "Parfümler ve tuvalet suları (3303.00.90.00.11 Kolonyalar hariç)",
      "tax_rate": "20"
     },
     {
      "code": "33.04",
-     "description": "Kolonyalar hariç) Güzellik veya makyaj müstahzarları ve cilt bakımı için müstahzarlar (ilaçlar hariç) (güneş kremleri",
+     "description": "Güzellik veya makyaj müstahzarları ve cilt bakımı için müstahzarlar (ilaçlar hariç) (güneş kremleri veya güneşlenme müstahzarları dahil); manikür ve pedikür müstahzarları",
      "tax_rate": "20"
     },
     {
      "code": "3305.20.00.00.00",
-     "description": "veya güneşlenme müstahzarları dahil); manikür ve pedikür müstahzarları Perma ve defrize müstahzarları",
+     "description": "Perma ve defrize müstahzarları",
      "tax_rate": "20"
     },
     {
@@ -1158,315 +1260,319 @@
     },
     {
      "code": "3305.90",
-     "description": "(Saç losyonları, boyaları, v.b)",
+     "description": "(Saç losyonları, boyaları, v.b) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "33.07",
-     "description": "Diğerleri Traş öncesinde, traş sırasında veya traştan sonra kullanılan müstahzarlar, vücut deodorantları, banyo müstahzarları, tüy dökücüler ve tarifenin başka yerinde yer almayan veya belirtilmeyen diğer"
+     "description": "Traş öncesinde, traş sırasında veya traştan sonra kullanılan müstahzarlar, vücut deodorantları, banyo müstahzarları, tüy dökücüler ve tarifenin başka yerinde yer almayan veya belirtilmeyen diğer parfümeri, kozmetik veya tuvalet müstahzarları, kapalı yerlerde kullanılan müstahzar deodorantlar (parfümlü veya dezenfekte edici vasfı olsun olmasın) Traş köpüğü ve traş kremi",
+     "tax_rate": "20 6,7",
+     "rates_verified": false
     },
     {
      "code": "3401.11.00.90.00",
-     "description": "parfümeri, kozmetik veya tuvalet müstahzarları, kapalı yerlerde kullanılan müstahzar deodorantlar (parfümlü veya dezenfekte edici vasfı olsun olmasın) Traş köpüğü ve traş kremi Diğerleri (Yalnız traş sabunu )",
+     "description": "Diğerleri (Yalnız traş sabunu)",
      "tax_rate": "6,7"
     },
     {
      "code": "4103.90.00.00.11",
-     "description": "Diğer hayvanların yaş derileri",
+     "description": "Diğer hayvanların yaş derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
      "tax_rate": "20"
     },
     {
      "code": "4103.90.00.00.12",
-     "description": "[Yalnız develerin (tek hörgüçlü dahil) ham derileri] Diğer hayvanların kuru derileri",
+     "description": "Diğer hayvanların kuru derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
      "tax_rate": "20"
     },
     {
      "code": "4103.90.00.00.13",
-     "description": "[Yalnız develerin (tek hörgüçlü dahil) ham derileri] Diğer hayvanların pikle derileri",
+     "description": "Diğer hayvanların pikle derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
      "tax_rate": "20"
     },
     {
      "code": "4103.90.00.00.19",
-     "description": "[Yalnız develerin (tek hörgüçlü dahil) ham derileri] Diğerleri",
+     "description": "Diğerleri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
+     "tax_rate": "20"
+    },
+    {
+     "code": "4103.90.00.00.19",
+     "description": "Diğerleri [Yalnız develerin (tek hörgüçlü dahil) ham derileri] Kürkler ve taklit kürkler; bunların mamulleri [Bu fasılda yer alan koyun, kuzu, keçi, oğlak ve sığırların (bufalo dahil) postları, kürkleri ve taklit kürkleri ile bunlardan mamul giyim eşyası, aksesuarları ve diğer eşya hariç]",
      "tax_rate": "20"
     },
     {
      "code": "49.01",
-     "description": "[Yalnız develerin (tek hörgüçlü dahil) ham derileri] 43 Kürkler ve taklit kürkler; bunların mamulleri [Bu fasılda yer alan koyun, kuzu, keçi, oğlak ve sığırların (bufalo dahil) postları, kürkleri ve taklit kürkleri ile bunlardan mamul giyim eşyası, aksesuarları ve diğer eşya hariç] Kitaplar, broşürler, risaleler ve benzeri matbuat (ayrı ayrı sayfalar halinde olsun olmasın)",
+     "description": "Kitaplar, broşürler, risaleler ve benzeri matbuat (ayrı ayrı sayfalar halinde olsun olmasın) (Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar)",
      "tax_rate": "20"
     },
     {
      "code": "49.02",
-     "description": "(Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar) Gazeteler ve periyodik yayınlar (resimli olsun olmasın veya reklam içersin içermesin)",
+     "description": "Gazeteler ve periyodik yayınlar (resimli olsun olmasın veya reklam içersin içermesin) (Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar)",
      "tax_rate": "20"
     },
     {
      "code": "7013.10.00.10.00",
-     "description": "(Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar) (Cam seramiğinden sofra ve mutfak eşyası)",
+     "description": "(Cam seramiğinden sofra ve mutfak eşyası) Sofra ve mutfak işleri için olanlar",
      "tax_rate": "20"
     },
     {
      "code": "7013.22.10.00.00",
-     "description": "Sofra ve mutfak işleri için olanlar (Kurşun kristalden ayaklı bardak)",
+     "description": "(Kurşun kristalden ayaklı bardak) El imali olanlar",
      "tax_rate": "20"
     },
     {
      "code": "7013.22.90.00.00",
-     "description": "El imali olanlar (Kurşun kristalden ayaklı bardak)",
+     "description": "(Kurşun kristalden ayaklı bardak) Makina imali olanlar",
      "tax_rate": "20"
     },
     {
      "code": "7013.33.11.00.00",
-     "description": "Makina imali olanlar (Kurşun kristalden el imali bardak)",
+     "description": "(Kurşun kristalden el imali bardak) Kesilmiş veya başka şekilde dekorlanmış",
      "tax_rate": "20"
     },
     {
      "code": "7013.33.19.00.00",
-     "description": "Kesilmiş veya başka şekilde dekorlanmış (Kurşun kristalden el imali bardak)",
+     "description": "(Kurşun kristalden el imali bardak) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "7013.33.91.00.00",
-     "description": "Diğerleri (Kurşun kristalden makina imali bardak)",
+     "description": "(Kurşun kristalden makina imali bardak) Kesilmiş veya başka şekilde dekorlanmış",
      "tax_rate": "20"
     },
     {
      "code": "7013.33.99.00.00",
-     "description": "Kesilmiş veya başka şekilde dekorlanmış (Kurşun kristalden makina imali bardak)",
+     "description": "(Kurşun kristalden makina imali bardak) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "7013.41.10.00.00",
-     "description": "Diğerleri (Kurşun kristalden sofra ve mutfak eşyası)",
+     "description": "(Kurşun kristalden sofra ve mutfak eşyası) El imali olanlar",
      "tax_rate": "20"
     },
     {
      "code": "7013.41.90.00.00",
-     "description": "El imali olanlar (Bardak hariç) (Kurşun kristalden sofra ve mutfak eşyası)",
+     "description": "(Bardak hariç) (Kurşun kristalden sofra ve mutfak eşyası) Makina imali olanlar (Bardak hariç)",
      "tax_rate": "20"
     },
     {
      "code": "7013.91.10.00.00",
-     "description": "Makina imali olanlar (Bardak hariç) (Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya)",
+     "description": "(Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya) El imali olanlar",
      "tax_rate": "20"
     },
     {
      "code": "7013.91.90.00.00",
-     "description": "El imali olanlar (Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya)",
+     "description": "(Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya) Makina imali olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8214.20.00.00.11",
-     "description": "Makina imali olanlar Çıt çıt tipi tırnak makasları",
+     "description": "Çıt çıt tipi tırnak makasları",
      "tax_rate": "20"
     },
     {
      "code": "8214.20.00.00.19",
-     "description": "[Manikür ve pedikür takım ve aletleri (tırnak törpüleri dahil)]",
+     "description": "[Manikür ve pedikür takım ve aletleri (tırnak törpüleri dahil)] Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "8215.10.20.00.11",
-     "description": "Diğerleri (Kaşık, çatal vb. takım halinde)",
+     "description": "(Kaşık, çatal vb. takım halinde) Altın ve gümüşle kaplamalı olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8215.91.00.90.11",
-     "description": "Altın ve gümüşle kaplamalı olanlar (Tek kaşık, çatal vb.)",
+     "description": "(Tek kaşık, çatal vb.) Altın ve gümüşle kaplamalı olanlar",
      "tax_rate": "20"
     },
     {
-     "code": "8415.82.00.90.00",
-     "description": "Altın ve gümüşle kaplamalı olanlar Klima cihazları (motorlu bir vantilatör ile nem ve ısıyı değiştirmeye mahsus tertibatı olanlar) (nemin ayrı olarak ayarlanamadığı cihazlar dahil) [Yalnız 8415.10.10.00.00 Tek bir gövde halinde (self- contained); 8415.10.90.00.00 Ayrı elemanlı sistemler (split-sistem); 8415.81.00.90.00 Diğerleri (Bir soğutucu ünite ve soğutma-ısıtma çevrimini tersine değiştiren bir valf içerenler) (ters çevrimli ısı pompaları) (sivil hava taşıtlarında kullanılmaya, binek otoları"
-    },
-    {
      "code": "84.15",
-     "description": "",
+     "description": "Klima cihazları (motorlu bir vantilatör ile nem ve ısıyı değiştirmeye mahsus tertibatı olanlar) (nemin ayrı olarak ayarlanamadığı cihazlar dahil) [Yalnız 8415.10.10.00.00 Tek bir gövde halinde (self- contained); 8415.10.90.00.00 Ayrı elemanlı sistemler (split-sistem); 8415.81.00.90.00 Diğerleri (Bir soğutucu ünite ve soğutma-ısıtma çevrimini tersine değiştiren bir valf içerenler) (ters çevrimli ısı pompaları) (sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayanlar); 8415.82.00.90.00 Diğerleri (Bir soğutucu ünite içeren, sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan, motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.83.00.90.00 Diğerleri (Bir soğutucu ünite içermeyen, sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.90.00.90.11 (Split sistemlerin dış üniteleri) ve 8415.90.00.90.12 (Split sistemlerin iç üniteleri)]",
      "tax_rate": "6,7"
     },
     {
      "code": "84.18",
-     "description": "sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan, motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.83.00.90.00 Diğerleri (Bir soğutucu ünite içermeyen, sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.90.00.90.11 (Split sistemlerin dış üniteleri) ve 8415.90",
+     "description": "Buzdolapları, dondurucular ve diğer soğutucu ve dondurucu cihazlar (elektrikli olsun olmasın); ısı pompaları (84.15 pozisyonundaki klima cihazları hariç) (Diğer soğutucu veya dondurucu cihazlar; ısı pompaları hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8419.11.00.00.00",
-     "description": "hariç) (Diğer soğutucu veya dondurucu cihazlar; ısı pompaları hariç) Gazla çalışan anında su ısıtıcılar",
+     "description": "Gazla çalışan anında su ısıtıcılar",
      "tax_rate": "6,7"
     },
     {
      "code": "8419.19.00.00.11",
-     "description": "(Katı yakıtlı)",
+     "description": "(Katı yakıtlı) Termosifonlar (depolu su ısıtıcıları)",
      "tax_rate": "6,7"
     },
     {
      "code": "8419.19.00.00.19",
-     "description": "Termosifonlar (depolu su ısıtıcıları) (Termosifonlar ve güneş enerjili su ısıtıcıları dışındaki elektrikli olmayan anında veya depolu su ısıtıcıları)",
+     "description": "(Termosifonlar ve güneş enerjili su ısıtıcıları dışındaki elektrikli olmayan anında veya depolu su ısıtıcıları) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8421.12.00.00.11",
-     "description": "Diğerleri (Çamaşır kurutma makinaları) Bir defada kurutacağı çamaşırın kuru ağırlığı 6 kg.ı",
+     "description": "(Çamaşır kurutma makinaları) Bir defada kurutacağı çamaşırın kuru ağırlığı 6 kg.ı geçmeyecek kapasitede olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8422.11.00.00.00",
-     "description": "geçmeyecek kapasitede olanlar (Bulaşık yıkama makinaları)",
+     "description": "(Bulaşık yıkama makinaları) Evlerde kullanılanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.11.11.00.00",
-     "description": "Evlerde kullanılanlar (Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası)",
+     "description": "(Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası) Çamaşırı önden yüklemeli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.11.19.00.00",
-     "description": "Çamaşırı önden yüklemeli olanlar (Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası)",
+     "description": "(Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası) Çamaşırı üstten yüklemeli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.11.90.00.00",
-     "description": "Çamaşırı üstten yüklemeli olanlar (Tam otomatik çamaşır yıkama makinası) Kuru çamaşır kapasitesi 6 kg.ı geçen fakat 10 kg.ı",
+     "description": "(Tam otomatik çamaşır yıkama makinası) Kuru çamaşır kapasitesi 6 kg.ı geçen fakat 10 kg.ı geçmeyenler",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.12.00.00.00",
-     "description": "geçmeyenler (Çamaşır yıkama makinası) Diğer çamaşır makinaları (santrifüjlü kurutma",
+     "description": "(Çamaşır yıkama makinası) Diğer çamaşır makinaları (santrifüjlü kurutma tertibatlı olanlar)",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.19.00.00.11",
-     "description": "tertibatlı olanlar) (Kuru çamaşır kapasitesi 10 kg.ı geçmeyen, santrifüjlü kurutma tertibatı olmayan çamaşır yıkama makinası)",
+     "description": "(Kuru çamaşır kapasitesi 10 kg.ı geçmeyen, santrifüjlü kurutma tertibatı olmayan çamaşır yıkama makinası) Elektrikli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8450.19.00.00.19",
-     "description": "Elektrikli olanlar (Elektrikli olmayan çamaşır yıkama makinası)",
+     "description": "(Elektrikli olmayan çamaşır yıkama makinası) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8451.21.00.00.11",
-     "description": "Diğerleri (Kuru çamaşır kapasitesi 10 kg.ı geçmeyen kurutma makinaları)",
+     "description": "(Kuru çamaşır kapasitesi 10 kg.ı geçmeyen kurutma makinaları) Evlerde kullanılanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "85.07",
-     "description": "Evlerde kullanılanlar Elektrik akümülatörleri (bunların seperatörleri dahil) (kare veya dikdörtgen şeklinde olsun olmasın)",
+     "description": "Elektrik akümülatörleri (bunların seperatörleri dahil) (kare veya dikdörtgen şeklinde olsun olmasın) (Yalnız elektrik motorlu taşıt araçlarının motorunu çalıştırmaya mahsus olanlar)",
      "tax_rate": "3"
     },
     {
      "code": "85.08",
-     "description": "(Yalnız elektrik motorlu taşıt araçlarının motorunu çalıştırmaya mahsus olanlar) Vakumlu elektrik süpürgeleri",
+     "description": "Vakumlu elektrik süpürgeleri",
      "tax_rate": "6,7"
     },
     {
      "code": "85.09",
-     "description": "(Gıda maddelerini öğütücüler ve karıştırıcılar; meyva veya sebze presleri, vb.; et kıyma makinaları vb.) Ev işlerinde kullanılmaya mahsus kendinden",
+     "description": "(Gıda maddelerini öğütücüler ve karıştırıcılar; meyva veya sebze presleri, vb.; et kıyma makinaları vb.) Ev işlerinde kullanılmaya mahsus kendinden elektrik motorlu elektro-mekanik cihazlar (85.08 pozisyonunda yer alan vakumlu elektrik süpürgeleri hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8510.10.00.00.00",
-     "description": "elektrik motorlu elektro-mekanik cihazlar (85.08 pozisyonunda yer alan vakumlu elektrik süpürgeleri hariç) (Elektrikli)",
+     "description": "(Elektrikli) Traş makinaları",
      "tax_rate": "6,7"
     },
     {
      "code": "85.16",
-     "description": "Traş makinaları Elektrikli anında veya depolu su ısıtıcılar ve daldırma tipi ısıtıcılar; herhangi bir mahallin veya toprak ve benzeri yerlerin ısıtılmasına mahsus elektrikli cihazlar; berber işleri için elektrotermik cihazlar (örneğin; saç kurutucular, saç kıvırma",
+     "description": "Elektrikli anında veya depolu su ısıtıcılar ve daldırma tipi ısıtıcılar; herhangi bir mahallin veya toprak ve benzeri yerlerin ısıtılmasına mahsus elektrikli cihazlar; berber işleri için elektrotermik cihazlar (örneğin; saç kurutucular, saç kıvırma cihazları, saç kıvırma maşalarını ısıtma cihazları) ve el kurutma makinaları; elektrikli ütüler; ev işlerinde kullanılan diğer elektrotermik cihazlar; elektrikli ısıtıcı rezistanslar (85.45 pozisyonundakiler hariç) (8516.40 Elektrikli ütüler hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8517.11.00.00.00",
-     "description": "cihazları, saç kıvırma maşalarını ısıtma cihazları) ve el kurutma makinaları; elektrikli ütüler; ev işlerinde kullanılan diğer elektrotermik cihazlar; elektrikli ısıtıcı rezistanslar (85.45 pozisyonundakiler hariç) (8516.40 Elektrikli ütüler hariç) Kordonsuz ahizeli telli telefon cihazları",
+     "description": "Kordonsuz ahizeli telli telefon cihazları",
      "tax_rate": "20"
     },
     {
      "code": "8517.12.00.00.11",
-     "description": "Alıcısı bulunan verici portatif (Cellular) telsiz telefon cihazları",
-     "tax_rate": "40"
+     "description": "Alıcısı bulunan verici portatif (Cellular) telsiz telefon cihazları (Değişik sıra :21/2/2019-7166/10 md.) - Özel tüketim vergisi matrahı 1.200 TL (4.500 TL)’yi aşmayanlar - Özel tüketim vergisi matrahı 1.200 TL’yi (4.500 TL)’yi aşıp, 2.400 TL’yi (9.000 TL)’yi aşmayanlar - Diğerleri",
+     "tax_rate": "25 40 50",
+     "rates_verified": false
     },
     {
      "code": "8517.12.00.00.12",
-     "description": "(Değişik sıra :21/2/2019-7166/10 md.) - Özel tüketim vergisi matrahı 1.200 TL (4.500 TL ) ’yi 24/10/2025 tarihli ve 33057 sayılı Resmî Gazete’de yayımlanan 23/10/2025 tarihli ve 10521 sayılı Cumhurbaşkanı Kararının 1 inci maddesiyle bu malların özel tüketim vergisi oranlarına esas özel tüketim vergisi matrahları metne parantez içinde işlendiği şekilde değiştirilmiştir. aşmayanlar - Özel tüketim vergisi matrahı 1.200 TL’yi (4.500 TL) ’yi aşıp, 2.400 TL’yi (9.000 TL) ’yi aşmayanlar - Diğerleri Alı",
+     "description": "Alıcısı bulunan verici mobil araç (Cellular) telsiz telefon cihazları",
      "tax_rate": "20"
     },
     {
      "code": "8517.12.00.00.19",
-     "description": "telefon cihazları Diğerleri [Yalnız alçak güçlü (100 miliwatt dan küçük) mobil",
+     "description": "Diğerleri [Yalnız alçak güçlü (100 miliwatt dan küçük) mobil telsiz telefon cihazları]",
      "tax_rate": "20"
     },
     {
      "code": "8517.69.30.00.00",
-     "description": "telsiz telefon cihazları] Telsiz telefon, telsiz telgraf için alıcı cihazlar (Yalnız arama, uyarma veya çağırma sistemlerinde",
+     "description": "Telsiz telefon, telsiz telgraf için alıcı cihazlar (Yalnız arama, uyarma veya çağırma sistemlerinde kullanılan taşınabilir alıcılar ile amatör telsiz alıcı cihazları)",
      "tax_rate": "20"
     },
     {
      "code": "8517.69.90.90.24",
-     "description": "kullanılan taşınabilir alıcılar ile amatör telsiz alıcı cihazları) Alıcısı bulunan verici halk bandı (CB) ve 49 MHz alçak güçlü (100 miliwatt dan küçük) telsiz",
+     "description": "Alıcısı bulunan verici halk bandı (CB) ve 49 MHz alçak güçlü (100 miliwatt dan küçük) telsiz cihazları ve diğer amatör telsiz cihazları",
      "tax_rate": "20"
     },
     {
      "code": "8517.69.90.90.29",
-     "description": "cihazları ve diğer amatör telsiz cihazları Diğerleri (Yalnız amatör telsiz telefon verici cihazları ve telsiz",
+     "description": "Diğerleri (Yalnız amatör telsiz telefon verici cihazları ve telsiz alarm cihazları)",
      "tax_rate": "20"
     },
     {
      "code": "85.18",
-     "description": "alarm cihazları) Mikrofonlar ve bunların mesnetleri; hoparlörler (kabinlerine monte edilmiş olsun olmasın); başa takılan kulaklıklar, kulağa takılan kulaklıklar (bir mikrofonla kombine halde olsun olmasın), bir",
+     "description": "Mikrofonlar ve bunların mesnetleri; hoparlörler (kabinlerine monte edilmiş olsun olmasın); başa takılan kulaklıklar, kulağa takılan kulaklıklar (bir mikrofonla kombine halde olsun olmasın), bir mikrofon ve bir veya daha fazla hoparlör içeren setler; elektrikli ses frekansı yükselteçleri, takım halindeki ses amplikatörleri",
      "tax_rate": "20"
     },
     {
      "code": "85.19",
-     "description": "mikrofon ve bir veya daha fazla hoparlör içeren setler; elektrikli ses frekansı yükselteçleri, takım halindeki ses amplikatörleri Ses kaydetme veya kaydedilen sesi tekrar vermeye mahsus cihazlar (8519.81.95.00.00 hariç)",
+     "description": "Ses kaydetme veya kaydedilen sesi tekrar vermeye mahsus cihazlar (8519.81.95.00.00 hariç) (Sinematoğrafik ses kaydetmeye ve kaydedilen sesi tekrar vermeye mahsus cihazlar hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "85.21",
-     "description": "(Sinematoğrafik ses kaydetmeye ve kaydedilen sesi tekrar vermeye mahsus cihazlar hariç) Video kayıt veya gösterme cihazları (bir video",
+     "description": "Video kayıt veya gösterme cihazları (bir video tunerle birlikte olsun olmasın)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.29.15.00.18",
-     "description": "tunerle birlikte olsun olmasın) (Manyetik mesnetler)",
+     "description": "(Manyetik mesnetler) Video bantları",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.29.19.00.00",
-     "description": "Video bantları (Diğer manyetik mesnetler) Diğerleri",
+     "description": "(Diğer manyetik mesnetler) Diğerleri (Yalnız video bantları)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.41.10.00.00",
-     "description": "(Yalnız video bantları) (Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı",
+     "description": "(Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı aşmayan lazer okuma sistemleri için diskler (Yalnız lazer diskler)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.41.30.00.00",
-     "description": "aşmayan lazer okuma sistemleri için diskler (Yalnız lazer diskler) (Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı aşan fakat 18 gigabaytı aşmayan lazer okuma",
+     "description": "(Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı aşan fakat 18 gigabaytı aşmayan lazer okuma sistemleri için diskler (Yalnız lazer diskler)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.41.90.00.00",
-     "description": "sistemleri için diskler (Yalnız lazer diskler) (Kayıt yapılmamış optik mesnetler) Diğerleri",
+     "description": "(Kayıt yapılmamış optik mesnetler) Diğerleri (Yalnız lazer diskler)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.49.10.00.00",
-     "description": "(Yalnız lazer diskler) (Diğer optik mesnetler) Dijital çok yönlü diskler (DVD) (Ses veya görüntü dışındaki fenomenleri tekrar vermeye mahsus olanlar, sadece sesi tekrar vermeye mahsus olanlar, otomatik bilgi işlem makinası vasıtasıyla",
+     "description": "(Diğer optik mesnetler) Dijital çok yönlü diskler (DVD) (Ses veya görüntü dışındaki fenomenleri tekrar vermeye mahsus olanlar, sadece sesi tekrar vermeye mahsus olanlar, otomatik bilgi işlem makinası vasıtasıyla işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir makinada okunabilir ikili formda kayıtlı görüntü, ses, bilgi ve komutların gösterimlerini tekrar vermeye mahsus olanlar hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8523.49.20.00.00",
-     "description": "işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir makinada okunabilir ikili formda kayıtlı görüntü, ses, bilgi ve komutların gösterimlerini tekrar vermeye mahsus olanlar hariç) Diğerleri (Ses veya görüntü dışındaki fenomenleri tekrar vermeye mahsus olanlar, sadece sesi tekrar vermeye mahsus olanlar, otomatik bilgi işlem makinası vasıtasıyla",
+     "description": "Diğerleri (Ses veya görüntü dışındaki fenomenleri tekrar vermeye mahsus olanlar, sadece sesi tekrar vermeye mahsus olanlar, otomatik bilgi işlem makinası vasıtasıyla işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir makinada okunabilir ikili formda kayıtlı görüntü, ses, bilgi ve komutların gösterimlerini tekrar vermeye mahsus olanlar hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8525.80",
-     "description": "işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir makinada okunabilir ikili formda kayıtlı görüntü, ses, bilgi ve komutların gösterimlerini tekrar vermeye mahsus olanlar hariç) Televizyon kameraları, dijital kameralar ve",
+     "description": "Televizyon kameraları, dijital kameralar ve görüntü kaydedici kameralar [Yalnız 8525.80.11 Üç veya daha fazla kamera tüpü olan televizyon kameraları; 8525.80.19 Televizyon kameraları (8525.80.11 pozisyonunda olmayan televizyon kameraları); 8525.80.30.00.00 Dijital kameralar]",
      "tax_rate": "20"
     },
     {
      "code": "8526.92",
-     "description": "görüntü kaydedici kameralar [Yalnız 8525.80.11 Üç veya daha fazla kamera tüpü olan televizyon kameraları; 8525.80.19 Televizyon kameraları (8525.80.11 pozisyonunda olmayan televizyon kameraları); 8525.80.30.00.00 Dijital kameralar] Uzaktan kumanda etmeye mahsus telsiz cihazları",
+     "description": "Uzaktan kumanda etmeye mahsus telsiz cihazları",
      "tax_rate": "20"
     },
     {
@@ -1476,135 +1582,139 @@
     },
     {
      "code": "8527.13",
-     "description": "Ses kayıt veya kayıt edilen sesi tekrar vermeye",
+     "description": "Ses kayıt veya kayıt edilen sesi tekrar vermeye mahsus cihaz ile birlikte olan diğer cihazlar",
      "tax_rate": "20"
     },
     {
      "code": "8527.19.00.00.00",
-     "description": "mahsus cihaz ile birlikte olan diğer cihazlar (Harici bir güç kaynağı olmaksızın çalışan radyo yayınlarını alıcı diğer cihazlar)",
+     "description": "(Harici bir güç kaynağı olmaksızın çalışan radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.21.20.00.00",
-     "description": "Diğerleri (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını",
+     "description": "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Lazer okuma sistemli olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8527.21.52.00.00",
-     "description": "alıcı cihazlar) Lazer okuma sistemli olanlar (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar)",
+     "description": "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8527.21.59.00.00",
-     "description": "Kaset tipi olup analog ve dijital okuma sistemli olanlar (Kaset tipi olmayan) (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik",
+     "description": "(Kaset tipi olmayan) (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "8527.21.70.00.00",
-     "description": "radyo yayınlarını alıcı cihazlar) Diğerleri (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını",
+     "description": "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Lazer okuma sistemli olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8527.21.92.00.00",
-     "description": "alıcı cihazlar) Lazer okuma sistemli olanlar (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar)",
+     "description": "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
      "tax_rate": "20"
     },
     {
      "code": "8527.21.98.00.00",
-     "description": "Kaset tipi olup analog ve dijital okuma sistemli olanlar (Kaset tipi olmayan, sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik",
+     "description": "(Kaset tipi olmayan, sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "8527.29.00.00.00",
-     "description": "radyo yayınlarını alıcı cihazlar) Diğerleri (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde ses kayıt cihazı ile birlikte",
+     "description": "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde ses kayıt cihazı ile birlikte olmayan radyo yayınlarını alıcı cihazlar) Diğerleri",
      "tax_rate": "20"
     },
     {
      "code": "8527.91.11.00.00",
-     "description": "olmayan radyo yayınlarını alıcı cihazlar) Diğerleri (Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.91.19.00.00",
-     "description": "olanlar (Radyo yayınlarını alıcı diğer cihazlar)",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.91.35.00.00",
-     "description": "Diğerleri (Radyo yayınlarını alıcı diğer cihazlar)",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Lazer okuma sistemli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.91.91.00.00",
-     "description": "Lazer okuma sistemli olanlar (Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.91.99.00.00",
-     "description": "olanlar (Radyo yayınlarını alıcı diğer cihazlar)",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.92.10.00.00",
-     "description": "Diğerleri Çalar saatli radyolar",
+     "description": "Çalar saatli radyolar",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.92.90.00.00",
-     "description": "(Saatli radyolar)",
+     "description": "(Saatli radyolar) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "8527.99.00.00.00",
-     "description": "Diğerleri (Radyo yayınlarını alıcı diğer cihazlar)",
+     "description": "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
      "tax_rate": "6,7"
     },
     {
      "code": "85.28",
-     "description": "Diğerleri Monitörler ve projektörler (televizyon alıcı cihazı ile mücehhez olmayanlar); televizyon alıcı cihazları (radyo yayınlarını alıcı cihazı veya ses veya",
+     "description": "Monitörler ve projektörler (televizyon alıcı cihazı ile mücehhez olmayanlar); televizyon alıcı cihazları (radyo yayınlarını alıcı cihazı veya ses veya görüntü kayıt veya tekrar verme cihazıyla birlikte olsun olmasın) (8528.42.00.00.00; 8528.52.10.00.00; 8528.62.00.00.00 hariç)",
      "tax_rate": "6,7"
     },
     {
      "code": "8543.70.03.00.00",
-     "description": "görüntü kayıt veya tekrar verme cihazıyla birlikte olsun olmasın) (8528.42.00.00.00; 8528.52.10.00.00; 8528.62.00.00.00 hariç) Video oyun konsolları için kablosuz kızıl ötesi",
+     "description": "Video oyun konsolları için kablosuz kızıl ötesi uzaktan kumanda cihazları",
      "tax_rate": "20"
     },
     {
      "code": "8543.70.90.00.15",
-     "description": "uzaktan kumanda cihazları Infrared ile çalışan uzaktan kumanda cihazları",
+     "description": "Infrared ile çalışan uzaktan kumanda cihazları (remote control)",
      "tax_rate": "20"
     },
     {
      "code": "9113.90.00.30.00",
-     "description": "(remote control) (Saat kayışları) İnci, kıymetli taş; sentetik veya terkip yoluyla elde",
+     "description": "(Saat kayışları) İnci, kıymetli taş; sentetik veya terkip yoluyla elde edilen taşlardan mamul olanlar",
      "tax_rate": "20"
     },
     {
      "code": "9302.00.00.00.00",
-     "description": "edilen taşlardan mamul olanlar Revolverler ve tabancalar (93.03 veya 93.04",
+     "description": "Revolverler ve tabancalar (93.03 veya 93.04 pozisyonundakiler hariç)",
      "tax_rate": "20"
     },
     {
      "code": "93.03",
-     "description": "pozisyonundakiler hariç) Bir patlayıcının itiş gücü ile çalışan diğer ateşli silahlar ve benzeri cihazlar (spor için av tüfekleri ve tüfekler, ağızdan doldurulan ateşli silahlar, sadece işaret fişeği atmak üzere imal edilmiş",
+     "description": "Bir patlayıcının itiş gücü ile çalışan diğer ateşli silahlar ve benzeri cihazlar (spor için av tüfekleri ve tüfekler, ağızdan doldurulan ateşli silahlar, sadece işaret fişeği atmak üzere imal edilmiş tabanca ve diğer cihazlar, manevra fişeği atmak için tabanca ve revolverler, hayvan öldürmeye mahsus sürgülü silahlar, ok-atar tüfekler gibi)",
      "tax_rate": "20"
     },
     {
      "code": "9405.10.50.10.11",
-     "description": "tabanca ve diğer cihazlar, manevra fişeği atmak için tabanca ve revolverler, hayvan öldürmeye mahsus sürgülü silahlar, ok-atar tüfekler gibi) Kristal avizeler",
+     "description": "Kristal avizeler",
      "tax_rate": "20"
     },
     {
      "code": "95.04",
-     "description": "Video oyun konsolları ve makinaları, eğlence merkezleri için oyun eşyası, tilt makinası, bilardo, kumarhane oyunları için özel masalar,",
+     "description": "Video oyun konsolları ve makinaları, eğlence merkezleri için oyun eşyası, tilt makinası, bilardo, kumarhane oyunları için özel masalar, salon veya masa oyunları ve otomatik bowling oyun ekipmanları dahil",
      "tax_rate": "20"
     },
     {
      "code": "96.01",
-     "description": "salon veya masa oyunları ve otomatik bowling oyun ekipmanları dahil İşlenmiş fildişi, kemik, bağa, boynuz, çatallı boynuz, mercan, sedef ve yontulmaya elverişli",
+     "description": "İşlenmiş fildişi, kemik, bağa, boynuz, çatallı boynuz, mercan, sedef ve yontulmaya elverişli diğer hayvansal maddeler ve bu maddelerden eşya (kalıplama suretiyle elde edilen eşya dahil)",
      "tax_rate": "20"
     }
-   ]
+   ],
+   "source_url": "https://www.mevzuat.gov.tr/MevzuatMetin/1.5.4760.pdf",
+   "source_sha256": "614d8b276c69dbe5504101a0ede8cf400fa90e6175bdc60d33a19a5adc1c9c96",
+   "retrieved_at": "2026-09-19",
+   "parsed_from": "tablo kılavuz çizgileri (excise_lists.build_sections)"
   }
  ]
 }
