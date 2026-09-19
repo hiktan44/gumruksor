@@ -199,3 +199,7 @@ eu_taric.sqlite3-*
 # Access2Markets arsivi (calisma aninda olusur).
 access2markets.sqlite3
 access2markets.sqlite3-*
+
+# Resmi Gazete arsivi (calisma aninda olusur).
+resmi_gazete.sqlite3
+resmi_gazete.sqlite3-*

@@ -62,6 +62,12 @@ JOB_CATALOGUE: dict[str, dict[str, str]] = {
         "purpose": "2007/13033 sayılı Karar eki (I) ve (II) sayılı listeleri resmî metinden tazeler.",
         "cost": "free",
     },
+    "resmi-gazete-archive": {
+        "label": "Resmî Gazete arşivi",
+        "purpose": "Gümrüğü ilgilendiren Resmî Gazete belgelerini bugünden geriye doğru kalıcı "
+        "arşive alır; her gün için normal sayı ve mükerrer sayılar birlikte taranır.",
+        "cost": "free",
+    },
     "eu-vat-sync": {
         "label": "AB KDV oranları (TEDB)",
         "purpose": "AB-27 KDV oranlarını TEDB'den çekmeyi dener; veri gelmezse uzman teyitli tohum korunur.",

@@ -57,6 +57,7 @@ from mevzuat_mcp_server import (
     eu_taric_engine,
     foreign_tariff_engine,
     hybrid_index,
+    resmi_gazete_archive,
     review_service,
     storage_service,
     tariff_engine,
@@ -2905,6 +2906,42 @@ async def web_eu_taric_status(request: Request):
     if limited:
         return limited
     return JSONResponse(eu_taric_engine.status())
+
+
+@mcp.custom_route("/api/gazette/search", methods=["GET"])
+async def web_gazette_search(request: Request):
+    """Resmî Gazete arşivinde mevzuat metni arar: künye, checksum ve resmî bağlantıyla.
+
+    Arşiv seçicidir (yalnız gümrük kararına giren belge aileleri) ve yayımlanmış belge
+    değişmediği için ekleyicidir. Metni okunamayan belge künyesiyle listelenir; içeriği
+    aranmaz, böylece bozuk bir metin doğru hüküm sanılmaz.
+    """
+    limited = _rate_limit_response(request, "gazette-search", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        result = resmi_gazete_archive.search(
+            str(request.query_params.get("q", "")),
+            since=(request.query_params.get("since") or None),
+            until=(request.query_params.get("until") or None),
+            kind=(request.query_params.get("kind") or None),
+            limit=int(request.query_params.get("limit") or 10),
+        )
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Resmî Gazete archive search failed")
+        return JSONResponse({"error": "Resmî Gazete arşivi şu anda sorgulanamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
+
+
+@mcp.custom_route("/api/gazette/status", methods=["GET"])
+async def web_gazette_status(request: Request):
+    """Arşivin kapsamı: taranan gün ve sayı sayısı, en eski/en yeni gün, metin kalitesi dağılımı."""
+    limited = _rate_limit_response(request, "gazette-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(resmi_gazete_archive.status())
 
 
 @mcp.custom_route("/api/foreign/eu-a2m", methods=["GET"])

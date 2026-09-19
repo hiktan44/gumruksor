@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Resmi Gazete fihrist fiksturleri: resmi sayfalarin BAYT BAYT kopyasidir ve
+# sha256'lari kayitla dogrulanir. LF normalizasyonu bu kopyayi bozar, bu yuzden
+# bu dosyalar metin olarak islenmez.
+tests/fixtures/resmi_gazete_index_*.html -text

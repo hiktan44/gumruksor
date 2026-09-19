@@ -59,6 +59,11 @@ from foreign_tariff import (
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
+from resmi_gazete import (
+    INTEREST_RULES as GAZETTE_INTEREST_RULES,
+    SYNC_ENABLED as RESMI_GAZETE_SYNC_ENABLED,
+    ResmiGazeteArchive,
+)
 from background_jobs import registry as job_registry
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
@@ -117,6 +122,9 @@ eu_taric_engine = EuTaricEngine(
 access2markets_engine = Access2MarketsEngine(
     code_source=lambda: tariff_engine.distinct_gtip_codes(width=10),
 )
+# Resmî Gazete geçmiş arşivi: mevzuat metninin kalıcı, tarihli ve checksum'lı kopyası.
+# Tarife/önlem verisi zaten sürümlü; arşivlenmeyen tek şey metnin kendisiydi.
+resmi_gazete_archive = ResmiGazeteArchive()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -181,6 +189,14 @@ def _register_loop(name: str, factory, *, enabled: bool = True, reason: str = ""
 
 _register_loop("trade-measures-sync", trade_measure_engine.periodic_sync_loop)
 _register_loop("vat-lists-sync", vat_rate_index.periodic_sync_loop)
+# Resmî Gazete arşivi bugünden geriye kademeli dolar: her tur birkaç gün, her gün için
+# normal sayı ve mükerrerleri. Kaynağa saygı sınırı istek arası beklemeyle sağlanır.
+_register_loop(
+    "resmi-gazete-archive",
+    resmi_gazete_archive.periodic_sync_loop,
+    enabled=RESMI_GAZETE_SYNC_ENABLED,
+    reason="RESMI_GAZETE_SYNC_ENABLED kapalı — arşiv olduğu yerde durur, silinmez.",
+)
 _register_loop(
     "foreign-tariff-sync",
     foreign_tariff_engine.periodic_sync_loop,
@@ -3241,6 +3257,35 @@ async def calculate_import_landed_cost(
         atr_certificate=atr_certificate,
         as_of=as_of,
     )
+
+
+@app.tool(
+    annotations={
+        "title": "Resmî Gazete arşivinde mevzuat metni ara",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def search_gazette_archive(
+    query: str = Field("", description="Tam metin arama ifadesi (boş bırakılırsa en yeni belgeler)."),
+    since: Optional[str] = Field(None, description="Başlangıç tarihi (YYYY-AA-GG)."),
+    until: Optional[str] = Field(None, description="Bitiş tarihi (YYYY-AA-GG)."),
+    kind: Optional[str] = Field(None, description="Belge ailesi: import_regime, additional_duty, anti_dumping …"),
+    limit: int = Field(10, ge=1, le=50),
+) -> dict:
+    """Search the local Resmî Gazete archive for the customs-relevant legislation text.
+
+    The archive is deliberately selective (import/export regime, additional duties,
+    communiques, trade defence, product safety, excise and VAT) and additive: a published
+    gazette document never changes, so each document is fetched once and kept with its
+    SHA-256, retrieval date and official URL. A document whose extracted text failed the
+    readability check is listed with its citation but its body is not searched.
+    """
+    return resmi_gazete_archive.search(
+        query, since=since, until=until, kind=kind, limit=limit
+    ).as_dict()
 
 
 @app.tool(
