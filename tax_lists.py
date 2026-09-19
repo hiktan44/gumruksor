@@ -5,9 +5,14 @@ Kanununun Resmî Gazete'de yayımlanan güncel metninin ekli listelerinden çık
 
 Listelerde iki oran sütunu vardır: kanun metnindeki oran/tutar ve Cumhurbaşkanı
 kararlarıyla yeniden tespit edilen "uygulanacak" oran/tutar. İkinci sütun boşsa
-kanuni değer uygulanır. (III) sayılı listede bazı hücreler resmî PDF'te tek parça
-basıldığı için sütun eşlemesi doğrulanamamıştır; bu bölümlerde yalnız kapsam bilgisi
-verilir, oran gösterilmez.
+kanuni değer uygulanır.
+
+(III) sayılı liste (alkollü içecekler, tütün mamulleri, kolalı gazozlar) 19.09.2026'da
+``excise_lists.py`` ile resmî PDF'in **tablo kılavuz çizgilerinden** yeniden okundu ve
+``rates_verified`` oldu; önceki metin-akışı çıkarımında satırlar kaymış, dipnot
+üstsimgeleri oranlara yapışmıştı (``4559`` → ``45`` + ``59`` dipnotu) ve bu yüzden o
+iki cetvelde hiç oran gösterilemiyordu. ``rates_verified`` olmayan bir bölüm hâlâ
+yalnız kapsam bilgisi verir, oran göstermez — bu davranış bilinçlidir.
 
 KDV tarafı: ``estimate_vat_rate`` fasıl bazlı sezgisel bir tahmindir. 2007/13033 sayılı
 Kararın ekli (I)/(II) sayılı listelerinden satır bazlı öneri ``vat_lists.VatRateIndex``
