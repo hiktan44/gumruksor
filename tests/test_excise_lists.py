@@ -1,45 +1,54 @@
-"""ÖTV (III) sayılı liste okuyucusu.
+"""ÖTV (I)-(IV) sayılı liste okuyucusu.
 
 İki katman ayrı ayrı sınanır:
 
 * :func:`excise_lists.build_sections` — saf mantık, girdisi resmî PDF'ten alınmış
-  gerçek hücre dökümü (``tests/fixtures/excise_iii_cells.json``). Bu fikstür
-  mevzuat.gov.tr'deki 4760 sayılı Kanun metninin 41-46. sayfalarından
-  ``extract_pages`` ile üretilmiştir; tohumdaki satırlar birebir bundan gelir.
-* :func:`excise_lists.extract_pages` — PDF katmanı. Fikstür olarak sentetik ama
-  gerçek PDF'in ölçülen özelliklerini taşıyan bir sayfa kurulur: kılavuz çizgili
-  tablo, 11 punto gövde metni ve 6,5 punto dipnot üstsimgesi.
+  gerçek hücre dökümleri (``tests/fixtures/excise_{i,ii,iii,iv}_cells.json``). Bu
+  fikstürler mevzuat.gov.tr'deki 4760 sayılı Kanun metninden ``extract_pages`` ile
+  üretilmiştir; tohumdaki her satır birebir bunlardan gelir ve bir test bunu kilitler.
+* :func:`excise_lists.extract_pages` — PDF katmanı. Fikstür olarak sentetik ama gerçek
+  PDF'in ölçülen özelliklerini taşıyan bir sayfa kurulur: kılavuz çizgili tablo,
+  11 punto gövde metni ve 6,5 punto dipnot üstsimgesi.
 """
 
 from __future__ import annotations
 
 import json
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 import excise_lists
 from excise_lists import build_sections, extract_pages
 from tax_lists import ExciseTaxIndex
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = ROOT / "tests" / "fixtures" / "excise_iii_cells.json"
+FIXTURES = ROOT / "tests" / "fixtures"
 SEED = ROOT / "data" / "official" / "excise_tax_lists.json"
 
+#: Liste adı → fikstür dosyası eki.
+SLUGS = {"I": "i", "II": "ii", "III": "iii", "IV": "iv"}
 
-def _pages() -> list[dict]:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+def _pages(list_name: str) -> list[dict]:
+    return json.loads((FIXTURES / f"excise_{SLUGS[list_name]}_cells.json").read_text(encoding="utf-8"))
 
 
-class BuildSectionsTests(unittest.TestCase):
+def _sections(list_name: str) -> dict[str | None, excise_lists.ExciseSection]:
+    return {section.cetvel: section for section in build_sections(_pages(list_name), list_name)}
+
+
+class ListIIITests(unittest.TestCase):
+    """Alkollü içecekler, tütün mamulleri, kolalı gazozlar."""
+
     def setUp(self) -> None:
-        self.sections = {section.cetvel: section for section in build_sections(_pages())}
+        self.sections = _sections("III")
 
     def test_both_cetvels_parse_without_warnings(self) -> None:
-        self.assertEqual(sorted(self.sections), ["A", "B"])
+        self.assertEqual(sorted(self.sections, key=str), ["A", "B"])
         for cetvel, section in self.sections.items():
             self.assertEqual(section.warnings, [], f"({cetvel}) cetvelinde okuma uyarısı var")
-            self.assertTrue(section.as_seed()["rates_verified"])
+            self.assertTrue(section.rates_verified)
 
     def test_column_layout_comes_from_the_official_header(self) -> None:
         self.assertEqual(
@@ -89,8 +98,7 @@ class BuildSectionsTests(unittest.TestCase):
         """``2402.90.00.00.00`` ana satırının oranı yok; iki varyantının farklı oranı var."""
         variants = [row for row in self.sections["B"].rows if row["code"] == "2402.90.00.00.00"]
         self.assertEqual(len(variants), 2)
-        rates = sorted(row["applied_tax_rate"] for row in variants)
-        self.assertEqual(rates, ["42", "45"])
+        self.assertEqual(sorted(row["applied_tax_rate"] for row in variants), ["42", "45"])
         for row in variants:
             self.assertTrue(row["description"].startswith("Diğerleri (Tütün yerine geçen"))
         purolar = next(row for row in variants if row["applied_tax_rate"] == "45")
@@ -104,19 +112,156 @@ class BuildSectionsTests(unittest.TestCase):
             row["description"] for row in self.sections["B"].rows if row["code"] == "24.03"
         ))
 
+
+class ListITests(unittest.TestCase):
+    """Petrol ürünleri: maktu tutar ve ölçü birimi sütunlu."""
+
+    def setUp(self) -> None:
+        self.sections = _sections("I")
+
+    def test_both_cetvels_parse_without_warnings(self) -> None:
+        self.assertEqual(sorted(self.sections, key=str), ["A", "B"])
+        for cetvel, section in self.sections.items():
+            self.assertEqual(section.warnings, [], f"({cetvel}) cetvelinde okuma uyarısı var")
+            self.assertTrue(section.rates_verified)
+            self.assertEqual(section.value_columns, ["tax_amount", "applied_tax_amount", "unit"])
+
+    def test_fuel_rows_carry_their_own_amount_and_unit(self) -> None:
+        rows = {row["code"]: row for row in self.sections["A"].rows}
+        motorin = rows["2710.19.43.00.11"]
+        self.assertTrue(motorin["description"].startswith("Motorin"))
+        self.assertEqual(motorin["applied_tax_amount"], "13,9006")
+        self.assertEqual(motorin["unit"], "Litre")
+        self.assertEqual(rows["2710.12.49.00.11"]["applied_tax_amount"], "15,5437")
+
+    def test_vertically_merged_code_cell_is_put_back_on_its_own_row(self) -> None:
+        """``2710.12.45.00.13`` resmî tabloda kodu üstte, adı ve oranı altta basılı."""
+        rows = {row["code"]: row for row in self.sections["A"].rows}
+        e10 = rows["2710.12.45.00.13"]
+        self.assertTrue(e10["description"].startswith("Kurşunsuz benzin 95 oktan (E10)"))
+        self.assertEqual(e10["applied_tax_amount"], "14,8277")
+
+    def test_gas_sub_variants_keep_both_amounts(self) -> None:
+        """Doğal gazda "motorlu taşıt yakıtı" ile "diğerleri" farklı tutar taşır."""
+        variants = [row for row in self.sections["A"].rows if row["code"] == "2711.11.00.00.00"]
+        self.assertEqual(len(variants), 2)
+        self.assertEqual(
+            sorted(row["applied_tax_amount"] for row in variants), ["0,1468", "5,5049"]
+        )
+        for row in variants:
+            self.assertEqual(row["unit"], "Standart Metreküp")
+
+    def test_category_caption_before_the_first_code_is_dropped_quietly(self) -> None:
+        """"(Hafif yağlar ve müstahzarları)" bir kategori başlığıdır, oran taşımaz."""
+        rows = self.sections["A"].rows
+        self.assertEqual(rows[0]["code"], "2710.12.11.00.00")
+        self.assertEqual(self.sections["A"].warnings, [])
+
+
+class ListIVTests(unittest.TestCase):
+    """Lüks ve dayanıklı tüketim malları."""
+
+    def setUp(self) -> None:
+        self.section = _sections("IV")[None]
+
+    def test_single_cetvel_without_warnings(self) -> None:
+        self.assertIsNone(self.section.cetvel)
+        self.assertEqual(self.section.warnings, [])
+        self.assertTrue(self.section.rates_verified)
+        self.assertEqual(self.section.value_columns, ["tax_rate", "applied_tax_rate"])
+
+    def test_appliance_rows_read_cleanly(self) -> None:
+        rows = {row["code"]: row for row in self.section.rows}
+        self.assertEqual(rows["84.18"]["tax_rate"], "6,7")
+        self.assertTrue(rows["84.18"]["description"].startswith("Buzdolapları"))
+        self.assertEqual(rows["9405.10.50.10.11"]["description"], "Kristal avizeler")
+
+    def test_merged_code_cells_are_repaired(self) -> None:
+        """İki ayrı birleşme deseni: adı alta düşen kod ve adı olmayan kod."""
+        rows = {row["code"]: row for row in self.section.rows}
+        self.assertIn("Manikür ve pedikür", rows["8214.20.00.00.19"]["description"])
+        self.assertEqual(rows["8214.20.00.00.19"]["tax_rate"], "20")
+        self.assertIn("halk bandı (CB)", rows["8517.69.90.90.24"]["description"])
+        self.assertEqual(rows["8517.69.90.90.24"]["tax_rate"], "20")
+        # Oran bir önceki koda yapışmamalı: 8517.69.30 yalnız kendi satırını taşır.
+        self.assertEqual(len([r for r in self.section.rows if r["code"] == "8517.69.30.00.00"]), 1)
+
+    def test_rows_with_collapsed_rate_cells_are_flagged_individually(self) -> None:
+        """Alt kırılımları tek hücrede birleşen satır oran göstermez; liste doğrulanmış kalır."""
+        flagged = {row["code"] for row in self.section.rows if row.get("rates_verified") is False}
+        self.assertEqual(flagged, {"33.07", "8517.12.00.00.11"})
+        phone = next(row for row in self.section.rows if row["code"] == "8517.12.00.00.11")
+        self.assertEqual(phone["tax_rate"], "25 40 50")
+        self.assertTrue(self.section.rates_verified, "tek satır bütün listeyi düşürmemeli")
+
+
+class ListIITests(unittest.TestCase):
+    """Motorlu taşıtlar: makine tarafından güvenilir okunamıyor, dürüstçe öyle raporlanır."""
+
+    def setUp(self) -> None:
+        self.section = _sections("II")[None]
+
+    def test_the_list_is_not_marked_verified(self) -> None:
+        self.assertFalse(self.section.rates_verified)
+
+    def test_every_reason_is_recorded(self) -> None:
+        reasons = " ".join(self.section.warnings)
+        # İki sayfada kılavuz çizgisi yok.
+        self.assertIn("36. sayfada tablo kılavuz çizgisi bulunamadı", reasons)
+        self.assertIn("37. sayfada tablo kılavuz çizgisi bulunamadı", reasons)
+        # Başlıkta iki oran sütunu aynı metni taşıyor.
+        self.assertIn("beklenen sütunlara oturmadı", reasons)
+
+    def test_scope_survives_but_no_rate_is_carried(self) -> None:
+        """Kapsam değerlidir: hangi kodun ÖTV'ye tabi olduğu yine bilinir."""
+        codes = {row["code"] for row in self.section.rows}
+        self.assertIn("87.03", codes)
+        self.assertIn("87.11", codes)
+        self.assertEqual(self.section.value_columns, [])
+        for row in self.section.rows:
+            self.assertEqual(set(row) - {"code", "description"}, set(), f"{row['code']} oran taşıyor")
+
+    def test_descriptions_are_the_official_ones(self) -> None:
+        rows = {row["code"]: row for row in self.section.rows}
+        self.assertTrue(rows["87.03"]["description"].startswith("Binek otomobilleri"))
+        self.assertTrue(rows["87.01"]["description"].startswith("Traktörler"))
+
+
+class WarningPathTests(unittest.TestCase):
     def test_missing_table_lines_are_reported_not_swallowed(self) -> None:
-        pages = _pages()
+        pages = _pages("III")
         pages[1]["tables"] = []
-        section = {s.cetvel: s for s in build_sections(pages)}["A"]
+        section = _sections_from(pages, "III")["A"]
         self.assertTrue(any("kılavuz çizgisi" in warning for warning in section.warnings))
-        self.assertFalse(section.as_seed()["rates_verified"])
+        self.assertFalse(section.rates_verified)
 
     def test_unknown_header_column_blocks_verification(self) -> None:
-        pages = _pages()
+        pages = _pages("III")
         pages[0]["tables"][0][0][2] = "Beklenmeyen Sütun"
-        section = {s.cetvel: s for s in build_sections(pages)}["A"]
+        section = _sections_from(pages, "III")["A"]
         self.assertTrue(any("beklenen sütunlara oturmadı" in warning for warning in section.warnings))
-        self.assertFalse(section.as_seed()["rates_verified"])
+        self.assertFalse(section.rates_verified)
+
+    def test_the_same_warning_is_not_repeated_per_row(self) -> None:
+        section = _sections("II")[None]
+        self.assertEqual(len(section.warnings), len(set(section.warnings)))
+
+    def test_orphan_row_carrying_a_rate_is_reported(self) -> None:
+        """Kodsuz ama oranlı bir parça listenin başındaysa kaybolan satırdır."""
+        pages = [{
+            "page": 1,
+            "cetvel_b": False,
+            "tables": [[
+                ["G.T.İ.P. NO", "Mal İsmi", "Vergi Oranı (%)"],
+                ["", "Kodsuz ama oranlı", "20"],
+            ]],
+        }]
+        section = _sections_from(pages, "IV")[None]
+        self.assertTrue(any("hiçbir koda bağlanamadı" in warning for warning in section.warnings))
+
+
+def _sections_from(pages: list[dict], list_name: str) -> dict[str | None, excise_lists.ExciseSection]:
+    return {section.cetvel: section for section in build_sections(pages, list_name)}
 
 
 class ExtractPagesTests(unittest.TestCase):
@@ -125,7 +270,7 @@ class ExtractPagesTests(unittest.TestCase):
     Sayfa metni bilinçli olarak ASCII'dir ve liste işaretleri ASCII'ye yamanır:
     PyMuPDF'in gömülü Helvetica'sı ``İ`` harfini taşımaz (Latin-1 dışı) ve sentetik
     fikstür bir sistem fontunun kurulu olmasına bağlı kalmamalıdır. Gerçek Türkçe
-    başlıklar zaten resmî hücre dökümü fikstürüyle ve canlı okumayla sınanıyor.
+    başlıklar zaten resmî hücre dökümü fikstürleriyle ve canlı okumayla sınanıyor.
     """
 
     START = "LIST III MARKER"
@@ -160,7 +305,8 @@ class ExtractPagesTests(unittest.TestCase):
         return payload
 
     def test_cells_come_from_the_ruling_lines_and_drop_footnotes(self) -> None:
-        with mock.patch.object(excise_lists, "LIST_START", self.START), mock.patch.object(
+        bounds = dict(excise_lists.LIST_BOUNDS, III=(self.START, "BITIS MARKER"))
+        with mock.patch.object(excise_lists, "LIST_BOUNDS", bounds), mock.patch.object(
             excise_lists, "CETVEL_B_MARKER", self.CETVEL_B
         ):
             pages = extract_pages(self._pdf())
@@ -183,45 +329,52 @@ class ExtractPagesTests(unittest.TestCase):
         with self.assertRaises(excise_lists.ExciseParseError):
             extract_pages(payload)
 
+    def test_unknown_list_name_raises(self) -> None:
+        with self.assertRaises(excise_lists.ExciseParseError):
+            extract_pages(b"%PDF-1.5", "V")
+
 
 class SeedMatchesParserTests(unittest.TestCase):
-    """Tohumdaki (III) satırları depodaki okuyucunun çıktısıyla birebir aynı olmalı."""
+    """Tohumdaki her satır depodaki okuyucunun fikstür üzerindeki çıktısı olmalı."""
 
-    def test_seed_rows_are_the_parser_output(self) -> None:
-        produced = {(s.list_name, s.cetvel): s.as_seed() for s in build_sections(_pages())}
-        seed = json.loads(SEED.read_text(encoding="utf-8"))
-        found = 0
-        for section in seed["sections"]:
-            key = (section.get("list"), section.get("cetvel"))
-            if key not in produced:
-                continue
-            found += 1
+    def setUp(self) -> None:
+        self.seed = json.loads(SEED.read_text(encoding="utf-8"))
+
+    def test_every_section_is_the_parser_output(self) -> None:
+        produced: dict[tuple[str, str | None], dict] = {}
+        for list_name in SLUGS:
+            for section in build_sections(_pages(list_name), list_name):
+                produced[(list_name, section.cetvel)] = section.as_seed()
+        self.assertEqual(len(self.seed["sections"]), len(produced))
+        for section in self.seed["sections"]:
+            key = (section["list"], section.get("cetvel"))
+            self.assertIn(key, produced, f"{key} ayrıştırıcıda yok")
             expected = produced[key]
-            self.assertEqual(section["rows"], expected["rows"], f"{key} satırları ayrıştırıcıdan farklı")
+            self.assertEqual(section["rows"], expected["rows"], f"{key} satırları farklı")
             self.assertEqual(section["value_columns"], expected["value_columns"])
             self.assertEqual(section["row_count"], expected["row_count"])
-            self.assertTrue(section["rates_verified"])
+            self.assertEqual(section["rates_verified"], expected["rates_verified"])
             self.assertEqual(section["source_url"], excise_lists.SOURCE_URL)
             self.assertEqual(len(section["source_sha256"]), 64)
-        self.assertEqual(found, 2, "(III) sayılı listenin iki cetveli de tohumda olmalı")
 
-    def test_other_lists_keep_their_text_flow_rows(self) -> None:
-        """(I), (II) ve (IV) bu işin kapsamı dışındadır; dokunulmadığı kilitlenir."""
-        seed = json.loads(SEED.read_text(encoding="utf-8"))
-        others = {
-            (section["list"], section.get("cetvel")): section
-            for section in seed["sections"]
-            if section["list"] != "III"
+    def test_unverified_sections_record_their_reason_in_the_seed(self) -> None:
+        for section in self.seed["sections"]:
+            if section["rates_verified"]:
+                self.assertNotIn("parse_warnings", section)
+            else:
+                self.assertTrue(section.get("parse_warnings"), f"{section['list']} sebebini yazmıyor")
+
+    def test_only_list_two_is_unverified(self) -> None:
+        unverified = {
+            (section["list"], section.get("cetvel"))
+            for section in self.seed["sections"]
+            if not section["rates_verified"]
         }
-        self.assertEqual(
-            sorted(others), [("I", "A"), ("I", "B"), ("II", None), ("IV", None)]
-        )
-        for key, section in others.items():
-            self.assertNotIn("parsed_from", section, f"{key} bu PR'da değişmemeliydi")
+        self.assertEqual(unverified, {("II", None)})
 
 
 class ExciseLookupTests(unittest.TestCase):
-    """Sorgu katmanı artık (III) sayılı listede oran döndürüyor."""
+    """Sorgu katmanı: doğrulanmış satırda oran gösterilir, doğrulanmamışta gösterilmez."""
 
     def setUp(self) -> None:
         self.index = ExciseTaxIndex()
@@ -244,10 +397,40 @@ class ExciseLookupTests(unittest.TestCase):
         self.assertEqual(match["values"]["Kanuni vergi oranı (%)"], "25")
         self.assertEqual(match["values"]["Uygulanacak vergi oranı (%)"], "35")
 
+    def test_diesel_returns_its_amount_per_litre(self) -> None:
+        match = self.index.lookup("2710.19.43.00.11")["matches"][0]
+        self.assertTrue(match["rates_verified"])
+        self.assertEqual(match["values"]["Uygulanacak vergi tutarı (TL)"], "13,9006")
+        self.assertEqual(match["values"]["Birim"], "Litre")
+
+    def test_refrigerator_returns_its_rate(self) -> None:
+        match = self.index.lookup("8418.10.20.00.00")["matches"][0]
+        self.assertTrue(match["rates_verified"])
+        self.assertEqual(match["values"]["Kanuni vergi oranı (%)"], "6,7")
+
+    def test_passenger_car_reports_scope_without_a_rate(self) -> None:
+        """(II) sayılı liste doğrulanmadı: kapsam evet, oran hayır."""
+        report = self.index.lookup("8703.23.19.00.00")
+        self.assertTrue(report["in_scope"])
+        match = report["matches"][0]
+        self.assertEqual(match["matched_code"], "87.03")
+        self.assertFalse(match["rates_verified"])
+        self.assertEqual(match["values"], {})
+        self.assertTrue(any("güvenilir okunamıyor" in warning for warning in report["warnings"]))
+        self.assertTrue(any("kılavuz çizgisi" in warning for warning in report["warnings"]))
+
+    def test_mobile_phone_row_is_suppressed_but_the_list_is_not(self) -> None:
+        phone = self.index.lookup("8517.12.00.00.11")["matches"][0]
+        self.assertFalse(phone["rates_verified"])
+        self.assertEqual(phone["values"], {})
+        warnings = " ".join(self.index.lookup("8517.12.00.00.11")["warnings"])
+        self.assertIn("alt kırılımlarla birleşik", warnings)
+        self.assertIn("diğer satırları doğrulanmıştır", warnings)
+
     def test_verified_section_warns_about_presidential_decrees_not_about_parsing(self) -> None:
         warnings = " ".join(self.index.lookup("2208.90.48.00.11")["warnings"])
         self.assertIn("Cumhurbaşkanı kararlarıyla değiştirilebilir", warnings)
-        self.assertNotIn("otomatik okunmadı", warnings)
+        self.assertNotIn("okunamadı", warnings)
 
 
 if __name__ == "__main__":  # pragma: no cover

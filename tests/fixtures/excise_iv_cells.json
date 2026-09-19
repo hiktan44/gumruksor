@@ -1,0 +1,784 @@
+[
+ {
+  "page": 47,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "G.T.İ.P. NO",
+     "Mal İsmi",
+     "Vergi Oranı (%)",
+     "Uygulanacak Vergi Oranı (%)"
+    ],
+    [
+     "1604.31.00.00.00",
+     "Havyar",
+     "20",
+     ""
+    ],
+    [
+     "1604.32.00.00.00",
+     "Havyar yerine kullanılan ürünler",
+     "20",
+     ""
+    ],
+    [
+     "3303.00",
+     "Parfümler ve tuvalet suları (3303.00.90.00.11 Kolonyalar hariç)",
+     "20",
+     ""
+    ],
+    [
+     "33.04",
+     "Güzellik veya makyaj müstahzarları ve cilt bakımı için müstahzarlar (ilaçlar hariç) (güneş kremleri veya güneşlenme müstahzarları dahil); manikür ve pedikür müstahzarları",
+     "20",
+     ""
+    ],
+    [
+     "3305.20.00.00.00",
+     "Perma ve defrize müstahzarları",
+     "20",
+     ""
+    ],
+    [
+     "3305.30.00.00.00",
+     "Saç spreyleri",
+     "20",
+     ""
+    ],
+    [
+     "3305.90",
+     "(Saç losyonları, boyaları, v.b) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "33.07",
+     "Traş öncesinde, traş sırasında veya traştan sonra kullanılan müstahzarlar, vücut deodorantları, banyo müstahzarları, tüy dökücüler ve tarifenin başka yerinde yer almayan veya belirtilmeyen diğer parfümeri, kozmetik veya tuvalet müstahzarları, kapalı yerlerde kullanılan müstahzar deodorantlar (parfümlü veya dezenfekte edici vasfı olsun olmasın) Traş köpüğü ve traş kremi",
+     "20 6,7",
+     ""
+    ],
+    [
+     "3401.11.00.90.00",
+     "Diğerleri (Yalnız traş sabunu)",
+     "6,7",
+     ""
+    ],
+    [
+     "4103.90.00.00.11",
+     "Diğer hayvanların yaş derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
+     "20",
+     ""
+    ],
+    [
+     "4103.90.00.00.12",
+     "Diğer hayvanların kuru derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
+     "20",
+     ""
+    ],
+    [
+     "4103.90.00.00.13",
+     "Diğer hayvanların pikle derileri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
+     "20",
+     ""
+    ],
+    [
+     "4103.90.00.00.19",
+     "Diğerleri [Yalnız develerin (tek hörgüçlü dahil) ham derileri]",
+     "20",
+     ""
+    ],
+    [
+     "43",
+     "Kürkler ve taklit kürkler; bunların mamulleri",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 48,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "[Bu fasılda yer alan koyun, kuzu, keçi, oğlak ve sığırların (bufalo dahil) postları, kürkleri ve taklit kürkleri ile bunlardan mamul giyim eşyası, aksesuarları ve diğer eşya hariç]",
+     "",
+     ""
+    ],
+    [
+     "49.01",
+     "Kitaplar, broşürler, risaleler ve benzeri matbuat (ayrı ayrı sayfalar halinde olsun olmasın) (Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar)",
+     "20",
+     ""
+    ],
+    [
+     "49.02",
+     "Gazeteler ve periyodik yayınlar (resimli olsun olmasın veya reklam içersin içermesin) (Yalnız 3266 sayılı Kanunla değişik 1117 sayılı Kanun hükümlerine göre poşetlenerek satılanlar)",
+     "20",
+     ""
+    ],
+    [
+     "7013.10.00.10.00",
+     "(Cam seramiğinden sofra ve mutfak eşyası) Sofra ve mutfak işleri için olanlar",
+     "20",
+     ""
+    ],
+    [
+     "7013.22.10.00.00",
+     "(Kurşun kristalden ayaklı bardak) El imali olanlar",
+     "20",
+     ""
+    ],
+    [
+     "7013.22.90.00.00",
+     "(Kurşun kristalden ayaklı bardak) Makina imali olanlar",
+     "20",
+     ""
+    ],
+    [
+     "7013.33.11.00.00",
+     "(Kurşun kristalden el imali bardak) Kesilmiş veya başka şekilde dekorlanmış",
+     "20",
+     ""
+    ],
+    [
+     "7013.33.19.00.00",
+     "(Kurşun kristalden el imali bardak) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "7013.33.91.00.00",
+     "(Kurşun kristalden makina imali bardak) Kesilmiş veya başka şekilde dekorlanmış",
+     "20",
+     ""
+    ],
+    [
+     "7013.33.99.00.00",
+     "(Kurşun kristalden makina imali bardak) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "7013.41.10.00.00",
+     "(Kurşun kristalden sofra ve mutfak eşyası) El imali olanlar",
+     "20",
+     ""
+    ],
+    [
+     "7013.41.90.00.00",
+     "(Bardak hariç) (Kurşun kristalden sofra ve mutfak eşyası) Makina imali olanlar (Bardak hariç)",
+     "20",
+     ""
+    ],
+    [
+     "7013.91.10.00.00",
+     "(Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya) El imali olanlar",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 49,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "7013.91.90.00.00",
+     "(Kurşun kristalden tuvalet, yazıhane ve ev tezyinatı ve benzeri işler için diğer cam eşya) Makina imali olanlar",
+     "20",
+     ""
+    ],
+    [
+     "8214.20.00.00.11",
+     "Çıt çıt tipi tırnak makasları",
+     "20",
+     ""
+    ],
+    [
+     "",
+     "[Manikür ve pedikür takım ve aletleri (tırnak törpüleri dahil)] Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "8214.20.00.00.19",
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "",
+     "",
+     ""
+    ],
+    [
+     "8215.10.20.00.11",
+     "(Kaşık, çatal vb. takım halinde) Altın ve gümüşle kaplamalı olanlar",
+     "20",
+     ""
+    ],
+    [
+     "8215.91.00.90.11",
+     "(Tek kaşık, çatal vb.) Altın ve gümüşle kaplamalı olanlar",
+     "20",
+     ""
+    ],
+    [
+     "84.15",
+     "Klima cihazları (motorlu bir vantilatör ile nem ve ısıyı değiştirmeye mahsus tertibatı olanlar) (nemin ayrı olarak ayarlanamadığı cihazlar dahil) [Yalnız 8415.10.10.00.00 Tek bir gövde halinde (self- contained); 8415.10.90.00.00 Ayrı elemanlı sistemler (split-sistem); 8415.81.00.90.00 Diğerleri (Bir soğutucu ünite ve soğutma-ısıtma çevrimini tersine değiştiren bir valf içerenler) (ters çevrimli ısı pompaları) (sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayanlar); 8415.82.00.90.00 Diğerleri (Bir soğutucu ünite içeren, sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan, motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.83.00.90.00 Diğerleri (Bir soğutucu ünite içermeyen, sivil hava taşıtlarında kullanılmaya, binek otolarına, diğer karayolu taşıtlarına mahsus olmayan, pencere ve duvar tipi olmayan motorlu taşıtlarda şahıslar için kullanılmayan klima cihazı); 8415.90.00.90.11 (Split sistemlerin dış üniteleri) ve 8415.90.00.90.12 (Split sistemlerin iç üniteleri)]",
+     "6,7",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 50,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "84.18",
+     "Buzdolapları, dondurucular ve diğer soğutucu ve dondurucu cihazlar (elektrikli olsun olmasın); ısı pompaları (84.15 pozisyonundaki klima cihazları hariç) (Diğer soğutucu veya dondurucu cihazlar; ısı pompaları hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "8419.11.00.00.00",
+     "Gazla çalışan anında su ısıtıcılar",
+     "6,7",
+     ""
+    ],
+    [
+     "8419.19.00.00.11",
+     "(Katı yakıtlı) Termosifonlar (depolu su ısıtıcıları)",
+     "6,7",
+     ""
+    ],
+    [
+     "8419.19.00.00.19",
+     "(Termosifonlar ve güneş enerjili su ısıtıcıları dışındaki elektrikli olmayan anında veya depolu su ısıtıcıları) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "8421.12.00.00.11",
+     "(Çamaşır kurutma makinaları) Bir defada kurutacağı çamaşırın kuru ağırlığı 6 kg.ı geçmeyecek kapasitede olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8422.11.00.00.00",
+     "(Bulaşık yıkama makinaları) Evlerde kullanılanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.11.11.00.00",
+     "(Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası) Çamaşırı önden yüklemeli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.11.19.00.00",
+     "(Kuru çamaşır kapasitesi 6 kg.ı geçmeyen tam otomatik çamaşır yıkama makinası) Çamaşırı üstten yüklemeli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.11.90.00.00",
+     "(Tam otomatik çamaşır yıkama makinası) Kuru çamaşır kapasitesi 6 kg.ı geçen fakat 10 kg.ı geçmeyenler",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.12.00.00.00",
+     "(Çamaşır yıkama makinası) Diğer çamaşır makinaları (santrifüjlü kurutma tertibatlı olanlar)",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.19.00.00.11",
+     "(Kuru çamaşır kapasitesi 10 kg.ı geçmeyen, santrifüjlü kurutma tertibatı olmayan çamaşır yıkama makinası) Elektrikli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8450.19.00.00.19",
+     "(Elektrikli olmayan çamaşır yıkama makinası) Diğerleri",
+     "6,7",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 51,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "8451.21.00.00.11",
+     "(Kuru çamaşır kapasitesi 10 kg.ı geçmeyen kurutma makinaları) Evlerde kullanılanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "85.07",
+     "Elektrik akümülatörleri (bunların seperatörleri dahil) (kare veya dikdörtgen şeklinde olsun olmasın) (Yalnız elektrik motorlu taşıt araçlarının motorunu çalıştırmaya mahsus olanlar)",
+     "3",
+     ""
+    ],
+    [
+     "85.08",
+     "Vakumlu elektrik süpürgeleri",
+     "6,7",
+     ""
+    ],
+    [
+     "85.09",
+     "(Gıda maddelerini öğütücüler ve karıştırıcılar; meyva veya sebze presleri, vb.; et kıyma makinaları vb.) Ev işlerinde kullanılmaya mahsus kendinden elektrik motorlu elektro-mekanik cihazlar (85.08 pozisyonunda yer alan vakumlu elektrik süpürgeleri hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "8510.10.00.00.00",
+     "(Elektrikli) Traş makinaları",
+     "6,7",
+     ""
+    ],
+    [
+     "85.16",
+     "Elektrikli anında veya depolu su ısıtıcılar ve daldırma tipi ısıtıcılar; herhangi bir mahallin veya toprak ve benzeri yerlerin ısıtılmasına mahsus elektrikli cihazlar; berber işleri için elektrotermik cihazlar (örneğin; saç kurutucular, saç kıvırma cihazları, saç kıvırma maşalarını ısıtma cihazları) ve el kurutma makinaları; elektrikli ütüler; ev işlerinde kullanılan diğer elektrotermik cihazlar; elektrikli ısıtıcı rezistanslar (85.45 pozisyonundakiler hariç) (8516.40 Elektrikli ütüler hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "8517.11.00.00.00",
+     "Kordonsuz ahizeli telli telefon cihazları",
+     "20",
+     ""
+    ],
+    [
+     "8517.12.00.00.11",
+     "Alıcısı bulunan verici portatif (Cellular) telsiz telefon cihazları (Değişik sıra :21/2/2019-7166/10 md.) - Özel tüketim vergisi matrahı 1.200 TL (4.500 TL)’yi",
+     "25 40 50",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 52,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "aşmayanlar - Özel tüketim vergisi matrahı 1.200 TL’yi (4.500 TL)’yi aşıp, 2.400 TL’yi (9.000 TL)’yi aşmayanlar - Diğerleri",
+     "",
+     ""
+    ],
+    [
+     "8517.12.00.00.12",
+     "Alıcısı bulunan verici mobil araç (Cellular) telsiz telefon cihazları",
+     "20",
+     ""
+    ],
+    [
+     "8517.12.00.00.19",
+     "Diğerleri [Yalnız alçak güçlü (100 miliwatt dan küçük) mobil telsiz telefon cihazları]",
+     "20",
+     ""
+    ],
+    [
+     "8517.69.30.00.00",
+     "Telsiz telefon, telsiz telgraf için alıcı cihazlar (Yalnız arama, uyarma veya çağırma sistemlerinde kullanılan taşınabilir alıcılar ile amatör telsiz alıcı cihazları)",
+     "20",
+     ""
+    ],
+    [
+     "",
+     "Alıcısı bulunan verici halk bandı (CB) ve 49 MHz",
+     "20",
+     ""
+    ],
+    [
+     "8517.69.90.90.24",
+     "alçak güçlü (100 miliwatt dan küçük) telsiz",
+     "",
+     ""
+    ],
+    [
+     "",
+     "cihazları ve diğer amatör telsiz cihazları",
+     "",
+     ""
+    ],
+    [
+     "8517.69.90.90.29",
+     "Diğerleri (Yalnız amatör telsiz telefon verici cihazları ve telsiz alarm cihazları)",
+     "20",
+     ""
+    ],
+    [
+     "85.18",
+     "Mikrofonlar ve bunların mesnetleri; hoparlörler (kabinlerine monte edilmiş olsun olmasın); başa takılan kulaklıklar, kulağa takılan kulaklıklar (bir mikrofonla kombine halde olsun olmasın), bir mikrofon ve bir veya daha fazla hoparlör içeren setler; elektrikli ses frekansı yükselteçleri, takım halindeki ses amplikatörleri",
+     "20",
+     ""
+    ],
+    [
+     "85.19",
+     "Ses kaydetme veya kaydedilen sesi tekrar vermeye mahsus cihazlar (8519.81.95.00.00 hariç) (Sinematoğrafik ses kaydetmeye ve kaydedilen sesi tekrar vermeye mahsus cihazlar hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "85.21",
+     "Video kayıt veya gösterme cihazları (bir video tunerle birlikte olsun olmasın)",
+     "6,7",
+     ""
+    ],
+    [
+     "8523.29.15.00.18",
+     "(Manyetik mesnetler) Video bantları",
+     "6,7",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 53,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "8523.29.19.00.00",
+     "(Diğer manyetik mesnetler) Diğerleri (Yalnız video bantları)",
+     "6,7",
+     ""
+    ],
+    [
+     "8523.41.10.00.00",
+     "(Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı aşmayan lazer okuma sistemleri için diskler (Yalnız lazer diskler)",
+     "6,7",
+     ""
+    ],
+    [
+     "8523.41.30.00.00",
+     "(Kayıt yapılmamış optik mesnetler) Silinebilenler hariç, kayıt kapasitesi 900 megabaytı aşan fakat 18 gigabaytı aşmayan lazer okuma sistemleri için diskler (Yalnız lazer diskler)",
+     "6,7",
+     ""
+    ],
+    [
+     "8523.41.90.00.00",
+     "",
+     "6,7",
+     ""
+    ],
+    [
+     "",
+     "(Kayıt yapılmamış optik mesnetler)",
+     "",
+     ""
+    ],
+    [
+     "",
+     "Diğerleri",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Yalnız lazer diskler)",
+     "",
+     ""
+    ],
+    [
+     "",
+     "",
+     "",
+     ""
+    ],
+    [
+     "8523.49.10.00.00",
+     "(Diğer optik mesnetler)",
+     "6,7",
+     ""
+    ],
+    [
+     "",
+     "Dijital çok yönlü diskler (DVD)",
+     "",
+     ""
+    ],
+    [
+     "",
+     "(Ses veya görüntü dışındaki fenomenleri tekrar vermeye",
+     "",
+     ""
+    ],
+    [
+     "",
+     "mahsus olanlar, sadece sesi tekrar vermeye mahsus",
+     "",
+     ""
+    ],
+    [
+     "",
+     "olanlar, otomatik bilgi işlem makinası vasıtasıyla",
+     "",
+     ""
+    ],
+    [
+     "",
+     "işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir",
+     "",
+     ""
+    ],
+    [
+     "",
+     "makinada okunabilir ikili formda kayıtlı görüntü, ses,",
+     "",
+     ""
+    ],
+    [
+     "",
+     "bilgi ve komutların gösterimlerini tekrar vermeye",
+     "",
+     ""
+    ],
+    [
+     "",
+     "mahsus olanlar hariç)",
+     "",
+     ""
+    ],
+    [
+     "8523.49.20.00.00",
+     "Diğerleri (Ses veya görüntü dışındaki fenomenleri tekrar vermeye mahsus olanlar, sadece sesi tekrar vermeye mahsus olanlar, otomatik bilgi işlem makinası vasıtasıyla işlenebilen ya da kullanıcıya etkileşim sağlayabilen, bir makinada okunabilir ikili formda kayıtlı görüntü, ses, bilgi ve komutların gösterimlerini tekrar vermeye mahsus olanlar hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "8525.80",
+     "Televizyon kameraları, dijital kameralar ve",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 54,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "görüntü kaydedici kameralar [Yalnız 8525.80.11 Üç veya daha fazla kamera tüpü olan televizyon kameraları; 8525.80.19 Televizyon kameraları (8525.80.11 pozisyonunda olmayan televizyon kameraları); 8525.80.30.00.00 Dijital kameralar]",
+     "",
+     ""
+    ],
+    [
+     "8526.92",
+     "Uzaktan kumanda etmeye mahsus telsiz cihazları",
+     "20",
+     ""
+    ],
+    [
+     "8527.12",
+     "Cep tipi radyo kaset çalar",
+     "20",
+     ""
+    ],
+    [
+     "8527.13",
+     "Ses kayıt veya kayıt edilen sesi tekrar vermeye mahsus cihaz ile birlikte olan diğer cihazlar",
+     "20",
+     ""
+    ],
+    [
+     "8527.19.00.00.00",
+     "(Harici bir güç kaynağı olmaksızın çalışan radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.21.20.00.00",
+     "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Lazer okuma sistemli olanlar",
+     "20",
+     ""
+    ],
+    [
+     "8527.21.52.00.00",
+     "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
+     "20",
+     ""
+    ],
+    [
+     "8527.21.59.00.00",
+     "(Kaset tipi olmayan) (Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "8527.21.70.00.00",
+     "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Lazer okuma sistemli olanlar",
+     "20",
+     ""
+    ],
+    [
+     "8527.21.92.00.00",
+     "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 55,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "8527.21.98.00.00",
+     "(Kaset tipi olmayan, sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde numerik radyo yayınlarını alıcı cihazlar) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "8527.29.00.00.00",
+     "(Sadece harici bir güç kaynağı ile çalışabilen motorlu taşıtlarda kullanılan türde ses kayıt cihazı ile birlikte olmayan radyo yayınlarını alıcı cihazlar) Diğerleri",
+     "20",
+     ""
+    ],
+    [
+     "8527.91.11.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.91.19.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.91.35.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Lazer okuma sistemli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.91.91.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Kaset tipi olup analog ve dijital okuma sistemli olanlar",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.91.99.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.92.10.00.00",
+     "Çalar saatli radyolar",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.92.90.00.00",
+     "(Saatli radyolar) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "8527.99.00.00.00",
+     "(Radyo yayınlarını alıcı diğer cihazlar) Diğerleri",
+     "6,7",
+     ""
+    ],
+    [
+     "85.28",
+     "Monitörler ve projektörler (televizyon alıcı cihazı ile mücehhez olmayanlar); televizyon alıcı cihazları (radyo yayınlarını alıcı cihazı veya ses veya görüntü kayıt veya tekrar verme cihazıyla birlikte olsun olmasın) (8528.42.00.00.00; 8528.52.10.00.00; 8528.62.00.00.00 hariç)",
+     "6,7",
+     ""
+    ],
+    [
+     "8543.70.03.00.00",
+     "Video oyun konsolları için kablosuz kızıl ötesi uzaktan kumanda cihazları",
+     "20",
+     ""
+    ],
+    [
+     "8543.70.90.00.15",
+     "Infrared ile çalışan uzaktan kumanda cihazları",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ },
+ {
+  "page": 56,
+  "cetvel_b": false,
+  "tables": [
+   [
+    [
+     "",
+     "(remote control)",
+     "",
+     ""
+    ],
+    [
+     "9113.90.00.30.00",
+     "(Saat kayışları) İnci, kıymetli taş; sentetik veya terkip yoluyla elde edilen taşlardan mamul olanlar",
+     "20",
+     ""
+    ],
+    [
+     "9302.00.00.00.00",
+     "Revolverler ve tabancalar (93.03 veya 93.04 pozisyonundakiler hariç)",
+     "20",
+     ""
+    ],
+    [
+     "93.03",
+     "Bir patlayıcının itiş gücü ile çalışan diğer ateşli silahlar ve benzeri cihazlar (spor için av tüfekleri ve tüfekler, ağızdan doldurulan ateşli silahlar, sadece işaret fişeği atmak üzere imal edilmiş tabanca ve diğer cihazlar, manevra fişeği atmak için tabanca ve revolverler, hayvan öldürmeye mahsus sürgülü silahlar, ok-atar tüfekler gibi)",
+     "20",
+     ""
+    ],
+    [
+     "9405.10.50.10.11",
+     "Kristal avizeler",
+     "20",
+     ""
+    ],
+    [
+     "95.04",
+     "Video oyun konsolları ve makinaları, eğlence merkezleri için oyun eşyası, tilt makinası, bilardo, kumarhane oyunları için özel masalar, salon veya masa oyunları ve otomatik bowling oyun ekipmanları dahil",
+     "20",
+     ""
+    ],
+    [
+     "96.01",
+     "İşlenmiş fildişi, kemik, bağa, boynuz, çatallı boynuz, mercan, sedef ve yontulmaya elverişli diğer hayvansal maddeler ve bu maddelerden eşya (kalıplama suretiyle elde edilen eşya dahil)",
+     "20",
+     ""
+    ]
+   ]
+  ]
+ }
+]

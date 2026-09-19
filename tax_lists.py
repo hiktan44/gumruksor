@@ -7,12 +7,20 @@ Listelerde iki oran sütunu vardır: kanun metnindeki oran/tutar ve Cumhurbaşka
 kararlarıyla yeniden tespit edilen "uygulanacak" oran/tutar. İkinci sütun boşsa
 kanuni değer uygulanır.
 
-(III) sayılı liste (alkollü içecekler, tütün mamulleri, kolalı gazozlar) 19.09.2026'da
-``excise_lists.py`` ile resmî PDF'in **tablo kılavuz çizgilerinden** yeniden okundu ve
-``rates_verified`` oldu; önceki metin-akışı çıkarımında satırlar kaymış, dipnot
-üstsimgeleri oranlara yapışmıştı (``4559`` → ``45`` + ``59`` dipnotu) ve bu yüzden o
-iki cetvelde hiç oran gösterilemiyordu. ``rates_verified`` olmayan bir bölüm hâlâ
-yalnız kapsam bilgisi verir, oran göstermez — bu davranış bilinçlidir.
+Dört liste de 19.09.2026'da ``excise_lists.py`` ile resmî PDF'in **tablo kılavuz
+çizgilerinden** yeniden okundu; önceki metin-akışı çıkarımında satırlar kaymış, dipnot
+üstsimgeleri oranlara yapışmıştı (``4559`` → ``45`` + ``59`` dipnotu).
+
+Doğrulama iki düzeylidir ve **doğrulanmayan yerde oran hiç gösterilmez**, yalnız kapsam
+bildirilir. Bu bilinçlidir: yanlış okunmuş bir oranı beyannameye sokmaktansa alanı boş
+bırakmak tercih edilir.
+
+* Bölüm düzeyi (``section_verified``): okuma uyarısı taşıyan cetvel. Bugün yalnız
+  (II) sayılı liste (motorlu taşıtlar) — iki sayfasında kılavuz çizgisi yok, başlıkta
+  iki oran sütunu aynı, alt kırılım oranları tek hücrede birleşik. Sebep sorgu
+  yanıtındaki uyarıya ``parse_warnings`` üzerinden aynen taşınır.
+* Satır düzeyi (``rates_verified``): alt kırılımları tek hücrede birleşen tek satır;
+  listenin kalanı doğrulanmış kalır (ör. (IV) sayılı listede 33.07 ve cep telefonu).
 
 KDV tarafı: ``estimate_vat_rate`` fasıl bazlı sezgisel bir tahmindir. 2007/13033 sayılı
 Kararın ekli (I)/(II) sayılı listelerinden satır bazlı öneri ``vat_lists.VatRateIndex``
@@ -209,13 +217,21 @@ class ExciseTaxIndex:
                 code = normalise_code(row.get("code", ""))
                 if not code:
                     continue
+                # Doğrulama iki düzeyli: bölüm okunabildi mi ve o satırın hücreleri tek
+                # değer mi taşıyor. Resmî tabloda kimi satırın alt kırılımları tek
+                # hücrede birleşiyor (ör. (IV) sayılı listede 33.07 → "20 6,7"); o
+                # satırda oran gösterilmez, bölümün kalanı doğrulanmış kalır.
+                section_verified = bool(section.get("rates_verified"))
+                row_verified = row.get("rates_verified", True) is not False
                 self._entries.append({
                     "code": code,
                     "raw_code": row.get("code", ""),
                     "description": clean_description(row.get("description")),
                     "list": section.get("list"),
                     "cetvel": section.get("cetvel"),
-                    "rates_verified": bool(section.get("rates_verified")),
+                    "rates_verified": section_verified and row_verified,
+                    "section_verified": section_verified,
+                    "parse_warnings": list(section.get("parse_warnings") or []),
                     "values": {key: row[key] for key in columns if row.get(key)},
                 })
 
@@ -279,6 +295,10 @@ class ExciseTaxIndex:
                 "list_label": label,
                 "description": entry["description"],
                 "rates_verified": entry["rates_verified"],
+                # Neden doğrulanmadığını ayırt etmek için: bölüm mü okunamadı, yoksa
+                # yalnız bu satırın hücreleri mi birleşik basılmış.
+                "section_verified": entry.get("section_verified", True),
+                "parse_warnings": list(entry.get("parse_warnings") or []),
                 "values": values,
                 "note": LIST_NOTES.get(entry["list"], ""),
             }
@@ -316,10 +336,19 @@ class ExciseTaxIndex:
                 warnings.append(
                     f"Eşya ÖTV kapsamındadır: {first['list_label']}, {first['matched_code']}. {first['note']}"
                 )
-            if not first["rates_verified"]:
+            if not first["rates_verified"] and not first.get("section_verified", True):
+                reason = "; ".join(first.get("parse_warnings") or [])
                 warnings.append(
-                    "Bu listede oran sütunları resmî metinde birleşik basıldığı için otomatik okunmadı; "
-                    "oran ve asgari maktu vergi tutarını Kanun ekinden doğrulayın."
+                    f"{first['list_label']} resmî PDF'te makine tarafından güvenilir okunamıyor"
+                    + (f" ({reason})" if reason else "")
+                    + ": yalnız kapsam bildirilir, oran gösterilmez. Oran ve varsa maktu vergi "
+                    "tutarını Kanun ekinden doğrulayın."
+                )
+            elif not first["rates_verified"]:
+                warnings.append(
+                    "Bu satırın oran hücreleri resmî tabloda alt kırılımlarla birleşik basıldığı için "
+                    "hangi oranın hangi kırılıma ait olduğu okunamadı; oran gösterilmiyor, Kanun "
+                    "ekinden doğrulayın. Listenin diğer satırları doğrulanmıştır."
                 )
             else:
                 warnings.append(
