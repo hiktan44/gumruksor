@@ -207,3 +207,7 @@ resmi_gazete.sqlite3-*
 # Ictihat arsivi (calisma aninda olusur).
 ictihat.sqlite3
 ictihat.sqlite3-*
+
+# Siniflandirma dogruluk olcumu defteri (calisma aninda olusur).
+classification_benchmark.sqlite3
+classification_benchmark.sqlite3-*

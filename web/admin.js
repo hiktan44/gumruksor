@@ -292,6 +292,87 @@ $("#llmDiagRecent")?.addEventListener("click", () => showRecentLlmEvents());
 $("#llmDiagText")?.addEventListener("click", () => runLlmDiagnostics(false));
 $("#llmDiagVision")?.addEventListener("click", () => runLlmDiagnostics(true));
 
+// TAB: CLASSIFICATION ACCURACY BENCHMARK
+function pct(value) {
+  return value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function renderBenchmark(data) {
+  const metrics = data.metrics || {};
+  const datasetRows = Object.entries(data.by_dataset || {})
+    .map(([name, report]) => `
+      <tr>
+        <td><b>${escapeHtml(name === "tr" ? "Türk BTB" : "AB tüzüğü")}</b><br><small>${escapeHtml(report.measured_cases)}/${escapeHtml(report.case_count)} ölçüldü</small></td>
+        <td>${pct(report.metrics?.top1_hs6)}</td>
+        <td>${pct(report.metrics?.top3_hs6)}</td>
+        <td>${pct(report.metrics?.top1_cn8)}</td>
+        <td>${pct(report.metrics?.top3_cn8)}</td>
+      </tr>`)
+    .join("");
+  const caseRows = (data.details || [])
+    .map((item) => `
+      <tr class="${item.top1_cn8 ? "diag-ok" : item.top3_hs6 ? "" : "diag-fail"}">
+        <td><small>${escapeHtml(item.id)}</small></td>
+        <td><small>${escapeHtml((item.candidates || []).join(", ") || "—")}</small></td>
+        <td>${item.top1_hs6 ? "✅" : "—"}</td>
+        <td>${item.top1_cn8 ? "✅" : "—"}</td>
+        <td>${item.top3_cn8 ? "✅" : "—"}</td>
+      </tr>`)
+    .join("");
+  const errorRows = (data.errors || [])
+    .map((item) => `<li><small>${escapeHtml(item.id)}: ${escapeHtml(item.error)}</small></li>`)
+    .join("");
+  const batch = data.batch
+    ? `<p><b>Bu turda koşulan:</b> ${escapeHtml(data.batch.requested)} vaka${(data.batch.failed || []).length ? ` · ${escapeHtml(data.batch.failed.length)} hata` : ""}</p>`
+    : "";
+  return `
+    ${batch}
+    <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${(data.pending_cases || []).length ? ` Kalan ${escapeHtml(data.pending_cases.length)} vaka için yeniden "Parti koş"a basın.` : " Tüm vakalar ölçüldü."}</p>
+    <table class="mini-table">
+      <thead><tr><th>Veri seti</th><th>Top-1 HS6</th><th>Top-3 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead>
+      <tbody>
+        ${datasetRows}
+        <tr><td><b>Toplam</b></td><td><b>${pct(metrics.top1_hs6)}</b></td><td><b>${pct(metrics.top3_hs6)}</b></td><td><b>${pct(metrics.top1_cn8)}</b></td><td><b>${pct(metrics.top3_cn8)}</b></td></tr>
+      </tbody>
+    </table>
+    <p><small>Çekimser (aday üretmedi): ${pct(metrics.abstained)}${(data.code_versions || []).length ? ` · sürüm: ${escapeHtml(data.code_versions.join(", "))}` : ""}</small></p>
+    <p><small>${escapeHtml(data.gtip12_note || "")}</small></p>
+    <p><small>${escapeHtml(data.runner_warning || "")}</small></p>
+    ${errorRows ? `<h3>Ölçülemeyen vakalar</h3><ul>${errorRows}</ul>` : ""}
+    ${caseRows ? `<h3>Vaka bazında</h3><table class="mini-table"><thead><tr><th>Vaka</th><th>Adaylar</th><th>Top-1 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead><tbody>${caseRows}</tbody></table>` : ""}`;
+}
+
+async function loadBenchmark(options) {
+  const output = $("#benchmarkOutput");
+  const buttons = [$("#benchmarkScore"), $("#benchmarkRun"), $("#benchmarkReset")].filter(Boolean);
+  buttons.forEach((btn) => { btn.disabled = true; });
+  const running = Boolean(options);
+  output.innerHTML = running
+    ? "<p>Vakalar gerçek hattan geçiriliyor… Her vaka iki model çağrısı olduğu için bu birkaç dakika sürebilir.</p>"
+    : "<p>Skor yükleniyor…</p>";
+  try {
+    const data = running
+      ? await json("/api/admin/classification-benchmark", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(options),
+        })
+      : await json("/api/admin/classification-benchmark");
+    output.innerHTML = renderBenchmark(data);
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    buttons.forEach((btn) => { btn.disabled = false; });
+  }
+}
+
+$("#benchmarkScore")?.addEventListener("click", () => loadBenchmark(null));
+$("#benchmarkRun")?.addEventListener("click", () => loadBenchmark({ limit: 4 }));
+$("#benchmarkReset")?.addEventListener("click", () => {
+  if (!window.confirm("Kayıtlı tüm ölçüm tahminleri silinecek. Yeni ölçüm model kotası harcar. Devam edilsin mi?")) return;
+  loadBenchmark({ limit: 0, reset: true });
+});
+
 // TAB: DATA CHANGE LEDGER
 let currentChangeKind = "";
 

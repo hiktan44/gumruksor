@@ -70,6 +70,7 @@ from resmi_gazete import (
     ResmiGazeteArchive,
 )
 from background_jobs import registry as job_registry
+from classification_benchmark import BenchmarkStore as ClassificationBenchmarkStore
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -166,6 +167,9 @@ customs_advisor_service = CustomsAdvisor(
 )
 # Veri diskinin doluluğu ve yeri doldurulamaz veritabanlarının dönüşümlü yedeği.
 storage_service = StorageService()
+# Sınıflandırma doğruluk ölçümü: etiketli vakaların tahminleri burada birikir.
+# Ölçüm yönetim rotasından elle tetiklenir; hiçbir arka plan döngüsü model çağırmaz.
+classification_benchmark_store = ClassificationBenchmarkStore()
 # Tool-calling assistant (PRD Faz 3.3): the LLM orchestrates these deterministic engines only.
 customs_assistant = CustomsAssistant(
     tools=build_assistant_tools(

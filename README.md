@@ -110,6 +110,15 @@ Sınıflandırma kalitesi [customs_classification_v1.jsonl](benchmarks/customs_c
 python customs_benchmark.py predictions.json --cases benchmarks/turkish_btb_gtip12_historical_v1.jsonl
 ```
 
+**Ölçüm koşucusu (`classification_benchmark.py`).** `customs_benchmark.py` yalnız puanlıyordu; kendisine verilen tahmin dosyasını üretecek bir koşucu yoktu, bu yüzden hattın doğruluğu **hiç ölçülmemişti**. Koşucu 16 etiketli vakayı gerçek `classify_product` hattından geçirir, adayları `MEVZUAT_DATA_DIR/classification_benchmark.sqlite3` içinde kalıcı tutar ve aynı puanlayıcıyla Top-1/Top-3 verir. Yönetim panelinde **Yapay Zekâ → Sınıflandırma Doğruluk Ölçümü** bölümü bunu üç düğmeye indirir: *Puanı göster* (ücretsiz, model çağırmaz), *Parti koş* (4 vaka; vaka başına iki bağımsız model çağrısı, **kota harcar**) ve *Kayıtları sıfırla*. Tahminler biriktiği için parti parti koşup toplam skoru görebilirsiniz; rotalar `GET`/`POST /api/admin/classification-benchmark` (yalnız yönetici). Ölçüm arka planda **hiç** çalışmaz.
+
+Ölçümün sınırları, abartmamak için açıkça:
+
+* Ölçülen şey **metinden GTİP adayı üretme**dir; görselden evsaf çıkarımı bu ölçümün dışındadır (vakalar resmî kararların eşya tanımlarıdır).
+* `classify_product` tasarımı gereği yalnız **HS6/CN8** aday üretir; 12 haneli GTİP tarife ağacından kullanıcı tarafından seçilir. Bu yüzden `top1_gtip12`/`top3_gtip12` bu katmanda **yapısal olarak 0**'dır ve doğruluk ölçüsü değildir — Türk vakalarında ölçüt `top1_cn8`/`top3_cn8`'dir. Rapor bu notu her zaman taşır.
+* Hat hatası ve süre aşımı **yanlış cevap sayılmaz**: `errors` listesinde ayrıca gösterilir, `measured_cases` bunları dışarıda bırakır ve vaka sonraki partide yeniden denenir.
+* Aynı vaka iki koşuda farklı sonuç verebilir; bu yüzden her tahmin hangi modellerle ve hangi commit (`SOURCE_COMMIT`) ile üretildiğini taşır.
+
 * Fotoğraf tek başına kesin veya bağlayıcı GTİP üretmez. Kesin sınıflandırma için teknik belge ve gerektiğinde Bağlayıcı Tarife Bilgisi gerekir.
 * Güvenlik sorusu/CAPTCHA kullanan Bakanlık Tarife Arama Motoru otomatik aşılmaz; sonuçlarda yalnızca manuel doğrulama bağlantısı olarak yer alır.
 * EBTI, CLASS, CN 2026 ve TARIC karşılaştırmalı sınıflandırma kanıtıdır; bunların kodları Türkiye GTİP12 veya Türkiye vergi oranı olarak doğrudan kullanılmaz.

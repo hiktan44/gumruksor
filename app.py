@@ -46,6 +46,7 @@ from mevzuat_mcp_server import (
     access2markets_engine,
     bedesten_client,
     change_ledger,
+    classification_benchmark_store,
     classification_engine,
     control_engine,
     customs_advisor_service,
@@ -74,6 +75,7 @@ from export_requirements import destination_profile
 from savings import evaluate_scenarios, rank_savings
 from access2markets import compare_sources
 from background_jobs import JOB_CATALOGUE, registry as job_registry
+import classification_benchmark
 from storage import resolve_backup_file
 from scenarios import build_origin_scenarios
 from product_page import BROWSER_HEADERS as PRODUCT_PAGE_BROWSER_HEADERS, brand_model_match, detect_bot_wall, extract_product_page
@@ -1318,6 +1320,95 @@ async def web_admin_llm_diagnostics(request: Request):
     except Exception:
         logger.exception("LLM diagnostics failed")
         return JSONResponse({"error": "Bağlantı testi çalıştırılamadı."}, status_code=500)
+    return JSONResponse(redact_data(report), headers={"Cache-Control": "no-store"})
+
+
+#: Tek istekte koşulacak en fazla vaka. Her vaka iki model çağrısı demek; tavan hem
+#: kotayı hem HTTP süresini korur.
+_BENCHMARK_MAX_BATCH = 8
+
+
+@mcp.custom_route("/api/admin/classification-benchmark", methods=["GET"])
+async def web_admin_classification_benchmark(request: Request):
+    """Etiketli vakaların **kayıtlı** tahminlerini puanlar; model çağırmaz, ücret doğurmaz."""
+    limited = _rate_limit_response(request, "admin-benchmark", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    dataset = (request.query_params.get("dataset") or "all").strip().lower()
+    try:
+        cases = classification_benchmark.load_cases(dataset)
+        stored = classification_benchmark_store.load(dataset)
+        report = classification_benchmark.evaluate(cases, stored)
+        report["pending_cases"] = [
+            case["id"]
+            for case in classification_benchmark.select_cases(
+                cases, skip_ids=classification_benchmark_store.stored_ids(dataset)
+            )
+        ]
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Sınıflandırma ölçümü puanlanamadı")
+        return JSONResponse({"error": "Ölçüm raporu üretilemedi."}, status_code=500)
+    return JSONResponse(redact_data(report), headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/admin/classification-benchmark", methods=["POST"])
+async def web_admin_classification_benchmark_run(request: Request):
+    """Bir parti vakayı gerçek hattan geçirir. **Model kotası harcar**, bu yüzden elle tetiklenir.
+
+    16 vaka tek istekte bitmez (her vaka iki bağımsız model çağrısı), bu yüzden koşu
+    parti parti yapılır ve tahminler kalıcı olarak birikir: ``GET`` her zaman
+    o ana kadarki toplam skoru verir.
+    """
+    limited = _rate_limit_response(request, "admin-benchmark-run", limit=4, window_seconds=300)
+    if limited:
+        return limited
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    dataset = str(body.get("dataset") or "all").strip().lower()
+    raw_limit = body.get("limit")
+    try:
+        # limit=0 bilinçli olarak "koşma, yalnız puanla" demek: sıfırlama düğmesi bunu
+        # kullanır ve kotadan hiçbir şey harcamaz.
+        limit = 4 if raw_limit is None else int(raw_limit)
+        limit = max(0, min(limit, _BENCHMARK_MAX_BATCH))
+        offset = max(0, int(body.get("offset") or 0))
+        concurrency = max(1, min(int(body.get("concurrency") or classification_benchmark.DEFAULT_CONCURRENCY), 6))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "limit, offset ve concurrency tam sayı olmalıdır."}, status_code=422)
+    reset = bool(body.get("reset"))
+    try:
+        if reset:
+            classification_benchmark_store.clear(dataset)
+        report = await classification_benchmark.run_and_score(
+            customs_advisor_service,
+            dataset=dataset,
+            limit=limit,
+            offset=offset,
+            resume=not bool(body.get("rerun")),
+            store=classification_benchmark_store,
+            concurrency=concurrency,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("Sınıflandırma ölçümü koşulamadı")
+        return JSONResponse({"error": "Ölçüm koşusu tamamlanamadı."}, status_code=500)
     return JSONResponse(redact_data(report), headers={"Cache-Control": "no-store"})
 
 
