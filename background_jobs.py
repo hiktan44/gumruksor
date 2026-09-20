@@ -62,6 +62,12 @@ JOB_CATALOGUE: dict[str, dict[str, str]] = {
         "purpose": "2007/13033 sayılı Karar eki (I) ve (II) sayılı listeleri resmî metinden tazeler.",
         "cost": "free",
     },
+    "ictihat-archive": {
+        "label": "Danıştay gümrük içtihadı",
+        "purpose": "Gümrük ihtilafı kararlarını tarih penceresiyle geriye doğru arşive alır ve "
+        "karar metnindeki GTİP kodlarını indeksler. Kararlar emsaldir, oran üretmez.",
+        "cost": "free",
+    },
     "resmi-gazete-archive": {
         "label": "Resmî Gazete arşivi",
         "purpose": "Gümrüğü ilgilendiren Resmî Gazete belgelerini bugünden geriye doğru kalıcı "

@@ -1,0 +1,74 @@
+{
+ "data": {
+  "emsalKararList": [
+   {
+    "documentId": "17411500",
+    "itemType": {
+     "name": "DANISTAYKARAR",
+     "description": "Danıştay Kararı"
+    },
+    "birimId": null,
+    "birimAdi": "7. Daire",
+    "esasNoYil": 1998,
+    "esasNoSira": 3138,
+    "kararNoYil": 1999,
+    "kararNoSira": 1046,
+    "kararTuru": null,
+    "kararTarihi": "1999-03-10T22:00:00.000+00:00",
+    "kararTarihiStr": "11.03.1999",
+    "kesinlesmeDurumu": "BİLİRKİŞİ RAPORU,GÜMRÜK TARFE İSTATİSTİK POZİSYONU,GÜMRÜK VERGİSİ,",
+    "kararNo": "1999/1046",
+    "esasNo": "1998/3138"
+   },
+   {
+    "documentId": "17853700",
+    "itemType": {
+     "name": "DANISTAYKARAR",
+     "description": "Danıştay Kararı"
+    },
+    "birimId": null,
+    "birimAdi": "7. Daire",
+    "esasNoYil": 1995,
+    "esasNoSira": 2332,
+    "kararNoYil": 1996,
+    "kararNoSira": 3573,
+    "kararTuru": null,
+    "kararTarihi": "1996-10-14T21:00:00.000+00:00",
+    "kararTarihiStr": "15.10.1996",
+    "kesinlesmeDurumu": "null",
+    "kararNo": "1996/3573",
+    "esasNo": "1995/2332"
+   },
+   {
+    "documentId": "1223077800",
+    "itemType": {
+     "name": "DANISTAYKARAR",
+     "description": "Danıştay Kararı"
+    },
+    "birimId": null,
+    "birimAdi": "7. Daire",
+    "esasNoYil": 2023,
+    "esasNoSira": 2985,
+    "kararNoYil": 2025,
+    "kararNoSira": 807,
+    "kararTuru": "1",
+    "kararTarihi": "2025-02-26T21:00:00.000+00:00",
+    "kararTarihiStr": "27.02.2025",
+    "kesinlesmeDurumu": null,
+    "kararNo": "2025/807",
+    "esasNo": "2023/2985"
+   }
+  ],
+  "total": 51787,
+  "start": 0
+ },
+ "metadata": {
+  "FMTY": "SUCCESS",
+  "FMC": "ADALET_SUCCESS",
+  "FMTE": "İşlem başarıyla gerçekleştirildi!",
+  "FMU": "İşlem başarıyla gerçekleştirildi!",
+  "PTID": null,
+  "TID": "1927f4ce87a33782",
+  "SID": "43ec50871381e26c"
+ }
+}

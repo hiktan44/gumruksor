@@ -57,6 +57,7 @@ from mevzuat_mcp_server import (
     eu_taric_engine,
     foreign_tariff_engine,
     hybrid_index,
+    ictihat_archive,
     resmi_gazete_archive,
     review_service,
     storage_service,
@@ -2906,6 +2907,45 @@ async def web_eu_taric_status(request: Request):
     if limited:
         return limited
     return JSONResponse(eu_taric_engine.status())
+
+
+@mcp.custom_route("/api/ictihat/search", methods=["GET"])
+async def web_ictihat_search(request: Request):
+    """Danıştay gümrük içtihadı: GTİP ile (``gtip=``) veya tam metinle (``q=``) emsal karar.
+
+    Kararlar emsaldir, bağlayıcı değildir; sonuç hiçbir oran veya GTİP tespiti taşımaz ve
+    maliyet hesabına girmez. Eşleşme kararın kendi metninden okunan koddan gelir.
+    """
+    limited = _rate_limit_response(request, "ictihat-search", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        gtip = (request.query_params.get("gtip") or "").strip()
+        limit = int(request.query_params.get("limit") or 5)
+        if gtip:
+            result = ictihat_archive.lookup(gtip, limit=limit)
+        else:
+            result = ictihat_archive.search(
+                str(request.query_params.get("q", "")),
+                since=(request.query_params.get("since") or None),
+                until=(request.query_params.get("until") or None),
+                limit=limit,
+            )
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("İçtihat search failed")
+        return JSONResponse({"error": "İçtihat arşivi şu anda sorgulanamadı."}, status_code=502)
+    return JSONResponse(result.as_dict(), headers={"Cache-Control": "private, max-age=300"})
+
+
+@mcp.custom_route("/api/ictihat/status", methods=["GET"])
+async def web_ictihat_status(request: Request):
+    """Arşivin kapsamı: karar sayısı, GTİP kapsama oranı, daireler, taranan pencereler."""
+    limited = _rate_limit_response(request, "ictihat-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(ictihat_archive.status())
 
 
 @mcp.custom_route("/api/gazette/search", methods=["GET"])
