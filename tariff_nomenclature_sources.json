@@ -1,0 +1,16 @@
+{
+  "source": {
+    "id": "tgtc",
+    "title": "İstatistik Pozisyonlarına Bölünmüş Türk Gümrük Tarife Cetveli",
+    "authority": "T.C. Ticaret Bakanlığı Gümrükler Genel Müdürlüğü",
+    "index_url": "https://ggm.ticaret.gov.tr/duyurular",
+    "landing_url": "https://ggm.ticaret.gov.tr/duyurular/istatistik-pozisyonlarina-bolunmus-turk-gumruk-tarife-cetveli-karar-sayisi-10781-yayimlanmistir",
+    "announcement_match": "tarife cetveli",
+    "archive_text": "Excel formatı için tıklayınız",
+    "legal_act": "Cumhurbaşkanlığı Kararı 10781",
+    "gazette_date": "2025-12-30",
+    "gazette_number": "33123 (1. Mükerrer)",
+    "valid_from": "2026-01-01",
+    "note": "Duyuru adresi her yıl karar numarasıyla değişir; motor önce duyuru dizinini tarar, bulamazsa buradaki sabit adrese düşer. Arşivin '474 Vergi Haddi' sütunu kanuni azami haddir, uygulanan oran DEĞİLDİR."
+  }
+}

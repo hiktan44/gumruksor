@@ -71,6 +71,7 @@ from resmi_gazete import (
 )
 from background_jobs import registry as job_registry
 from classification_benchmark import BenchmarkStore as ClassificationBenchmarkStore
+from tariff_nomenclature import NomenclatureEngine, SYNC_ENABLED as NOMENCLATURE_SYNC_ENABLED
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -134,9 +135,15 @@ resmi_gazete_archive = ResmiGazeteArchive()
 # Danıştay gümrük içtihadı: sınıflandırma kanıtında AB tüzüğünün Türk yargı karşılığı.
 # Emsal niteliğindedir; hiçbir oran, kod veya belge şartı bu kaynaktan belirlenmez.
 ictihat_archive = IctihatArchive()
+# Resmî eşya tanımı: Türk Gümrük Tarife Cetveli. Ürün oranı biliyordu, eşyanın resmî
+# tanımını bilmiyordu; tarife ağacı ve sınıflandırma kanıtı bu motordan beslenir.
+# Cetvelin "474 Vergi Haddi" sütunu kanuni azami haddir ve hiçbir hesaba girmez.
+nomenclature_engine = NomenclatureEngine()
+tariff_engine.nomenclature = nomenclature_engine
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
+nomenclature_engine.ledger = change_ledger
 control_engine.ledger = change_ledger
 classification_engine.ledger = change_ledger
 foreign_tariff_engine.ledger = change_ledger
@@ -204,6 +211,13 @@ _register_loop("vat-lists-sync", vat_rate_index.periodic_sync_loop)
 # Resmî Gazete arşivi bugünden geriye kademeli dolar: her tur birkaç gün, her gün için
 # normal sayı ve mükerrerleri. Kaynağa saygı sınırı istek arası beklemeyle sağlanır.
 # İçtihat arşivi tarih penceresiyle geriye dolar; her pencere kaldığı yerden sürer.
+# Tarife cetveli yılda bir kez değişir; günlük kontrol sha256 ile ucuz.
+_register_loop(
+    "tariff-nomenclature-sync",
+    nomenclature_engine.periodic_sync_loop,
+    enabled=NOMENCLATURE_SYNC_ENABLED,
+    reason="NOMENCLATURE_SYNC_ENABLED kapalı — mevcut cetvel olduğu yerde durur.",
+)
 _register_loop(
     "ictihat-archive",
     ictihat_archive.periodic_sync_loop,
@@ -301,6 +315,8 @@ customs_advisor_service.foreign_tariff_engine = foreign_tariff_engine
 # AB-27 KDV oranları (tohum + TEDB'den otomatik yükseltme).
 eu_vat_index = EuVatRates()
 customs_advisor_service.eu_vat_index = eu_vat_index
+# Sınıflandırma adaylarını resmî cetvel metninden çeker; gömme sağlayıcısı gerekmez.
+customs_advisor_service.nomenclature_engine = nomenclature_engine
 _register_loop("eu-vat-sync", eu_vat_index.periodic_sync_loop)
 
 
@@ -317,6 +333,7 @@ async def hybrid_index_refresh_loop() -> None:
                 excise_index=excise_tax_index,
                 vat_index=vat_rate_index,
                 tariff_engine=tariff_engine,
+                nomenclature_engine=nomenclature_engine,
                 foreign_tariff_engine=foreign_tariff_engine,
                 ebti_engine=ebti_engine,
                 # Geçmiş sürümler de beslenir: motor veritabanlarında zaten duran arşiv
@@ -3306,6 +3323,58 @@ async def lookup_customs_case_law(
     if gtip:
         return ictihat_archive.lookup(gtip, limit=limit).as_dict()
     return ictihat_archive.search(query, since=since, until=until, limit=limit).as_dict()
+
+
+@app.tool(
+    annotations={
+        "title": "Resmî eşya tanımını getir (Türk Gümrük Tarife Cetveli)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def lookup_goods_description(
+    gtip: str = Field(..., description="GTİP (4-12 hane). Nokta kullanılabilir."),
+) -> dict:
+    """Return the official Turkish tariff-schedule description of a code.
+
+    The answer is the goods description the schedule itself gives, plus the **full
+    ancestor path**: a leaf often reads only "Other", and only the path says what family
+    it belongs to. The chapter's legal notes are included because they decide
+    classification ("this chapter does not cover...").
+
+    Two things this tool deliberately does not do. It never returns an applied duty rate:
+    the schedule's "474 Vergi Haddi" column is the statutory ceiling, not what is
+    collected, and it is returned only as labelled text. And it never invents a
+    description: a code missing from the schedule is answered from its nearest parent
+    position, and the response says which level answered.
+    """
+    return nomenclature_engine.lookup(gtip).to_dict()
+
+
+@app.tool(
+    annotations={
+        "title": "Eşya tanımı metninde GTİP ara",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def search_goods_descriptions(
+    query: str = Field(..., description="Türkçe eşya tanımı ifadesi (ör. 'battaniye', 'akülü matkap')."),
+    code_prefix: str = Field("", description="Aramayı bu GTİP ön ekine sınırla (isteğe bağlı)."),
+    limit: int = Field(15, ge=1, le=50),
+) -> dict:
+    """Search the official goods descriptions and return candidate tariff codes.
+
+    Matching is prefix-based per token because Turkish is agglutinative: "battaniye"
+    must reach "Battaniyeler". The ancestor path is indexed as well, so a product word
+    that appears only in a parent position still finds the leaf. Rates are never
+    returned — read those from the import-regime tables.
+    """
+    return nomenclature_engine.search(query, limit=limit, code_prefix=code_prefix)
 
 
 @app.tool(

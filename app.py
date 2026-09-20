@@ -59,6 +59,7 @@ from mevzuat_mcp_server import (
     foreign_tariff_engine,
     hybrid_index,
     ictihat_archive,
+    nomenclature_engine,
     resmi_gazete_archive,
     review_service,
     storage_service,
@@ -2763,6 +2764,59 @@ async def web_tariff_lookup(request: Request):
     except Exception:
         logger.exception("Tariff lookup failed")
         return JSONResponse({"error": "Resmî tarife tabloları şu anda sorgulanamadı."}, status_code=502)
+
+
+@mcp.custom_route("/api/tariff/nomenclature", methods=["GET"])
+async def web_tariff_nomenclature(request: Request):
+    """Bir GTİP'in resmî eşya tanımı, tam yolu, ölçü birimi ve fasıl notu.
+
+    Oran döndürmez. Cetvelin "474 Vergi Haddi" sütunu yanıtta ``statutory_rate_text``
+    adıyla ve uyarı notuyla geçer; uygulanan gümrük vergisi ``/api/tariff/lookup``
+    üzerinden İthalat Rejimi tablolarından okunur.
+    """
+    limited = _rate_limit_response(request, "tariff-nomenclature", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    gtip = (request.query_params.get("gtip") or "").strip()
+    if not gtip:
+        return JSONResponse({"error": "gtip parametresi gerekli."}, status_code=422)
+    try:
+        result = nomenclature_engine.lookup(gtip)
+    except Exception:
+        logger.exception("Eşya tanımı okunamadı")
+        return JSONResponse({"error": "Resmî eşya tanımı şu anda okunamadı."}, status_code=503)
+    return JSONResponse(result.to_dict())
+
+
+@mcp.custom_route("/api/tariff/nomenclature/search", methods=["GET"])
+async def web_tariff_nomenclature_search(request: Request):
+    """Eşya tanımı metninde arama; aday GTİP döndürür, oran döndürmez."""
+    limited = _rate_limit_response(request, "tariff-nomenclature-search", limit=40, window_seconds=60)
+    if limited:
+        return limited
+    query = (request.query_params.get("q") or "").strip()
+    if len(query) < 2:
+        return JSONResponse({"error": "En az iki karakterlik bir arama ifadesi gerekli."}, status_code=422)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit") or 15), 50))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "limit tam sayı olmalıdır."}, status_code=422)
+    try:
+        result = nomenclature_engine.search(
+            query, limit=limit, code_prefix=(request.query_params.get("gtip") or "")
+        )
+    except Exception:
+        logger.exception("Eşya tanımı aranamadı")
+        return JSONResponse({"error": "Eşya tanımı araması şu anda yapılamadı."}, status_code=503)
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/api/tariff/nomenclature/status", methods=["GET"])
+async def web_tariff_nomenclature_status(request: Request):
+    limited = _rate_limit_response(request, "tariff-nomenclature-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(nomenclature_engine.status(), headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/tariff/tree", methods=["POST"])

@@ -68,6 +68,11 @@ _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
 _CLASSIFICATION_HYBRID_CORPORA = ["tariff_descriptions", "eu_classification", "trade_measures"]
 _CLASSIFICATION_HYBRID_LIMIT = 8
 _CLASSIFICATION_EVIDENCE_IDS_MAX = 5
+#: Resmî cetvelden kaç aday tanım isteme eklenecek. Hibrit kanıttan ayrı bir bütçe:
+#: canlı ölçümde hibrit katman boş döndüğü için cetvel kanıtı tek başına yeterli olmalı.
+_CLASSIFICATION_NOMENCLATURE_LIMIT = max(
+    2, min(int(os.environ.get("CLASSIFICATION_NOMENCLATURE_LIMIT") or 8), 20)
+)
 _PRECHECK_HYBRID_LIMIT = 6
 _HYBRID_EVIDENCE_PREFIX = "hyb_"
 _HYBRID_CORPUS_AUTHORITY = {
@@ -2651,6 +2656,9 @@ class CustomsAdvisor:
         self.access2markets_engine: Any = None
         self.foreign_tariff_engine: Any = None
         self.eu_vat_index: Any = None
+        # Resmî eşya tanımı motoru (tariff_nomenclature). Sınıflandırmada adayları
+        # cetvelin kendi metninden çeker; gömme sağlayıcısına ihtiyaç duymaz.
+        self.nomenclature_engine: Any = None
 
 
     async def _eu_free_duty(
@@ -2835,6 +2843,50 @@ class CustomsAdvisor:
                 continue
             seen.add(entry["id"])
             entries.append(entry)
+        return entries
+
+    def _nomenclature_evidence(self, query: str, *, limit: int) -> list[dict[str, Any]]:
+        """Resmî cetvel metninden aday kanıt; **gömme sağlayıcısı gerektirmez**.
+
+        Neden hibrit indeksin yanında ayrı bir yol: canlı ölçümde
+        ``/api/search/hybrid`` ``mode: lexical`` ve korpuslar boş dönüyordu, yani
+        modele giden ``official_evidence`` bloğu üretimde **boştu**. Cetvelin kendi
+        FTS'i her koşulda çalışır ve aday bulmanın en doğrudan yolu; indeks düzelince
+        ikisi birleşir, kimlikler çakışmaz (ikisi de ``tariff:{kod}`` uzayında).
+        """
+        engine = getattr(self, "nomenclature_engine", None)
+        text = str(query or "").strip()
+        if engine is None or len(text) < 3:
+            return []
+        try:
+            report = engine.search(text[:400], limit=limit)
+        except Exception as exc:  # noqa: BLE001 - kanıt eksikliği akışı durdurmaz
+            logger.info("Eşya tanımı kanıtı alınamadı (%s)", type(exc).__name__)
+            return []
+        entries: list[dict[str, Any]] = []
+        for hit in report.get("hits") or []:
+            code = _normalise_gtip(hit.get("code")) or ""
+            if not code:
+                continue
+            excerpt, _ = sanitize_untrusted_context(str(hit.get("full_path") or "")[:900], max_chars=900)
+            if not excerpt.strip():
+                continue
+            entries.append(
+                {
+                    "id": _hybrid_evidence_id(f"tariff:{code}"),
+                    "document_id": f"tariff:{code}",
+                    "corpus": "tariff_descriptions",
+                    "corpus_label": "Türk Gümrük Tarife Cetveli eşya tanımı",
+                    "authority": "T.C. Ticaret Bakanlığı Gümrükler Genel Müdürlüğü",
+                    "title": f"GTİP {code} — {str(hit.get('description') or '')[:120]}",
+                    "excerpt": excerpt,
+                    "url": str(report.get("source_url") or ""),
+                    "gtip_codes": [code],
+                    "gtip_match": True,
+                    "score": None,
+                    "similarity": None,
+                }
+            )
         return entries
 
     async def evidence_pack(self, inquiry: CustomsInquiry) -> CustomsEvidencePack:
@@ -3129,6 +3181,27 @@ class CustomsAdvisor:
             limit=_CLASSIFICATION_HYBRID_LIMIT,
             corpora=_CLASSIFICATION_HYBRID_CORPORA,
         )
+        # Resmî cetvel kanıtı hibrit kanıtın **yanına** eklenir; aynı belge iki yoldan
+        # gelirse bir kez sayılır. Sıra bilinçli: cetvel tanımı en doğrudan kanıttır.
+        nomenclature_entries = self._nomenclature_evidence(
+            " ".join(
+                part
+                for part in (
+                    request.product_description,
+                    request.product_category,
+                    request.declared_product_type,
+                    request.composition,
+                )
+                if str(part or "").strip()
+            ),
+            limit=_CLASSIFICATION_NOMENCLATURE_LIMIT,
+        )
+        if nomenclature_entries:
+            known = {entry["id"] for entry in hybrid_entries}
+            hybrid_entries = [
+                *(entry for entry in nomenclature_entries if entry["id"] not in known),
+                *hybrid_entries,
+            ]
         hybrid_ids = {entry["id"] for entry in hybrid_entries}
         user_content = request.model_dump_json(indent=2, exclude={"origin_country"})
         if hybrid_entries:
