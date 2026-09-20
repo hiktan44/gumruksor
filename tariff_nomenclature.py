@@ -577,6 +577,30 @@ class NomenclatureStore:
                 return []
         return [dict(row) for row in rows]
 
+    def export_rows(self, snapshot_id: str, *, limit: int = 40_000) -> list[dict[str, Any]]:
+        """Toplu dışa aktarım satırları.
+
+        ``full_path`` **taşınır, türetilmez**: yol kodsuz ağaç düğümlerinden de geçer
+        (ör. "Uranyum izotoplarının ayırımına mahsus olanlar…" satırının kodu yoktur),
+        dolayısıyla tüketici tarafta yalnız kodlu satırlardan yeniden kurulamaz.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT code, level, description, full_path, unit, chapter, parent_code
+                FROM codes WHERE snapshot_id=? ORDER BY code LIMIT ?
+                """,
+                (snapshot_id, int(limit)),
+            ).fetchall()
+        return [
+            {
+                "code": row["code"], "level": row["level"], "description": row["description"],
+                "full_path": row["full_path"], "unit": row["unit"], "chapter": row["chapter"],
+                "parent_code": row["parent_code"],
+            }
+            for row in rows
+        ]
+
     def counts(self, snapshot_id: str) -> dict[str, int]:
         with self._connect() as connection:
             by_level = connection.execute(
@@ -991,6 +1015,34 @@ class NomenclatureEngine:
                 "unit": row["unit"], "level": row["level"],
             }
             for code, row in rows.items()
+        }
+
+    def export(self, *, limit: int = 40_000) -> dict[str, Any]:
+        """Cetvelin tamamını künyesiyle döndürür (TradeOne gibi tüketiciler için).
+
+        Neden bir uç var: cetvel ``.xls`` biçiminde yayımlanıyor ve Node tarafında
+        eski BIFF biçimini okuyan bakımlı bir paket yok; açık güvenlik danışmanlığı
+        olan bir paketi bağımlılığa eklemek yerine ayrıştırma burada, tek yerde
+        yapılır ve sonucu paylaşılır. Oran yok: yalnız tanım, ölçü ve hiyerarşi.
+        """
+        snapshot = self.store.active_snapshot()
+        if not snapshot:
+            return {"status": "unavailable", "count": 0, "rows": []}
+        rows = self.store.export_rows(str(snapshot["id"]), limit=limit)
+        return {
+            "status": "ok",
+            "count": len(rows),
+            "snapshot_id": snapshot["id"],
+            "sha256": snapshot["sha256"],
+            "retrieved_at": snapshot["retrieved_at"],
+            "source_url": snapshot["source_url"],
+            "archive_url": snapshot["archive_url"],
+            "legal_act": snapshot["legal_act"],
+            "gazette_date": snapshot["gazette_date"],
+            "gazette_number": snapshot["gazette_number"],
+            "valid_from": snapshot["valid_from"],
+            "statutory_rate_note": STATUTORY_RATE_NOTE,
+            "rows": rows,
         }
 
     def status(self) -> dict[str, Any]:

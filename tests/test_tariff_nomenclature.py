@@ -641,6 +641,36 @@ class RouteTests(unittest.TestCase):
     def test_a_one_character_query_is_refused(self):
         self.assertEqual(self.client.get("/api/tariff/nomenclature/search?q=a").status_code, 422)
 
+    def test_export_carries_the_full_path_and_the_source_credentials(self):
+        response = self.client.get("/api/tariff/nomenclature/export")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["sha256"], "c" * 64)
+        self.assertEqual(body["legal_act"], "Cumhurbaşkanlığı Kararı 10781")
+        leaf = next(row for row in body["rows"] if row["code"] == "840120001011")
+        # Yol kodsuz ağaç düğümünden geçer; tüketici tarafta kodlu satırlardan
+        # yeniden kurulamaz, bu yüzden taşınmak zorunda.
+        self.assertIn("Uranyum", leaf["full_path"])
+
+    def test_export_never_carries_a_rate(self):
+        body = self.client.get("/api/tariff/nomenclature/export").json()
+        for row in body["rows"]:
+            self.assertNotIn("statutory_rate_text", row)
+            self.assertNotIn("rate", row)
+        self.assertIn("kanuni azami hadd", body["statutory_rate_note"])
+
+    def test_export_of_an_empty_store_is_503_not_an_empty_success(self):
+        with tempfile.TemporaryDirectory() as empty:
+            engine = nom.NomenclatureEngine(empty, http=httpx.AsyncClient())
+            self.web_app.nomenclature_engine = engine
+            try:
+                response = self.client.get("/api/tariff/nomenclature/export")
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["status"], "unavailable")
+            finally:
+                asyncio.run(engine.close())
+
     def test_status_reports_the_source_credentials(self):
         body = self.client.get("/api/tariff/nomenclature/status").json()
         self.assertTrue(body["ready"])

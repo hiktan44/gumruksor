@@ -2811,6 +2811,27 @@ async def web_tariff_nomenclature_search(request: Request):
     return JSONResponse(result)
 
 
+@mcp.custom_route("/api/tariff/nomenclature/export", methods=["GET"])
+async def web_tariff_nomenclature_export(request: Request):
+    """Resmî eşya tanımı cetvelinin tamamı (kod, tanım, tam yol, ölçü birimi).
+
+    Cetvel ``.xls`` biçiminde yayımlanıyor; eski BIFF biçimini okuyan bakımlı bir
+    Node paketi olmadığı için ayrıştırma burada, tek yerde yapılır ve sonucu bu uçtan
+    paylaşılır. **Oran yoktur** — yanıt yalnız tanım, ölçü birimi ve hiyerarşi taşır.
+    """
+    limited = _rate_limit_response(request, "tariff-nomenclature-export", limit=4, window_seconds=300)
+    if limited:
+        return limited
+    try:
+        payload = nomenclature_engine.export()
+    except Exception:
+        logger.exception("Eşya tanımı cetveli dışa aktarılamadı")
+        return JSONResponse({"error": "Cetvel şu anda dışa aktarılamadı."}, status_code=503)
+    if payload.get("status") != "ok":
+        return JSONResponse(payload, status_code=503)
+    return JSONResponse(payload, headers={"Cache-Control": "public, max-age=3600"})
+
+
 @mcp.custom_route("/api/tariff/nomenclature/status", methods=["GET"])
 async def web_tariff_nomenclature_status(request: Request):
     limited = _rate_limit_response(request, "tariff-nomenclature-status", limit=30, window_seconds=60)
