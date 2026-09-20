@@ -60,6 +60,7 @@ from urllib.parse import urljoin
 import httpx
 
 from security_firewall import validate_outbound_url
+from turkish_text import fold
 from trade_measures import official_ssl_context
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,10 @@ _INTEREST_PATTERNS = tuple(
 
 #: Belgenin gerçekten Resmî Gazete metni olduğunu gösteren çapa ifadeler. Biri bile
 #: yoksa metin şüphelidir: doğru karakterlerle boş bir çerçeve sayfası da olabilir.
+#: Karşılaştırma :func:`turkish_text.fold` ile yapılır — belge başlıkları büyük harf
+#: geliyor ve ``"TEBLİĞ".lower()`` Python'da ``tebli̇ğ`` (araya birleşen nokta) ürettiği
+#: için düz ``lower()`` ile "tebliğ" çapası hiç eşleşmiyordu; temiz belgeler haksız yere
+#: ``suspect`` işaretleniyordu.
 _TEXT_ANCHORS = ("resmî gazete", "resmi gazete", "madde", "tebliğ", "karar", "yönetmelik", "kanun")
 
 #: Türkçe'ye **özgü** harfler. Karar verici ölçüt bu: bozuk gömülü fontla çıkan metin
@@ -261,7 +266,7 @@ def assess_text(text: str) -> tuple[str, str]:
             f"Türkçe'ye özgü harf oranı %{ratio * 100:.1f}: belgenin gömülü fontu Unicode "
             "eşlemesi taşımıyor, çıkan metin anlamsız."
         )
-    lowered = stripped.lower()
+    lowered = fold(stripped)
     if not any(anchor in lowered for anchor in _TEXT_ANCHORS):
         return "suspect", "Metinde Resmî Gazete belgesine ait çapa ifade bulunamadı."
     if len(stripped) < _MIN_CLEAN_CHARS:
@@ -927,7 +932,12 @@ class ResmiGazeteArchive:
         result = GazetteSearchResult(query=text, since=since, until=until)
         with self._connect() as connection:
             if text:
-                match = " ".join(f'"{token}"' for token in re.findall(r"\w+", text, re.UNICODE))
+                # Türkçe eklemeli bir dil: "kıymet" araması "kıymeti", "kıymetinin"
+                # geçen belgeyi bulmalı. Tam sözcük eşleşmesi arşivi kullanışsız
+                # kılıyordu, bu yüzden her sözcük ön ek olarak aranır.
+                match = " ".join(
+                    f'"{token}"*' for token in re.findall(r"\w+", text, re.UNICODE)
+                )
                 if not match:
                     result.warnings.append("Arama ifadesinden aranabilir sözcük çıkmadı.")
                     return result

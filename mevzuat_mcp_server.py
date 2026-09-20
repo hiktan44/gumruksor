@@ -59,6 +59,11 @@ from foreign_tariff import (
 )
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
+from ictihat import (
+    SYNC_ENABLED as ICTIHAT_SYNC_ENABLED,
+    IctihatArchive,
+    summary_lines as ictihat_summary,
+)
 from resmi_gazete import (
     INTEREST_RULES as GAZETTE_INTEREST_RULES,
     SYNC_ENABLED as RESMI_GAZETE_SYNC_ENABLED,
@@ -125,6 +130,9 @@ access2markets_engine = Access2MarketsEngine(
 # Resmî Gazete geçmiş arşivi: mevzuat metninin kalıcı, tarihli ve checksum'lı kopyası.
 # Tarife/önlem verisi zaten sürümlü; arşivlenmeyen tek şey metnin kendisiydi.
 resmi_gazete_archive = ResmiGazeteArchive()
+# Danıştay gümrük içtihadı: sınıflandırma kanıtında AB tüzüğünün Türk yargı karşılığı.
+# Emsal niteliğindedir; hiçbir oran, kod veya belge şartı bu kaynaktan belirlenmez.
+ictihat_archive = IctihatArchive()
 # Unified, persistent change ledger shared by every official data engine.
 change_ledger = ChangeLedger()
 tariff_engine.ledger = change_ledger
@@ -191,6 +199,13 @@ _register_loop("trade-measures-sync", trade_measure_engine.periodic_sync_loop)
 _register_loop("vat-lists-sync", vat_rate_index.periodic_sync_loop)
 # Resmî Gazete arşivi bugünden geriye kademeli dolar: her tur birkaç gün, her gün için
 # normal sayı ve mükerrerleri. Kaynağa saygı sınırı istek arası beklemeyle sağlanır.
+# İçtihat arşivi tarih penceresiyle geriye dolar; her pencere kaldığı yerden sürer.
+_register_loop(
+    "ictihat-archive",
+    ictihat_archive.periodic_sync_loop,
+    enabled=ICTIHAT_SYNC_ENABLED,
+    reason="ICTIHAT_SYNC_ENABLED kapalı — arşiv olduğu yerde durur, silinmez.",
+)
 _register_loop(
     "resmi-gazete-archive",
     resmi_gazete_archive.periodic_sync_loop,
@@ -3257,6 +3272,36 @@ async def calculate_import_landed_cost(
         atr_certificate=atr_certificate,
         as_of=as_of,
     )
+
+
+@app.tool(
+    annotations={
+        "title": "GTİP için Danıştay emsal kararı ara",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def lookup_customs_case_law(
+    gtip: Optional[str] = Field(None, description="GTİP (en az 4 hane). Verilirse kod bazlı emsal karar."),
+    query: str = Field("", description="Tam metin arama ifadesi (GTİP verilmediğinde kullanılır)."),
+    since: Optional[str] = Field(None, description="Başlangıç karar tarihi (YYYY-AA-GG)."),
+    until: Optional[str] = Field(None, description="Bitiş karar tarihi (YYYY-AA-GG)."),
+    limit: int = Field(5, ge=1, le=25),
+) -> dict:
+    """Search the local archive of Turkish customs case law (Danıştay) for precedent.
+
+    Decisions are **precedent, not binding**: they show how the tax chambers have treated
+    similar goods, and the legislation may have changed since. The archive never produces a
+    rate, a tariff code or a document requirement, and nothing from it feeds the cost
+    calculation. GTIP matching comes from codes read out of the decision's own text; about
+    a third of decisions cite no code and are reachable only by full-text search, so an
+    empty result never means "no decision exists".
+    """
+    if gtip:
+        return ictihat_archive.lookup(gtip, limit=limit).as_dict()
+    return ictihat_archive.search(query, since=since, until=until, limit=limit).as_dict()
 
 
 @app.tool(

@@ -203,3 +203,7 @@ access2markets.sqlite3-*
 # Resmi Gazete arsivi (calisma aninda olusur).
 resmi_gazete.sqlite3
 resmi_gazete.sqlite3-*
+
+# Ictihat arsivi (calisma aninda olusur).
+ictihat.sqlite3
+ictihat.sqlite3-*
