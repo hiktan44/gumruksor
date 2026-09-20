@@ -97,8 +97,18 @@ SYNC_INTERVAL_SECONDS = max(60, int(os.environ.get("ICTIHAT_SYNC_SECONDS") or 18
 #: Bir turda işlenecek en fazla tarih penceresi ve pencere uzunluğu (gün).
 WINDOWS_PER_RUN = max(1, min(int(os.environ.get("ICTIHAT_WINDOWS_PER_RUN") or 2), 20))
 WINDOW_DAYS = max(7, min(int(os.environ.get("ICTIHAT_WINDOW_DAYS") or 120), 730))
-#: Kaynağa saygı: her istek arası bekleme.
-REQUEST_DELAY_SECONDS = max(0.0, float(os.environ.get("ICTIHAT_DELAY_SECONDS") or 0.5))
+#: Kaynağa saygı: her istek arası bekleme. Varsayılan **ölçümle** belirlendi: 0,5 saniyeyle
+#: canlıda ilk turlarda ``429 Too Many Requests`` alındı (9 pencerenin 2'si bu yüzden eksik
+#: kaldı). Kamu servisini yormamak için taban yükseltildi.
+REQUEST_DELAY_SECONDS = max(0.0, float(os.environ.get("ICTIHAT_DELAY_SECONDS") or 1.5))
+
+#: 429 sonrası artan bekleme. Kaynak ``Retry-After`` gönderirse **o değere uyulur**; yoksa
+#: bu takvim kullanılır. Son deneme de 429 dönerse istek :class:`IctihatRateLimited` ile
+#: biter ve çağıran tarafta tur erken sonlandırılır — ısrar etmek kaynağı daha da yorar.
+RATE_LIMIT_BACKOFF: tuple[float, ...] = (5.0, 15.0, 45.0)
+#: ``Retry-After`` başlığına uyulurken kabul edilen üst sınır; sunucu çok uzun bir değer
+#: verirse tur zaten bitirilir, süresiz beklenmez.
+_MAX_RETRY_AFTER_SECONDS = 120.0
 #: Arşivin tabanı. Daha geriye gitmek teknik olarak mümkün (1996 kararı geldi) ama eski
 #: karar bugünkü nomenklatürle eşleşmiyor; taban açıkça sınırlanır.
 ARCHIVE_FLOOR = os.environ.get("ICTIHAT_FLOOR") or "2010-01-01"
@@ -160,6 +170,15 @@ _HTML_ENTITIES = (
 
 class IctihatError(RuntimeError):
     """Bedesten içtihat servisi beklenen biçimi vermedi."""
+
+
+class IctihatRateLimited(IctihatError):
+    """Kaynak ``429`` döndürdü ve geri çekilmelerden sonra da döndürmeye devam ediyor.
+
+    Ayrı bir tür, çünkü davranışı diğer hatalardan farklı olmalı: tek bir kararın hatası
+    değil, **kaynağın bize dur demesi**. Bu durumda sıradaki karara geçmek ısrar etmek
+    olur; tur erken bitirilir ve pencere tamamlanmamış sayılarak sonraki tura bırakılır.
+    """
 
 
 def _now() -> str:
@@ -476,6 +495,7 @@ class IctihatArchive:
         delay_seconds: float = REQUEST_DELAY_SECONDS,
         sync_interval_seconds: int = SYNC_INTERVAL_SECONDS,
         phrases: tuple[str, ...] = SEARCH_PHRASES,
+        rate_limit_backoff: tuple[float, ...] = RATE_LIMIT_BACKOFF,
     ) -> None:
         root = Path(data_dir or os.environ.get("MEVZUAT_DATA_DIR") or ROOT)
         root.mkdir(parents=True, exist_ok=True)
@@ -491,6 +511,7 @@ class IctihatArchive:
         self.delay_seconds = max(0.0, float(delay_seconds))
         self.sync_interval_seconds = max(30, int(sync_interval_seconds))
         self.phrases = tuple(phrases)
+        self._rate_limit_backoff = tuple(rate_limit_backoff)
         self._http = http or httpx.AsyncClient(
             timeout=httpx.Timeout(45.0, connect=10.0),
             headers=HEADERS,
@@ -585,16 +606,40 @@ class IctihatArchive:
         body = {"data": inner, "applicationName": APP_NAME}
         response: httpx.Response | None = None
         last_error: Exception | None = None
-        for attempt in range(3):
+        rate_limit_waits = list(self._rate_limit_backoff)
+        transient_left = 2
+        while True:
             try:
                 response = await self._http.post(url, json=body)
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.TimeoutException) as exc:
                 last_error = exc
-                if attempt < 2:
-                    await asyncio.sleep(1 + attempt)
+                if transient_left:
+                    transient_left -= 1
+                    await asyncio.sleep(1.0)
+                    continue
+                break
+            if response.status_code == 429:
+                # 429 geçici bir arıza değil, kaynağın hız uyarısıdır: kendi söylediği
+                # süreye uyulur, söylemiyorsa artan takvim uygulanır.
+                if not rate_limit_waits:
+                    raise IctihatRateLimited(
+                        "Bedesten içtihat servisi hız sınırı uyguluyor (429); tur bitiriliyor."
+                    )
+                wait = rate_limit_waits.pop(0)
+                # ``Retry-After`` saniye ya da HTTP-tarih olabilir. Saniye biçimi okunur;
+                # tarih biçimi ayrıştırılmaz ve kendi takvimimize düşülür — takvim zaten
+                # bekliyor, dolayısıyla güvenli taraf.
+                header = (response.headers.get("retry-after") or "").strip()
+                try:
+                    wait = min(max(float(header), wait), _MAX_RETRY_AFTER_SECONDS)
+                except ValueError:
+                    pass
+                logger.info("İçtihat arşivi — 429, %.0f saniye bekleniyor", wait)
+                await asyncio.sleep(wait)
                 continue
-            if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
-                await asyncio.sleep(1 + attempt)
+            if response.status_code in {500, 502, 503, 504} and transient_left:
+                transient_left -= 1
+                await asyncio.sleep(1.0)
                 continue
             break
         if response is None:
@@ -775,11 +820,13 @@ class IctihatArchive:
             self._note_error(message)
             self._record_window(start, end, phrase, counts=(0, 0, 0), complete=False, note=message[:200])
             return {"start": start.isoformat(), "end": end.isoformat(), "phrase": phrase,
-                    "listed": 0, "stored": 0, "skipped": 0, "complete": False}
+                    "listed": 0, "stored": 0, "skipped": 0, "complete": False,
+                    "rate_limited": isinstance(exc, IctihatRateLimited)}
         already = self.stored_ids()
         stored = 0
         skipped = 0
         failures = 0
+        rate_limited = False
         for ref in refs:
             if ref.document_id in already:
                 skipped += 1
@@ -792,18 +839,29 @@ class IctihatArchive:
                     skipped += 1
                 else:
                     stored += 1
+            except IctihatRateLimited as exc:
+                # Kaynak dur diyor: sıradaki karara geçmek ısrar etmek olur. Pencere
+                # tamamlanmamış kalır ve sonraki turda kaldığı yerden sürer.
+                rate_limited = True
+                self._note_error(f"{start}..{end} '{phrase}': {exc}")
+                break
             except Exception as exc:
                 failures += 1
                 self._note_error(f"karar {ref.document_id}: {type(exc).__name__}: {exc}")
-        note = f"{failures} karar alınamadı." if failures else ""
+        notes = []
+        if rate_limited:
+            notes.append("Kaynak hız sınırı uyguladı; pencere yarıda bırakıldı.")
+        if failures:
+            notes.append(f"{failures} karar alınamadı.")
+        complete = not failures and not rate_limited
         self._record_window(
             start, end, phrase, counts=(len(refs), stored, skipped),
-            complete=not failures, note=note,
+            complete=complete, note=" ".join(notes),
         )
         return {
             "start": start.isoformat(), "end": end.isoformat(), "phrase": phrase,
             "listed": len(refs), "stored": stored, "skipped": skipped,
-            "complete": not failures,
+            "complete": complete, "rate_limited": rate_limited,
         }
 
     def _record_window(
@@ -836,12 +894,22 @@ class IctihatArchive:
             self._syncing = True
             try:
                 windows = self.pending_windows(limit or self.windows_per_run, today=today)
-                results = [await self.ingest_window(start, end, phrase) for start, end, phrase in windows]
+                results = []
+                rate_limited = False
+                for start, end, phrase in windows:
+                    report = await self.ingest_window(start, end, phrase)
+                    results.append(report)
+                    if report.get("rate_limited"):
+                        # Turu erken bitir: aynı turda başka pencere denemek, dur demiş bir
+                        # kaynağa ısrar etmektir. Kalan pencereler bir sonraki tura kalır.
+                        rate_limited = True
+                        break
                 self._set_metadata("last_run_at", _now())
                 return {
                     "processed_windows": len(results),
                     "stored_decisions": sum(item["stored"] for item in results),
                     "skipped": sum(item["skipped"] for item in results),
+                    "rate_limited": rate_limited,
                     "windows": results,
                 }
             finally:
@@ -857,6 +925,10 @@ class IctihatArchive:
                 if not report["processed_windows"]:
                     # Taban tamamen tarandı; yalnız yeni kararlar için seyrek yoklama.
                     await asyncio.sleep(max(self.sync_interval_seconds, 21600))
+                    continue
+                if report.get("rate_limited"):
+                    # Kaynak dur dedi: bir sonraki tur normalden çok daha geç başlar.
+                    await asyncio.sleep(self.sync_interval_seconds * 4)
                     continue
             except asyncio.CancelledError:
                 raise
@@ -997,6 +1069,18 @@ class IctihatArchive:
             result.hits.append(self._hit(row, snippet=str(row["snippet"] or "")))
         return result
 
+    def _rate_limited_windows(self) -> int:
+        """Kaynağın hız sınırı yüzünden yarıda kalmış pencere sayısı.
+
+        Panelde görünür olması gerekiyor: bu sayı artıyorsa ``ICTIHAT_DELAY_SECONDS``
+        yükseltilmelidir ve sebebi tahmin edilmemelidir.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM windows WHERE complete=0 AND note LIKE '%hız sınırı%'"
+            ).fetchone()
+        return int(row["total"] or 0)
+
     def status(self) -> dict[str, Any]:
         with self._connect() as connection:
             decisions = connection.execute(
@@ -1040,6 +1124,8 @@ class IctihatArchive:
             "complete_windows": int(windows["complete"] or 0),
             "oldest_window": windows["oldest"],
             "has_pending_windows": bool(self.pending_windows(1)),
+            "delay_seconds": self.delay_seconds,
+            "rate_limited_windows": self._rate_limited_windows(),
             "chambers": [
                 {"birim": row["birim"], "decisions": int(row["total"])} for row in chambers
             ],
@@ -1075,12 +1161,14 @@ def summary_lines(result: IctihatResult) -> list[str]:
 
 __all__ = [
     "ARCHIVE_FLOOR",
+    "RATE_LIMIT_BACKOFF",
     "SEARCH_PHRASES",
     "SYNC_ENABLED",
     "DecisionHit",
     "DecisionRef",
     "IctihatArchive",
     "IctihatError",
+    "IctihatRateLimited",
     "IctihatResult",
     "assess_relevance",
     "assess_text",

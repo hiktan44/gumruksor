@@ -164,6 +164,14 @@ class TariffLookupResult(BaseModel):
     status: Literal["matched", "partial", "not_found", "unavailable"]
     gtip: str
     match_mode: Literal["exact", "prefix"] = "exact"
+    # Resmî Türk Gümrük Tarife Cetvelinden gelen eşya tanımı (``tariff_nomenclature``).
+    # Motor bağlı değilse boş kalır ve yanıt eskisiyle birebir aynıdır. ``goods_full_path``
+    # ata satırlarla birleştirilmiş hâl: çoğu 12 haneli satırın kendi tanımı yalnız
+    # "Diğerleri"dir ve tek başına hiçbir sınıflandırma sorusunu cevaplamaz.
+    goods_description: str = ""
+    goods_full_path: str = ""
+    goods_unit: str = ""
+    goods_matched_code: str = ""
     matched_gtips: list[str] = Field(default_factory=list)
     matched_gtip_count: int = 0
     origin_country: str | None = None
@@ -202,11 +210,21 @@ class MeasureCoverage(BaseModel):
 
 
 class TariffTreeNode(BaseModel):
-    """One deterministic branch in the HS6 -> CN8 -> TR10 -> GTIP12 tree."""
+    """One deterministic branch in the HS6 -> CN8 -> TR10 -> GTIP12 tree.
+
+    ``description`` ve ``full_path`` resmî Türk Gümrük Tarife Cetvelinden gelir
+    (``tariff_nomenclature``). Ölçülen boşluk buydu: ağaç çocukları oran döndürüyor
+    ama eşya tanımı döndürmüyordu, dolayısıyla "8471.60.60 mı 8471.60.70 mi"
+    sorusu ağaca bakarak cevaplanamıyordu. Nomenklatür motoru bağlı değilse alanlar
+    boş kalır ve davranış eskisiyle birebir aynıdır.
+    """
 
     code: str
     level: Literal["HS6", "CN8", "TR10", "GTIP12"]
     final: bool
+    description: str = ""
+    full_path: str = ""
+    unit: str = ""
     descendant_count: int = Field(..., ge=1)
     rate_status: Literal["unambiguous", "ambiguous", "origin_required"]
     unambiguous_rates: dict[str, float] = Field(default_factory=dict)
@@ -380,6 +398,9 @@ class TariffEngine:
         self.ledger: Any = None
         # Editorial review gate; the server replaces it with policy_from_env().
         self.review_policy: ReviewPolicy = ReviewPolicy()
+        # Resmî eşya tanımı motoru (tariff_nomenclature.NomenclatureEngine); sunucuda
+        # bağlanır. None ise karar ağacı bugünküyle birebir aynı, tanımsız çalışır.
+        self.nomenclature: Any = None
         # Landing-page text of the last discovery per source (validity date derivation).
         self._landing_text: dict[str, str] = {}
         self._init_db()
@@ -1596,7 +1617,7 @@ class TariffEngine:
         )
         self._stamp_validity(result, snapshots, as_of)
         self._attach_trade_measures(result)
-        return result
+        return self._describe_lookup(result)
 
     async def decision_tree(
         self,
@@ -1693,6 +1714,7 @@ class TariffEngine:
                 )
             )
 
+        self._describe_children(children)
         warnings = [
             f"{normalised} altında {len(children)} adet {next_level} dalı ve "
             f"{current.matched_gtip_count} adet GTİP12 satırı bulundu.",
@@ -1715,6 +1737,54 @@ class TariffEngine:
             warnings=warnings,
             as_of=current.as_of, as_of_date=current.as_of_date, validity_basis=current.validity_basis,
         )
+
+    def _describe_lookup(self, result: TariffLookupResult) -> TariffLookupResult:
+        """Sorgu sonucuna resmî eşya tanımını ekler; motor yoksa hiçbir şey yapmaz.
+
+        Tam eşleşme yoksa nomenklatür motoru en yakın üst pozisyondan cevap verir ve
+        ``goods_matched_code`` hangi seviyeden geldiğini söyler — 12 haneli bir kodun
+        tanımı 8 haneden geliyorsa kullanıcının bunu bilmesi gerekir.
+        """
+        engine = getattr(self, "nomenclature", None)
+        if engine is None or not result.gtip:
+            return result
+        try:
+            described = engine.lookup(result.gtip, with_children=False)
+        except Exception:
+            logger.exception("Tarife sonucuna eşya tanımı eklenemedi")
+            return result
+        if getattr(described, "status", "") != "matched":
+            return result
+        return result.model_copy(
+            update={
+                "goods_description": described.description,
+                "goods_full_path": described.full_path,
+                "goods_unit": described.unit,
+                "goods_matched_code": described.matched_code,
+            }
+        )
+
+    def _describe_children(self, children: list[TariffTreeNode]) -> None:
+        """Ağaç dallarına resmî eşya tanımını ekler; motor yoksa hiçbir şey yapmaz.
+
+        Tek toplu sorgu: dal başına ayrı okuma, 8471 gibi kalabalık bir pozisyonda
+        onlarca gereksiz sorgu demekti.
+        """
+        engine = getattr(self, "nomenclature", None)
+        if engine is None or not children:
+            return
+        try:
+            described = engine.describe_many(node.code for node in children)
+        except Exception:
+            logger.exception("Tarife ağacına eşya tanımı eklenemedi")
+            return
+        for node in children:
+            row = described.get(node.code)
+            if not row:
+                continue
+            node.description = str(row.get("description") or "")
+            node.full_path = str(row.get("full_path") or "")
+            node.unit = str(row.get("unit") or "")
 
     async def calculate(
         self,

@@ -24,6 +24,10 @@ const state = {
   customsExactGtipConfirmed: false,
   customsApplyingTariffSelection: false,
   customsTariffTree: null,
+  // Seçili kodun resmî eşya tanımı (Türk Gümrük Tarife Cetveli). Ağaç dallarından
+  // taşınır: kullanıcı bir dalı onayladığında ekranda yalnız rakamı değil, neyi
+  // onayladığını da görmeli.
+  customsGoodsDescription: null,
   customsSelectedCandidate: null,
   customsClassificationAnswers: {},
   decisionAnswers: { precheck: {}, tool: {} },
@@ -1614,6 +1618,57 @@ function renderExportRequirements(req) {
     ${(req.caveats || []).length ? `<div class="result-caution">${req.caveats.map((item) => escapeHtml(item)).join(" ")}</div>` : ""}`;
 }
 
+/**
+ * Türk yargı içtihadı (Danıştay) bölümü — **bağlayıcı değil**.
+ *
+ * Emsal karar, AB sınıflandırma tüzüğünün Türk karşılığıdır: yargının benzer eşyaya
+ * nasıl baktığını gösterir. Hiçbir oran, kod veya belge şartı buradan belirlenmez, bu
+ * yüzden her karar "emsal" etiketiyle ve karar tarihiyle basılır — tarih önemli, çünkü
+ * o günden sonra mevzuat değişmiş olabilir.
+ */
+function renderCaseLaw(block) {
+  const hits = block?.hits || [];
+  if (!hits.length) return "";
+  const rows = hits
+    .map((hit) => `<li>
+      <b>${escapeHtml(hit.birim || "Danıştay")}</b>
+      <span>E.${escapeHtml(hit.esas_no || "—")} K.${escapeHtml(hit.karar_no || "—")} · ${escapeHtml(hit.karar_tarihi || "—")}</span>
+      ${hit.matched_gtip ? `<code>${escapeHtml(hit.matched_gtip)}</code>` : ""}
+      ${hit.snippet ? `<small>${escapeHtml(hit.snippet)}</small>` : ""}
+      ${hit.url ? `<a href="${escapeHtml(hit.url)}" target="_blank" rel="noopener">kararı aç</a>` : ""}
+    </li>`)
+    .join("");
+  return `<section class="answer-section">
+    <h3>Türk yargı içtihadı · ${escapeHtml(hits.length)} emsal karar <span class="badge-nonbinding">bağlayıcı değil</span></h3>
+    <ul class="precedent-list">${rows}</ul>
+    <div class="result-caution">${escapeHtml(block.source_note || "")}</div>
+  </section>`;
+}
+
+/**
+ * Resmî Gazete arşivinde eşleşen mevzuat metni. Kanıt niteliğinde metindir; oran veya
+ * belge şartı bu bölümden okunmaz. Metni okunamayan belge künyesiyle listelenir ve
+ * bu durum satırda belirtilir.
+ */
+function renderGazetteMatches(block) {
+  const hits = block?.hits || [];
+  if (!hits.length) return "";
+  const rows = hits
+    .map((hit) => `<li>
+      <b>${escapeHtml(hit.title || hit.kind_label || hit.document_id || "Belge")}</b>
+      <span>${escapeHtml(hit.date || "—")}${hit.kind_label ? ` · ${escapeHtml(hit.kind_label)}` : ""}</span>
+      ${hit.snippet ? `<small>${escapeHtml(hit.snippet)}</small>` : ""}
+      ${hit.text_quality && hit.text_quality !== "clean" ? `<em>metin kalitesi: ${escapeHtml(hit.text_quality)}</em>` : ""}
+      ${hit.url ? `<a href="${escapeHtml(hit.url)}" target="_blank" rel="noopener">belgeyi aç</a>` : ""}
+    </li>`)
+    .join("");
+  return `<section class="answer-section">
+    <h3>Resmî Gazete metni · ${escapeHtml(hits.length)} eşleşme <span class="badge-nonbinding">kanıt metni</span></h3>
+    <ul class="precedent-list">${rows}</ul>
+    <div class="result-caution">${escapeHtml(block.source_note || "")}</div>
+  </section>`;
+}
+
 function renderCustomsResult(data) {
   setFlowStep(4);
   exportStore.precheck = data;
@@ -1647,6 +1702,8 @@ function renderCustomsResult(data) {
       <section class="answer-section"><h3>Aday GTİP / CN kodları</h3>${candidates}</section>
       ${renderExportRequirements(data.export_requirements)}
       ${data.tariff_lookup ? `<section class="answer-section"><h3>Resmî tarife snapshot eşleşmesi</h3>${tariffMatchSummary(data.tariff_lookup)}${renderMeasureCoverage(data.tariff_lookup.measure_coverage)}${renderTradeMeasures(data.tariff_lookup.trade_measures)}${renderExciseTax(data.tariff_lookup.excise_tax)}<table class="evidence-table"><thead><tr><th>GTİP / Önlem</th><th>Oran</th><th>Menşe sütunu</th><th>Kaynak satırı</th><th>Kanıt</th></tr></thead><tbody>${tariffRows(data.tariff_lookup.measures)}</tbody></table>${exportBar("precheck", [{ table: "measures", label: "Tarife satırları" }, ...(data.deterministic_cost ? [{ table: "cost", label: "Maliyet taslağı" }] : [])])}${applyRatesButton(data.tariff_lookup, "precheck")}${(data.tariff_lookup.warnings || []).length ? `<div class="result-caution">${data.tariff_lookup.warnings.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}</section>` : ""}
+      ${renderCaseLaw(data.case_law)}
+      ${renderGazetteMatches(data.gazette_matches)}
       ${data.origin_documents ? `<section class="answer-section"><h3>Menşe belgeleri · ${escapeHtml(data.origin_documents.regime_name)}</h3><ul class="missing-list">${(data.origin_documents.documents || []).map((item) => `<li><b>${escapeHtml(item.name)}</b> — ${escapeHtml(item.applicability)}${item.note ? ` <small>${escapeHtml(item.note)}</small>` : ""}</li>`).join("")}</ul><div class="result-caution">${escapeHtml((data.origin_documents.caveats || []).join(" "))}</div></section>` : ""}
       ${data.control_lookup ? `<section class="answer-section"><h3>Resmî kontrol tebliği Ek-1 eşleşmeleri</h3>${renderControlTool(data.control_lookup)}</section>` : ""}
       <section class="answer-section"><h3>Eksik veya teyit edilmesi gereken bilgiler</h3><ul class="missing-list">${(data.missing_information?.length ? data.missing_information : ["Kritik eksik alan bildirilmedi."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
@@ -1962,6 +2019,13 @@ function classificationRequestBody() {
     classification_answers: collectClassificationAnswers(),
     decision_answers: { ...(state.decisionAnswers.precheck || {}) },
     origin_country: $("#originCountry").value.trim(),
+    // Yüklenen fotoğraf sunucuya yalnız **ayrıştırma turu** için gider: iki aday kod
+    // arasında karar verilirken resmî eşya tanımındaki ayırt edici ölçüt görselle
+    // karşılaştırılır. Görsel tek başına kod üretmez; aday havuzu resmî tarife
+    // motorundan gelir ve model liste dışına çıkamaz.
+    // state.customsImageData doğrudan data URL dizesidir (FileReader.readAsDataURL
+    // çıktısı), nesne değil — burada yanlış alan okumak sessizce boş görsel gönderirdi.
+    image_data_url: typeof state.customsImageData === "string" ? state.customsImageData : "",
   };
 }
 
@@ -2055,6 +2119,29 @@ function tariffPathCodes(code) {
   return [6, 8, 10, 12].filter((length) => length <= digits.length).map((length) => digits.slice(0, length));
 }
 
+/**
+ * Dalın resmî eşya tanımı (Türk Gümrük Tarife Cetveli).
+ *
+ * Ölçülen boşluk: ağaç düğümleri kod, seviye ve oran basıyordu ama eşya tanımı
+ * basmıyordu — kullanıcı "8471.60.60 mı 8471.60.70 mi" sorusunu ekrana bakarak
+ * cevaplayamıyordu. Tanımın kendisi çoğu yaprakta "Diğerleri" olduğu için ata
+ * satırlarla birleştirilmiş tam yol da ayrı bir satırda gösterilir; ayırt edici
+ * olan odur. Cetvel henüz indirilmemişse alanlar boş gelir ve hiçbir şey basılmaz.
+ */
+function treeNodeDescription(node) {
+  const own = (node.description || "").trim();
+  if (!own) return "";
+  const path = (node.full_path || "").trim();
+  // Tam yol kendi tanımıyla bitiyor; tekrar etmemek için son parçası atılır.
+  const context = path && path !== own ? path.replace(/\s*>\s*[^>]*$/, "").trim() : "";
+  const unit = (node.unit || "").trim();
+  return `<span class="tariff-tree-goods">
+    <b>${escapeHtml(own)}</b>
+    ${context ? `<small>${escapeHtml(context)}</small>` : ""}
+    ${unit && unit !== "-" ? `<em>Ölçü birimi: ${escapeHtml(unit)}</em>` : ""}
+  </span>`;
+}
+
 function renderTariffTreeError(message) {
   const panel = $("#tariffTree");
   panel.hidden = false;
@@ -2086,12 +2173,19 @@ function renderTariffTree(tree, candidate = state.customsSelectedCandidate) {
     state.customsExactGtipConfirmed = true;
     state.customsGtipSelectionConfirmed = true;
     $("#tariffTreeStatus").textContent = "12 haneli satır doğrulandı";
-    list.innerHTML = `<div class="tariff-tree-final"><b>${escapeHtml(tree.prefix)}</b><span>Aktif resmî tarife tablolarında bulunan GTİP12 satırı</span></div>`;
+    const goods = state.customsGoodsDescription;
+    list.innerHTML = `<div class="tariff-tree-final">
+      <b>${escapeHtml(tree.prefix)}</b>
+      ${goods?.description ? `<strong>${escapeHtml(goods.description)}</strong>` : ""}
+      ${goods?.context ? `<small>${escapeHtml(goods.context)}</small>` : ""}
+      <span>Aktif resmî tarife tablolarında bulunan GTİP12 satırı</span>
+    </div>`;
   } else {
     state.customsExactGtipConfirmed = false;
     $("#tariffTreeStatus").textContent = `${tree.total_children} ${tariffLevelLabel(tree.next_level)} dalı · kullanıcı seçimi gerekli`;
     list.innerHTML = tree.children.map((node) => `<button type="button" class="tariff-tree-node" data-tariff-child="${escapeHtml(node.code)}" data-tariff-final="${node.final ? "true" : "false"}">
       <code>${escapeHtml(node.code)}<small>${tariffLevelLabel(node.level)} · ${escapeHtml(node.descendant_count)} GTİP12 satırı</small></code>
+      ${treeNodeDescription(node)}
       <span>${escapeHtml(treeNodeRates(node))}</span>
       <b>${node.final ? "Bu GTİP12’yi doğrula" : "Alt dalları aç"}</b>
     </button>`).join("");
@@ -2103,6 +2197,16 @@ function renderTariffTree(tree, candidate = state.customsSelectedCandidate) {
   $$('[data-tariff-child]').forEach((button) => button.addEventListener("click", async () => {
     const code = button.dataset.tariffChild;
     const exact = button.dataset.tariffFinal === "true";
+    const chosen = (tree.children || []).find((item) => item.code === code);
+    state.customsGoodsDescription = chosen?.description
+      ? {
+          code,
+          description: chosen.description,
+          // Tam yol kendi tanımıyla bitiyor; bağlam için son parça atılır.
+          context: (chosen.full_path || "").replace(/\s*>\s*[^>]*$/, "").trim(),
+          unit: chosen.unit || ""
+        }
+      : null;
     setSelectedTariffCode(code, { exact });
     if (exact) prefillVerifiedRates(code);
     await loadTariffTree(code, candidate).catch((error) => renderTariffTreeError(error.message));

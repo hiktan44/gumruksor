@@ -560,3 +560,69 @@ class UnifiedSearchHybridMergeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyResultDiagnosticsTests(unittest.TestCase):
+    """Boş sonuç neden boş — indeks mi ölü, gömme mi kapalı, sorgu mu tutmadı.
+
+    Ölçülen kusur: canlıda ``/api/search/hybrid`` boş dönüyordu ve yanıt bu üç durumu
+    **ayırt etmiyordu**. Hangisi olduğunu bulmak yönetici oturumu gerektiriyordu, bu
+    yüzden teşhis saatlerce yapılamadı. Yanıt artık sebebini kendisi söylüyor.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="hybrid-diag-test-"))
+
+    def tearDown(self) -> None:
+        for path in self.tmp.glob("*"):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    def _index(self, embedder=None) -> HybridIndex:
+        return HybridIndex(db_path=self.tmp / "hybrid_index.sqlite3", embedder=embedder)
+
+    def test_an_empty_index_says_so_instead_of_looking_like_no_match(self):
+        index = self._index(FakeEmbedder())
+        result = asyncio.run(index.search("kablosuz kulaklık"))
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["reason"], "index_empty")
+        self.assertEqual(diagnostics["index_documents"], 0)
+        self.assertIn("hybrid-index-refresh", diagnostics["note"])
+
+    def test_a_populated_index_with_no_embedder_reports_embedding_disabled(self):
+        index = self._index(None)
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        result = asyncio.run(index.search("zzzz-eslesmeyen-ifade"))
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["reason"], "embedding_disabled")
+        self.assertGreater(diagnostics["index_documents"], 0)
+        self.assertIsNone(diagnostics["embedder"])
+
+    def test_a_populated_index_that_matched_nothing_says_no_match(self):
+        index = self._index(FakeEmbedder())
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        asyncio.run(index.embed_pending())
+        result = asyncio.run(index.search("zzzz-eslesmeyen-ifade"))
+        diagnostics = result["diagnostics"]
+        # Gömme çalıştı, indeks dolu: gerçekten eşleşme yok.
+        self.assertEqual(diagnostics["reason"], "no_match")
+
+    def test_a_failing_embedder_is_distinguished_from_a_missing_one(self):
+        index = self._index(FakeEmbedder(fail=True))
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        result = asyncio.run(index.search("zzzz-eslesmeyen-ifade"))
+        diagnostics = result["diagnostics"]
+        # Sağlayıcı kurulu ama bu sorguda vektör üretemedi; "hiç yok"tan farklı.
+        self.assertEqual(diagnostics["reason"], "embedding_unavailable_this_query")
+        self.assertIsNotNone(diagnostics["embedder"])
+
+    def test_a_successful_search_carries_no_diagnostics_block(self):
+        index = self._index(FakeEmbedder())
+        index.upsert_documents([_doc("controls:2", "Kulaklık kapsamı", "kablosuz kulaklık kapsamı", codes=["85183000"])])
+        asyncio.run(index.embed_pending())
+        result = asyncio.run(index.search("kablosuz kulaklık"))
+        self.assertTrue(result["items"])
+        # Dolu sonuçta teşhis bloğu yok: ek sorgu maliyeti doğurmasın.
+        self.assertNotIn("diagnostics", result)

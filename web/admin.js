@@ -292,6 +292,163 @@ $("#llmDiagRecent")?.addEventListener("click", () => showRecentLlmEvents());
 $("#llmDiagText")?.addEventListener("click", () => runLlmDiagnostics(false));
 $("#llmDiagVision")?.addEventListener("click", () => runLlmDiagnostics(true));
 
+// TAB: HYBRID SEARCH INDEX
+async function loadIndexStatus() {
+  const output = $("#indexStatusOutput");
+  const button = $("#indexStatusRefresh");
+  if (button) button.disabled = true;
+  output.innerHTML = "<p>İndeks durumu yükleniyor…</p>";
+  try {
+    const data = await json("/api/admin/index-status");
+    const corpora = Object.entries(data.corpora || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(count)}</td></tr>`)
+      .join("");
+    const dead = Number(data.document_count || 0) === 0;
+    output.innerHTML = `
+      <p class="${dead ? "answer-error" : ""}"><b>${dead ? "İndeks BOŞ — kanıt katmanı ölü." : `${escapeHtml(data.document_count)} belge yüklü.`}</b>
+        ${escapeHtml(data.historical_count ? `${data.historical_count} tanesi yürürlükten kalkmış sürüm (as_of sorgusunun malzemesi).` : "")}</p>
+      <table class="mini-table">
+        <tbody>
+          <tr><th>Gömme</th><td>${data.embedder ? `${escapeHtml(data.embedder)}${data.embedding_model ? ` · ${escapeHtml(data.embedding_model)}` : ""}` : "<b>kapalı</b> (yalnız sözlüksel arama)"}</td></tr>
+          <tr><th>Vektör</th><td>${escapeHtml(data.embedding_count)} gömülü · ${escapeHtml(data.vectors_in_memory)} bellekte${data.pending_embeddings ? ` · <b>${escapeHtml(data.pending_embeddings)} bekliyor</b>` : ""}</td></tr>
+          <tr><th>Son yenileme</th><td>${escapeHtml(data.last_refresh_at || "—")} (her ${escapeHtml(data.refresh_seconds)} sn)</td></tr>
+          <tr><th>Son hata</th><td>${data.last_error ? `<span class="answer-error">${escapeHtml(data.last_error)}</span>` : "—"}</td></tr>
+        </tbody>
+      </table>
+      ${corpora ? `<h3>Korpuslar</h3><table class="mini-table"><thead><tr><th>Korpus</th><th>Belge</th></tr></thead><tbody>${corpora}</tbody></table>` : "<p>Hiçbir korpus yüklenmemiş.</p>"}`;
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+$("#indexStatusRefresh")?.addEventListener("click", () => loadIndexStatus());
+
+// TAB: OFFICIAL GOODS-DESCRIPTION SCHEDULE
+async function loadNomenclatureStatus() {
+  const output = $("#nomenclatureOutput");
+  const button = $("#nomenclatureStatus");
+  if (button) button.disabled = true;
+  output.innerHTML = "<p>Cetvel durumu yükleniyor…</p>";
+  try {
+    const data = await json("/api/tariff/nomenclature/status");
+    if (!data.ready) {
+      output.innerHTML = `<p class="answer-error">Cetvel henüz indirilmedi.${data.errors?.length ? ` Son hata: ${escapeHtml(data.errors[data.errors.length - 1])}` : ""}</p>
+        <p><small>Arka plan işi: <code>tariff-nomenclature-sync</code> (İşler sekmesinden durumu görülebilir).</small></p>`;
+      return;
+    }
+    const levels = Object.entries(data.codes_by_level || {})
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([level, count]) => `${escapeHtml(level)} hane: ${escapeHtml(count)}`)
+      .join(" · ");
+    const warnings = (data.parse_warnings || [])
+      .map((item) => `<li><small>${escapeHtml(item)}</small></li>`)
+      .join("");
+    output.innerHTML = `
+      <table class="mini-table">
+        <tbody>
+          <tr><th>Pozisyon</th><td><b>${escapeHtml(data.code_count)}</b> kod · ${escapeHtml(data.chapter_count)} fasıl · ${escapeHtml(data.note_count)} not</td></tr>
+          <tr><th>Seviye dağılımı</th><td>${levels || "—"}</td></tr>
+          <tr><th>Yasal dayanak</th><td>${escapeHtml(data.legal_act || "—")}${data.gazette_date ? ` · RG ${escapeHtml(data.gazette_date)}${data.gazette_number ? ` / ${escapeHtml(data.gazette_number)}` : ""}` : ""}</td></tr>
+          <tr><th>Yürürlük</th><td>${escapeHtml(data.valid_from || "—")}</td></tr>
+          <tr><th>Arşiv</th><td><code>${escapeHtml(String(data.sha256 || "").slice(0, 16))}…</code><br><small>alındı ${escapeHtml(data.retrieved_at || "—")} · son kontrol ${escapeHtml(data.checked_at || "—")}</small></td></tr>
+          <tr><th>Kaynak</th><td><small>${escapeHtml(data.source_url || "—")}</small><br><small>bulunma yolu: ${escapeHtml(data.discovery || "—")}</small></td></tr>
+        </tbody>
+      </table>
+      <p><small>${escapeHtml(data.statutory_rate_note || "")}</small></p>
+      ${warnings ? `<h3>Ayrıştırma uyarıları</h3><ul>${warnings}</ul>` : ""}`;
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+$("#nomenclatureStatus")?.addEventListener("click", () => loadNomenclatureStatus());
+
+// TAB: CLASSIFICATION ACCURACY BENCHMARK
+function pct(value) {
+  return value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function renderBenchmark(data) {
+  const metrics = data.metrics || {};
+  const datasetRows = Object.entries(data.by_dataset || {})
+    .map(([name, report]) => `
+      <tr>
+        <td><b>${escapeHtml(name === "tr" ? "Türk BTB" : "AB tüzüğü")}</b><br><small>${escapeHtml(report.measured_cases)}/${escapeHtml(report.case_count)} ölçüldü</small></td>
+        <td>${pct(report.metrics?.top1_hs6)}</td>
+        <td>${pct(report.metrics?.top3_hs6)}</td>
+        <td>${pct(report.metrics?.top1_cn8)}</td>
+        <td>${pct(report.metrics?.top3_cn8)}</td>
+      </tr>`)
+    .join("");
+  const caseRows = (data.details || [])
+    .map((item) => `
+      <tr class="${item.top1_cn8 ? "diag-ok" : item.top3_hs6 ? "" : "diag-fail"}">
+        <td><small>${escapeHtml(item.id)}</small></td>
+        <td><small>${escapeHtml((item.candidates || []).join(", ") || "—")}</small></td>
+        <td>${item.top1_hs6 ? "✅" : "—"}</td>
+        <td>${item.top1_cn8 ? "✅" : "—"}</td>
+        <td>${item.top3_cn8 ? "✅" : "—"}</td>
+      </tr>`)
+    .join("");
+  const errorRows = (data.errors || [])
+    .map((item) => `<li><small>${escapeHtml(item.id)}: ${escapeHtml(item.error)}</small></li>`)
+    .join("");
+  const batch = data.batch
+    ? `<p><b>Bu turda koşulan:</b> ${escapeHtml(data.batch.requested)} vaka${(data.batch.failed || []).length ? ` · ${escapeHtml(data.batch.failed.length)} hata` : ""}</p>`
+    : "";
+  return `
+    ${batch}
+    <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${(data.pending_cases || []).length ? ` Kalan ${escapeHtml(data.pending_cases.length)} vaka için yeniden "Parti koş"a basın.` : " Tüm vakalar ölçüldü."}</p>
+    <table class="mini-table">
+      <thead><tr><th>Veri seti</th><th>Top-1 HS6</th><th>Top-3 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead>
+      <tbody>
+        ${datasetRows}
+        <tr><td><b>Toplam</b></td><td><b>${pct(metrics.top1_hs6)}</b></td><td><b>${pct(metrics.top3_hs6)}</b></td><td><b>${pct(metrics.top1_cn8)}</b></td><td><b>${pct(metrics.top3_cn8)}</b></td></tr>
+      </tbody>
+    </table>
+    <p><small>Çekimser (aday üretmedi): ${pct(metrics.abstained)}${(data.code_versions || []).length ? ` · sürüm: ${escapeHtml(data.code_versions.join(", "))}` : ""}</small></p>
+    <p><small>${escapeHtml(data.gtip12_note || "")}</small></p>
+    <p><small>${escapeHtml(data.runner_warning || "")}</small></p>
+    ${errorRows ? `<h3>Ölçülemeyen vakalar</h3><ul>${errorRows}</ul>` : ""}
+    ${caseRows ? `<h3>Vaka bazında</h3><table class="mini-table"><thead><tr><th>Vaka</th><th>Adaylar</th><th>Top-1 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead><tbody>${caseRows}</tbody></table>` : ""}`;
+}
+
+async function loadBenchmark(options) {
+  const output = $("#benchmarkOutput");
+  const buttons = [$("#benchmarkScore"), $("#benchmarkRun"), $("#benchmarkReset")].filter(Boolean);
+  buttons.forEach((btn) => { btn.disabled = true; });
+  const running = Boolean(options);
+  output.innerHTML = running
+    ? "<p>Vakalar gerçek hattan geçiriliyor… Her vaka iki model çağrısı olduğu için bu birkaç dakika sürebilir.</p>"
+    : "<p>Skor yükleniyor…</p>";
+  try {
+    const data = running
+      ? await json("/api/admin/classification-benchmark", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(options),
+        })
+      : await json("/api/admin/classification-benchmark");
+    output.innerHTML = renderBenchmark(data);
+  } catch (error) {
+    output.innerHTML = `<p class="answer-error">${escapeHtml(error.message)}</p>`;
+  } finally {
+    buttons.forEach((btn) => { btn.disabled = false; });
+  }
+}
+
+$("#benchmarkScore")?.addEventListener("click", () => loadBenchmark(null));
+$("#benchmarkRun")?.addEventListener("click", () => loadBenchmark({ limit: 4 }));
+$("#benchmarkReset")?.addEventListener("click", () => {
+  if (!window.confirm("Kayıtlı tüm ölçüm tahminleri silinecek. Yeni ölçüm model kotası harcar. Devam edilsin mi?")) return;
+  loadBenchmark({ limit: 0, reset: true });
+});
+
 // TAB: DATA CHANGE LEDGER
 let currentChangeKind = "";
 

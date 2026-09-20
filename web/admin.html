@@ -159,6 +159,47 @@
         </header>
         <div id="llmDiagnosticsOutput"><p>Test için yukarıdaki düğmelerden birine basın.</p></div>
       </section>
+
+      <section class="results admin-section" id="indexStatusSection">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Hibrit Arama İndeksi</h2>
+            <p>Sınıflandırma kanıtı ve arama bu indeksten beslenir. <b>Belge sayısı 0 ise katman ölüdür</b> ve model resmî kanıt görmeden cevap üretir. Gömme sağlayıcısı yoksa arama yalnız sözlüksel çalışır.</p>
+          </div>
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="indexStatusRefresh">Durumu göster</button>
+          </div>
+        </header>
+        <div id="indexStatusOutput"><p>İndeks durumunu görmek için düğmeye basın.</p></div>
+      </section>
+
+      <section class="results admin-section" id="nomenclatureSection">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Resmî Eşya Tanımı Cetveli</h2>
+            <p>Türk Gümrük Tarife Cetveli (eşya tanımı, ölçü birimi, fasıl notları) resmî Excel arşivinden alınır ve tarife ağacı, sınıflandırma kanıtı ile hibrit aramayı besler. <b>Cetvelin "474 Vergi Haddi" sütunu kanuni azami haddir; uygulanan gümrük vergisi değildir ve hiçbir hesaba girmez.</b></p>
+          </div>
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="nomenclatureStatus">Durumu göster</button>
+          </div>
+        </header>
+        <div id="nomenclatureOutput"><p>Cetvel künyesini görmek için düğmeye basın.</p></div>
+      </section>
+
+      <section class="results admin-section" id="benchmarkSection">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Sınıflandırma Doğruluk Ölçümü</h2>
+            <p>Resmî kaynaklı 16 etiketli vaka (12 AB sınıflandırma tüzüğü kararı + 4 Türk BTB kararı) gerçek sınıflandırma hattından geçirilir ve Top-1/Top-3 doğruluğu ölçülür. <b>Puanı göster ücretsizdir</b> ve model çağırmaz; <b>parti koş model kotası harcar</b> (vaka başına iki bağımsız model çağrısı). Tahminler birikir: partileri arka arkaya koşup toplam skoru görebilirsiniz.</p>
+          </div>
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="benchmarkScore">Puanı göster</button>
+            <button type="button" class="filter-pill" id="benchmarkRun">Parti koş (4 vaka)</button>
+            <button type="button" class="filter-pill" id="benchmarkReset">Kayıtları sıfırla</button>
+          </div>
+        </header>
+        <div id="benchmarkOutput"><p>Mevcut skoru görmek için "Puanı göster"e basın.</p></div>
+      </section>
     </section>
 
     <!-- TAB 3: USERS & CREDITS -->

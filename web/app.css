@@ -416,15 +416,39 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .tariff-tree-questions b { font-size: .63rem; }
 .tariff-tree-questions ul { margin: 7px 0 0; padding-left: 18px; color: var(--ink-2); font-size: .58rem; line-height: 1.65; }
 .tariff-tree-list { display: grid; gap: 8px; padding: 10px; max-height: 420px; overflow: auto; }
-.tariff-tree-node { display: grid; grid-template-columns: 148px minmax(0,1fr) auto; gap: 12px; align-items: center; width: 100%; padding: 11px 12px; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); text-align: left; cursor: pointer; }
+.tariff-tree-node { display: grid; grid-template-columns: 148px minmax(0,1.4fr) minmax(0,1fr) auto; gap: 12px; align-items: center; width: 100%; padding: 11px 12px; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); text-align: left; cursor: pointer; }
 .tariff-tree-node:hover { border-color: var(--orange); background: color-mix(in srgb,var(--orange) 7%,var(--surface)); }
 .tariff-tree-node code { color: var(--teal-dark); font-family: var(--mono); font-size: .82rem; font-weight: 700; }
 .tariff-tree-node code small { display: block; margin-top: 3px; color: var(--ink-3); font-size: .49rem; font-weight: 500; }
 .tariff-tree-node > span { color: var(--ink-2); font-size: .57rem; line-height: 1.45; }
 .tariff-tree-node > b { color: var(--orange-dark,#9a4d0d); font-size: .55rem; white-space: nowrap; }
+/* Resmi esya tanimi: kalin satir kodun kendi tanimi, ince satir ata satirlardan
+   gelen baglam. Cogu yaprak yalnizca "Digerleri" dedigi icin ayirt edici olan
+   ikinci satirdir; bu yuzden ikisi birlikte gosterilir. */
+.tariff-tree-node > .tariff-tree-goods { display: grid; gap: 2px; min-width: 0; }
+.tariff-tree-node > .tariff-tree-goods b { color: var(--ink); font-size: .6rem; line-height: 1.35; white-space: normal; }
+.tariff-tree-node > .tariff-tree-goods small { color: var(--ink-3); font-size: .5rem; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tariff-tree-node > .tariff-tree-goods em { color: var(--ink-3); font-size: .47rem; font-style: normal; }
+/* Cetvel henuz indirilmediyse tanim bosdur; o zaman eski 3 sutunlu duzen korunur. */
+.tariff-tree-node:not(:has(.tariff-tree-goods)) { grid-template-columns: 148px minmax(0,1fr) auto; }
+/* Emsal karar ve Resmi Gazete metni listesi. "baglayici degil" rozeti bilincli olarak
+   basligin icinde durur: bolum ne kadar resmi gorunse de bu iki kaynaktan oran, kod veya
+   belge sarti belirlenmez. */
+.precedent-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.precedent-list li { display: grid; gap: 3px; padding: 9px 11px; border-left: 3px solid var(--teal); background: var(--surface); }
+.precedent-list li b { color: var(--ink); font-size: .62rem; }
+.precedent-list li span { color: var(--ink-2); font-size: .54rem; }
+.precedent-list li code { color: var(--teal-dark); font-family: var(--mono); font-size: .56rem; }
+.precedent-list li small { color: var(--ink-3); font-size: .53rem; line-height: 1.45; }
+.precedent-list li em { color: var(--danger); font-size: .5rem; font-style: normal; }
+.precedent-list li a { color: var(--orange-dark,#9a4d0d); font-size: .53rem; justify-self: start; }
+.badge-nonbinding { display: inline-block; margin-left: 7px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-3); font-size: .46rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; vertical-align: middle; }
 .tariff-tree-final { display: grid; gap: 6px; padding: 18px; border: 1px solid var(--teal); background: var(--teal-soft); }
 .tariff-tree-final b { color: var(--teal-dark); font-family: var(--mono); font-size: 1rem; }
 .tariff-tree-final span { color: var(--ink-2); font-size: .62rem; }
+/* Onaylanan satirin resmi esya tanimi: kullanici neyi onayladigini gormeli. */
+.tariff-tree-final strong { color: var(--ink); font-size: .72rem; line-height: 1.35; }
+.tariff-tree-final small { color: var(--ink-3); font-size: .54rem; line-height: 1.4; }
 .tariff-tree > p { margin: 0; padding: 11px 13px; border-top: 1px solid var(--line); color: var(--danger); font-size: .55rem; line-height: 1.5; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .attribute-review { margin-top: 20px; border: 1px solid var(--teal); background: var(--canvas); }
@@ -1502,6 +1526,12 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .assistant-actions button.secondary-action { border-color: var(--line-strong, var(--line)); background: transparent; color: var(--ink-2); }
 .assistant-actions button[disabled] { opacity: .55; cursor: progress; }
 @media (max-width: 720px) { .assistant-thread { max-height: none; } }
+/* Dar ekranda dort sutun sigmaz; dugum tek sutuna yigilir ve tanim tam okunur. */
+@media (max-width: 720px) {
+  .tariff-tree-node, .tariff-tree-node:not(:has(.tariff-tree-goods)) { grid-template-columns: 1fr; gap: 7px; }
+  .tariff-tree-node > b { white-space: normal; }
+  .tariff-tree-node > .tariff-tree-goods small { -webkit-line-clamp: 3; }
+}
 
 /* Beyanname taslağı (FAZ 8.1) — kutu durumları renkle de ayrışır ki
    "veri yok" bir kutu asla dolu bir kutuyla karışmasın. */

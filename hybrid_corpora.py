@@ -335,8 +335,60 @@ def vat_documents(index: Any) -> list[dict[str, Any]]:
     return docs
 
 
+def nomenclature_documents(engine: Any, *, limit: int = 20_000) -> list[dict[str, Any]]:
+    """Resmî Türk Gümrük Tarife Cetveli eşya tanımları (``tariff_nomenclature``).
+
+    Metin olarak **tam yol** verilir, yalnız satırın kendi tanımı değil: yaprak satırların
+    çoğu "Diğerleri" veya "Cihazlar" der ve tek başına hiçbir ürün ifadesiyle eşleşmez;
+    aileyi ata satırlar taşır. Kimlik uzayı ``tariff:{kod}`` olarak korunur, böylece bu
+    besleyici eski ölçü-satırı kaynağının yerine geçtiğinde indeks kimlikleri değişmez.
+    """
+    db_path = Path(getattr(getattr(engine, "store", None), "db_path", ""))
+    connection = _open(db_path)
+    if connection is None:
+        return []
+    try:
+        rows = connection.execute(
+            """
+            SELECT c.code, c.description, c.full_path, c.unit, c.snapshot_id
+            FROM codes c JOIN snapshots s ON s.id=c.snapshot_id
+            WHERE s.active=1 AND c.full_path != ''
+            ORDER BY c.code LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        logger.warning("Resmî eşya tanımları okunamadı: %s", exc)
+        return []
+    finally:
+        connection.close()
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        text = str(row["full_path"] or "").strip()
+        if not text or text.isdigit():
+            continue
+        docs.append(
+            {
+                "id": f"tariff:{row['code']}",
+                "corpus": CORPUS_TARIFF,
+                "title": f"GTİP {row['code']} — {str(row['description'] or '')[:120]}",
+                "text": text,
+                "gtip_codes": [row["code"]],
+                "source_url": "",
+                "source_sha256": _sha(row["code"], text),
+                "snapshot_id": row["snapshot_id"] or "",
+            }
+        )
+    return docs
+
+
 def tariff_description_documents(engine: Any, *, limit: int = 20_000) -> list[dict[str, Any]]:
-    """Tarife cetveli ölçü satırlarındaki eşya tanımları (varsa; nomenklatür yerine geçici kaynak)."""
+    """Ölçü satırlarındaki eşya tanımları — yalnız nomenklatür henüz indirilmediğinde yedek.
+
+    Ölçüm: İthalat Rejimi ekleri tanım sütunu taşımıyor; bu kaynak yalnız nihai kullanım
+    ve askıya alma listelerinde doluyor, yani kataloğun küçük bir kısmını kapsıyor.
+    Gerçek kaynak ``nomenclature_documents``.
+    """
     db_path = Path(getattr(engine, "db_path", ""))
     connection = _open(db_path)
     if connection is None:
@@ -398,6 +450,7 @@ def collect_all(
     excise_index: Any = None,
     vat_index: Any = None,
     tariff_engine: Any = None,
+    nomenclature_engine: Any = None,
     foreign_tariff_engine: Any = None,
     ebti_engine: Any = None,
     sources_path: str | Path | None = None,
@@ -421,7 +474,13 @@ def collect_all(
         (CORPUS_OFFICIAL_PAGES, lambda: official_page_documents(sources_path)),
         (CORPUS_EXCISE, lambda: excise_documents(excise_index) if excise_index is not None else []),
         (CORPUS_VAT, lambda: vat_documents(vat_index) if vat_index is not None else []),
-        (CORPUS_TARIFF, lambda: tariff_description_documents(tariff_engine) if tariff_engine is not None else []),
+        # Resmî cetvel varsa o kazanır; henüz indirilmediyse ölçü-satırı yedeğine düşülür.
+        (CORPUS_TARIFF, lambda: (
+            nomenclature_documents(nomenclature_engine)
+            or (tariff_description_documents(tariff_engine) if tariff_engine is not None else [])
+        ) if nomenclature_engine is not None else (
+            tariff_description_documents(tariff_engine) if tariff_engine is not None else []
+        )),
         (CORPUS_FOREIGN_TARIFF, lambda: foreign_tariff_documents(foreign_tariff_engine)),
         (CORPUS_EBTI, lambda: ebti_documents(ebti_engine)),
     ]
@@ -438,6 +497,7 @@ def collect_all(
 __all__ = [
     "collect_all",
     "control_documents",
+    "nomenclature_documents",
     "classification_documents",
     "trade_measure_documents",
     "official_page_documents",

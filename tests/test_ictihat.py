@@ -31,6 +31,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import date
 from pathlib import Path
 
@@ -442,6 +443,178 @@ class ArchiveEngineTests(unittest.TestCase):
         self.assertTrue(lines)
         self.assertIn("7. Daire", lines[0])
         self.assertIn("E. 1998/3138", lines[0])
+
+
+class RateLimitTests(unittest.TestCase):
+    """429: kaynağın "dur" demesi tek bir kararın hatası gibi ele alınamaz.
+
+    Canlıda ölçülen kusur: istek arası bekleme 0,5 saniyeyken 9 pencerenin 2'si
+    ``429 Too Many Requests`` yüzünden eksik kaldı ve motor sıradaki kararı denemeye devam
+    ederek ısrar etti. Bu sınıf düzeltmeyi kilitler.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.calls: list[tuple[str, dict]] = []
+        self.rows = [_row("9001"), _row("9002"), _row("9003")]
+        self.rate_limited: set[str] = set()
+        self.countdown: dict[str, int] = {}
+        self.retry_after: str | None = None
+        self.slept: list[float] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            inner = json.loads(request.content).get("data") or {}
+            self.calls.append((request.url.path, inner))
+            if request.url.path.endswith("searchDocuments"):
+                rows = self.rows if int(inner.get("pageNumber") or 1) == 1 else []
+                return httpx.Response(200, json=_search_envelope(rows))
+            document_id = str(inner.get("documentId"))
+            if document_id in self.rate_limited:
+                left = self.countdown.get(document_id)
+                if left is None or left > 0:
+                    if left is not None:
+                        self.countdown[document_id] = left - 1
+                    headers = {"retry-after": self.retry_after} if self.retry_after else {}
+                    return httpx.Response(429, json={}, headers=headers)
+            return httpx.Response(200, json=_content_envelope(_decision_html()))
+
+        self.archive = ic.IctihatArchive(
+            self._tmp.name,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False),
+            delay_seconds=0.0, floor="2020-01-01", window_days=365,
+            phrases=("gümrük tarife istatistik pozisyonu",),
+            rate_limit_backoff=(7.0, 11.0),
+        )
+        self.addCleanup(lambda: _run(self.archive.close()))
+
+        async def fake_sleep(seconds: float) -> None:
+            self.slept.append(seconds)
+
+        patcher = unittest.mock.patch.object(ic.asyncio, "sleep", fake_sleep)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _fetch_count(self, document_id: str) -> int:
+        return sum(
+            1 for path, inner in self.calls
+            if path.endswith("getDocumentContent") and str(inner.get("documentId")) == document_id
+        )
+
+    def test_a_transient_429_is_retried_with_increasing_backoff(self):
+        self.rate_limited.add("9001")
+        self.countdown["9001"] = 1  # bir kez 429, sonra başarılı
+        report = _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertEqual(report["stored"], 3)
+        self.assertTrue(report["complete"])
+        self.assertFalse(report["rate_limited"])
+        self.assertIn(7.0, self.slept)
+
+    def test_the_retry_after_header_is_obeyed_when_longer(self):
+        self.rate_limited.add("9001")
+        self.countdown["9001"] = 1
+        self.retry_after = "30"
+        _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertIn(30.0, self.slept)
+
+    def test_an_absurd_retry_after_is_capped(self):
+        self.rate_limited.add("9001")
+        self.countdown["9001"] = 1
+        self.retry_after = "99999"
+        _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertIn(ic._MAX_RETRY_AFTER_SECONDS, self.slept)
+        self.assertNotIn(99999.0, self.slept)
+
+    def test_an_http_date_retry_after_falls_back_to_the_schedule(self):
+        """``Retry-After`` saniye yerine HTTP-tarih de olabilir; o biçim ayrıştırılmıyor
+        ve kendi takvimimize düşülüyor — güvenli taraf, çünkü takvim zaten bekliyor."""
+        self.rate_limited.add("9001")
+        self.countdown["9001"] = 1
+        self.retry_after = "Wed, 21 Oct 2026 07:28:00 GMT"
+        _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertIn(7.0, self.slept)
+
+    def test_a_persistent_429_stops_the_window_instead_of_insisting(self):
+        """Asıl düzeltme: sıradaki kararı denemek ısrar etmektir."""
+        self.rate_limited.add("9001")  # geri sayım yok → hep 429
+        report = _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertTrue(report["rate_limited"])
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["stored"], 0)
+        self.assertEqual(self._fetch_count("9002"), 0)
+        self.assertEqual(self._fetch_count("9003"), 0)
+        # 9001 yalnız geri çekilme takvimi kadar denendi (1 ilk istek + 2 yeniden deneme).
+        self.assertEqual(self._fetch_count("9001"), 3)
+
+    def test_the_window_stays_pending_and_recovers_later(self):
+        self.rate_limited.add("9001")
+        _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertNotIn(("2024-01-01", "2024-12-31", "x"), self.archive.scanned_windows())
+        self.assertEqual(self.archive.status()["rate_limited_windows"], 1)
+        self.rate_limited.clear()
+        again = _run(self.archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertEqual(again["stored"], 3)
+        self.assertTrue(again["complete"])
+        self.assertIn(("2024-01-01", "2024-12-31", "x"), self.archive.scanned_windows())
+        self.assertEqual(self.archive.status()["rate_limited_windows"], 0)
+
+    def test_a_rate_limited_round_does_not_start_another_window(self):
+        self.rate_limited.add("9001")
+        report = _run(self.archive.backfill(limit=5, today=date(2024, 12, 31)))
+        self.assertTrue(report["rate_limited"])
+        self.assertEqual(report["processed_windows"], 1)
+        searches = [inner for path, inner in self.calls if path.endswith("searchDocuments")]
+        self.assertEqual(len(searches), 1)
+
+    def test_a_rate_limited_search_is_reported_as_such(self):
+        archive = ic.IctihatArchive(
+            self._tmp.name,
+            http=httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda request: httpx.Response(429, json={})),
+                follow_redirects=False,
+            ),
+            delay_seconds=0.0, rate_limit_backoff=(0.0,),
+        )
+        self.addCleanup(lambda: _run(archive.close()))
+        report = _run(archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertTrue(report["rate_limited"])
+        self.assertFalse(report["complete"])
+
+    def test_a_server_error_is_not_treated_as_a_rate_limit(self):
+        """Gerileme kilidi: 500 tek bir kararın hatasıdır, tur devam eder."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            inner = json.loads(request.content).get("data") or {}
+            if request.url.path.endswith("searchDocuments"):
+                rows = self.rows if int(inner.get("pageNumber") or 1) == 1 else []
+                return httpx.Response(200, json=_search_envelope(rows))
+            if str(inner.get("documentId")) == "9001":
+                return httpx.Response(500, json={})
+            return httpx.Response(200, json=_content_envelope(_decision_html()))
+
+        archive = ic.IctihatArchive(
+            self._tmp.name,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False),
+            delay_seconds=0.0, floor="2020-01-01", window_days=365,
+            phrases=("x",), rate_limit_backoff=(0.0,),
+        )
+        self.addCleanup(lambda: _run(archive.close()))
+        report = _run(archive.ingest_window(date(2024, 1, 1), date(2024, 12, 31), "x"))
+        self.assertFalse(report["rate_limited"])
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["stored"], 2)  # 9002 ve 9003 alındı
+
+
+class DefaultsTests(unittest.TestCase):
+    def test_the_request_delay_default_is_not_aggressive(self):
+        """Canlıda 0,5 saniye 429 üretti; varsayılan ölçüme göre yükseltildi."""
+        self.assertGreaterEqual(ic.REQUEST_DELAY_SECONDS, 1.0)
+
+    def test_the_backoff_schedule_increases(self):
+        schedule = list(ic.RATE_LIMIT_BACKOFF)
+        self.assertTrue(schedule)
+        self.assertEqual(schedule, sorted(schedule))
+        self.assertGreaterEqual(schedule[0], 1.0)
 
 
 if __name__ == "__main__":
