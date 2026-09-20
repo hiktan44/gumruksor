@@ -24,6 +24,7 @@ import asyncio
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import date
 from pathlib import Path
 
@@ -198,6 +199,71 @@ class TextQualityTests(unittest.TestCase):
     def test_a_short_title_is_not_called_unreadable_for_lack_of_diacritics(self):
         """Kısa metinde Türkçe'ye özgü harf hiç geçmeyebilir; "okunamadı" demek yanlış olur."""
         self.assertEqual(rg.assess_text("KARAR madde 1")[0], "suspect")
+
+
+class TurkishFoldingTests(unittest.TestCase):
+    """Büyük harfli Türkçe başlık çapa ifadesini kaçırmamalı.
+
+    Python'da ``"TEBLİĞ".lower()`` ``tebli̇ğ`` üretiyor (araya U+0307 birleşen nokta
+    giriyor), bu yüzden düz ``lower()`` ile "tebliğ" çapası **hiç** eşleşmiyordu ve
+    başlığı büyük harf olan temiz bir belge haksız yere ``suspect`` işaretleniyordu.
+    """
+
+    def _document(self, heading: str) -> str:
+        return heading + " " + (
+            "İthalatta gözetim uygulanmasına ilişkin usul ve esaslar belirlenmiştir. " * 12
+        )
+
+    def test_uppercase_headings_are_recognised(self):
+        for heading in ("TEBLİĞ", "YÖNETMELİK", "KARAR", "KANUN"):
+            with self.subTest(heading=heading):
+                quality, note = rg.assess_text(self._document(heading))
+                self.assertEqual(quality, "clean", note)
+
+    def test_a_document_with_no_anchor_is_still_suspect(self):
+        """Gerileme kilidi: katlama çapa ölçütünü gevşetmez, yalnız doğru çalıştırır."""
+        quality, note = rg.assess_text(
+            "Bu sayfa yalnızca bir çerçeve içeriği taşımaktadır ve başka bilgi yoktur. " * 8
+        )
+        self.assertEqual(quality, "suspect")
+        self.assertIn("çapa", note)
+
+
+class TurkishSuffixSearchTests(unittest.TestCase):
+    """Türkçe eklemeli: "kıymet" araması "kıymeti" geçen belgeyi bulmalı."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.archive = rg.ResmiGazeteArchive(
+            self._tmp.name,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request: httpx.Response(404)
+            )),
+            delay_seconds=0.0,
+        )
+        self.addCleanup(lambda: _run(self.archive.close()))
+        entry = rg.GazetteEntry(
+            date="2025-12-31", sequence=1,
+            url="https://www.resmigazete.gov.tr/eskiler/2025/12/20251231M3-1.htm",
+            fmt="htm", title="İthalat Rejimi Kararında Değişiklik",
+            issue_suffix="M3", kind="import_regime", kind_label="İthalat rejimi",
+        )
+        with unittest.mock.patch.object(
+            rg.ResmiGazeteArchive, "_fetch",
+            return_value=(_html_document("TEBLİĞ", "eşyanın gümrük kıymeti beyan edilir"), "text/html"),
+        ):
+            _run(self.archive._store_document(entry))
+
+    def test_a_stem_finds_the_inflected_word(self):
+        self.assertTrue(self.archive.search("kıymet").hits)
+        self.assertTrue(self.archive.search("gümrük kıymet").hits)
+
+    def test_the_exact_word_still_matches(self):
+        self.assertTrue(self.archive.search("kıymeti").hits)
+
+    def test_an_unrelated_stem_does_not_match(self):
+        self.assertEqual(self.archive.search("damping").hits, [])
 
 
 class DecodeTests(unittest.TestCase):

@@ -66,6 +66,7 @@ from typing import Any
 import httpx
 
 from security_firewall import validate_outbound_url
+from turkish_text import fold
 
 logger = logging.getLogger(__name__)
 
@@ -167,19 +168,6 @@ def _now() -> str:
 
 def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
-
-
-#: Türkçe'nin noktalı İ'si ``str.lower()`` sonrası ``i`` + U+0307 (birleşen nokta üstü)
-#: oluyor, bu yüzden ``"ithalat" in "İTHALAT".lower()`` **False** döner. Kaynağın konu
-#: etiketleri tamamı büyük harf ve İ içeriyor ("GÜMRÜK TARİFE İSTATİSTİK POZİSYONU"), yani
-#: bu tuzak gerçek veride ilgi süzgecini sessizce bozuyordu. Karşılaştırma bu katlamayla
-#: yapılır.
-_COMBINING_DOT_ABOVE = "\u0307"
-
-
-def fold(text: str) -> str:
-    """Karşılaştırma için Türkçe duyarlı küçültme."""
-    return (text or "").lower().replace(_COMBINING_DOT_ABOVE, "")
 
 
 def _sha256(text: str) -> str:

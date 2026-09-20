@@ -183,7 +183,12 @@ Okuyucu iki katmandır: `extract_pages` PDF'e dokunur, `build_sections` **saftı
 * **`kesinlesmeDurumu` alanı kesinleşme durumu değil**: içinde kararın konu anahtar kelimeleri (`GÜMRÜK VERGİSİ`, `BİLİRKİŞİ RAPORU`…) ya da düz `"null"` metni var. Konu etiketi olarak okunur ve ilgi ölçümünde sayılır; hiçbir yerde "karar kesinleşti" anlamında gösterilmez.
 * **Seri kararlar birebir yineleniyor** (aynı ihtilafın dört kararı aynı kod kümesiyle); gövde sha256'sı aynı olan karar işaretlenir ve aramada bir kez görünür.
 
-Ayrıca iki Türkçe tuzağı kodda çözülür: `"İTHALAT".lower()` Python'da `i` + birleşen nokta üretiyor ve `"ithalat" in …` **False** dönüyor (kaynağın konu etiketleri tamamı büyük harf) — karşılaştırma Türkçe duyarlı katlamayla yapılır; ve Türkçe eklemeli olduğu için tam metin araması sözcük **ön eki** olarak çalışır, yoksa "kıymet" araması "kıymeti" geçen kararı bulamazdı.
+Ayrıca **Türkçe'nin kendisinden gelen iki tuzak** `turkish_text.py` içinde tek yerde çözülür ve hem içtihat hem Resmî Gazete arşivi onu kullanır:
+
+* `"İTHALAT".lower()` Python'da `i` + birleşen nokta üretiyor, bu yüzden `"ithalat" in …` **False** dönüyor. Kaynağın konu etiketleri tamamı büyük harf olduğu için içtihat ilgi süzgeci, Resmî Gazete'de ise `TEBLİĞ` / `YÖNETMELİK` başlıklı temiz belgeleri `suspect` işaretleyen çapa ölçümü bozuktu.
+* `"KIYMETİ".lower()` noktasız `I`'yı `ı` yerine ASCII `i`'ye düşürüyor; bu gerçek bir terimi vuruyordu — ilgi terimlerinden `kıymet`, `GÜMRÜK KIYMETİ` etiketiyle eşleşmiyordu. Katlama Türkçe kuralını uyguluyor (`İ`→`i`, `I`→`ı`); bilinçli yan etki İngilizce `IMPORT`'un `ımport` olması ve bu belgelenmiştir.
+
+Üçüncü Türkçe düzeltme aramada: dil eklemeli olduğu için tam metin araması sözcük **ön eki** olarak çalışır (her iki arşivde), yoksa "kıymet" araması "kıymeti" geçen belgeyi bulamazdı.
 
 **Değişmez ray: karar emsaldir, bağlayıcı değildir.** Modül hiçbir oran, GTİP tespiti veya belge şartı üretmez ve maliyet hesabına girdi vermez; her sonuç `binding: false` ile döner, kararın dairesini, esas/karar numarasını ve tarihini taşır, `ICTIHAT_AGED_AFTER_YEARS` yılından eskiyse "mevzuat değişmiş olabilir" uyarısı ekler. Eşleşme kullanıcının girdiği koda değil kararın **metninden okunan** koda dayanır; sonuç "bu karar sizin eşyanız için geçerlidir" demez. Kararların yaklaşık üçte birinde kod geçmediği için boş sonuç "o GTİP'te karar yok" anlamına gelmez ve uyarı bunu açıkça yazar.
 
