@@ -616,13 +616,60 @@ class HybridIndex:
             )
         items.sort(key=lambda item: (-item["score"], item["id"]))
         items = items[:limit]
-        return {
+        payload = {
             "query": text,
             "mode": mode,
             "items": items,
             "count": len(items),
             "as_of": as_of,
             "history": bool(as_of),
+        }
+        if not items:
+            # Boş sonuç iki tamamen farklı şeyin aynı cevabı olabilir: "bu sorgu
+            # eşleşmedi" ya da "indeks boş / gömme sağlayıcısı yok". Yanıt bunları
+            # ayırt etmediği için canlıda hangisi olduğunu **saatlerce** bilemedim.
+            # Bu blok yalnız sonuç boşken eklenir; dolu sonuçta maliyeti yok.
+            payload["diagnostics"] = self._empty_result_diagnostics(mode)
+        return payload
+
+    def _empty_result_diagnostics(self, mode: str) -> dict[str, Any]:
+        """Boş sonucun sebebini söyler: indeks mi boş, gömme mi kapalı, sorgu mu tutmadı."""
+        try:
+            with self._connect() as connection:
+                documents = int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+                last_refresh = self._get_meta(connection, "last_refresh_at")
+        except Exception:  # noqa: BLE001 - teşhis bloğu aramayı düşürmemeli
+            return {"reason": "unknown", "note": "İndeks durumu okunamadı."}
+        embedder_configured = self.embedder is not None
+        if documents == 0:
+            reason = "index_empty"
+            note = (
+                "Hibrit indeks boş: hiçbir korpus belgesi yüklenmemiş. "
+                "`hybrid-index-refresh` işinin durumunu ve son hatasını kontrol edin."
+            )
+        elif not embedder_configured:
+            reason = "embedding_disabled"
+            note = (
+                "İndeks dolu ama gömme sağlayıcısı kurulu değil (EMBEDDING_PROVIDER "
+                "ya da anahtar eksik); yalnız sözlüksel arama çalışıyor ve bu sorgu eşleşmedi."
+            )
+        elif mode == "lexical":
+            reason = "embedding_unavailable_this_query"
+            note = (
+                "Gömme sağlayıcısı kurulu ama bu sorgu için vektör üretilemedi "
+                "(zaman aşımı ya da sağlayıcı hatası); yalnız sözlüksel arama çalıştı."
+            )
+        else:
+            reason = "no_match"
+            note = "İndeks dolu ve hibrit arama çalıştı; bu sorgu hiçbir belgeyle eşleşmedi."
+        return {
+            "reason": reason,
+            "note": note,
+            "index_documents": documents,
+            "embedder": self.embedder_name,
+            "embedding_count": len(self._ids),
+            "last_refresh_at": self.last_refresh_at or last_refresh,
+            "last_error": self.last_error,
         }
 
     # ---- status

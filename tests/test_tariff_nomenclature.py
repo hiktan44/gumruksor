@@ -793,3 +793,166 @@ class HybridCorpusTests(unittest.TestCase):
                 self.assertEqual(hybrid_corpora.nomenclature_documents(engine), [])
             finally:
                 asyncio.run(engine.close())
+
+
+class EvidencePackIntegrationTests(unittest.TestCase):
+    """Emsal karar ve Resmî Gazete metni kanıt paketinde — ama bağlayıcı olmadan.
+
+    Ölçülen boşluk: iki arşiv de aylardır yalnız API/MCP üzerinden erişilebiliyordu
+    (`grep -c ictihat web/app.js` → 0, kanıt paketinde → 0). Ürün bunları hiç
+    göstermiyordu.
+
+    Kilitlenen değişmez: ikisi de `binding: false` taşır ve hiçbir oran alanına
+    dokunmaz. Emsal bir kararın oran üretmesi, gümrük müşavirine yargı kararını
+    yürürlükteki tarife gibi göstermek olurdu.
+    """
+
+    def setUp(self) -> None:
+        from customs_advisor import CustomsAdvisor
+
+        self.advisor = CustomsAdvisor()
+
+    def test_no_archive_means_no_block_and_no_error(self):
+        self.assertIsNone(self.advisor._case_law_block("847130000000", "dizüstü bilgisayar"))
+        self.assertIsNone(self.advisor._gazette_block("847130000000", "dizüstü bilgisayar"))
+
+    def test_case_law_block_is_marked_non_binding(self):
+        class FakeArchive:
+            def lookup(self, code, limit=5):
+                return type(
+                    "R", (), {
+                        "hits": [object()],
+                        "as_dict": lambda self: {
+                            "gtip": code, "total": 1, "source_note": "emsaldir",
+                            "hits": [{"birim": "7. Daire", "esas_no": "2020/1", "karar_no": "2021/2",
+                                      "karar_tarihi": "2021-03-04", "binding": False}],
+                        },
+                    },
+                )()
+
+        self.advisor.ictihat_archive = FakeArchive()
+        block = self.advisor._case_law_block("847130000000", "dizüstü bilgisayar")
+        self.assertIsNotNone(block)
+        self.assertIs(block["binding"], False)
+        self.assertIs(block["hits"][0]["binding"], False)
+        # Blok hiçbir oran alanı taşımaz.
+        self.assertNotIn("customs_duty", block)
+        self.assertNotIn("rate", " ".join(block))
+
+    def test_case_law_falls_back_to_full_text_when_the_code_finds_nothing(self):
+        calls: list[str] = []
+
+        class FakeArchive:
+            def lookup(self, code, limit=5):
+                calls.append("lookup")
+                return type("R", (), {"hits": [], "as_dict": lambda self: {"hits": []}})()
+
+            def search(self, query, limit=5):
+                calls.append("search")
+                return type(
+                    "R", (), {
+                        "hits": [object()],
+                        "as_dict": lambda self: {"hits": [{"birim": "VDDK"}], "source_note": "x"},
+                    },
+                )()
+
+        self.advisor.ictihat_archive = FakeArchive()
+        block = self.advisor._case_law_block("847130000000", "dizüstü bilgisayar")
+        # Arşivdeki kararların üçte biri hiç kod anmıyor; kod ıskalarsa metne düşülür.
+        self.assertEqual(calls, ["lookup", "search"])
+        self.assertIsNotNone(block)
+
+    def test_a_short_code_skips_the_code_lookup_entirely(self):
+        class FakeArchive:
+            def lookup(self, code, limit=5):
+                raise AssertionError("4 haneden kısa kodla kod sorgusu yapılmamalı")
+
+            def search(self, query, limit=5):
+                return type("R", (), {"hits": [], "as_dict": lambda self: {"hits": []}})()
+
+        self.advisor.ictihat_archive = FakeArchive()
+        self.assertIsNone(self.advisor._case_law_block("84", "dizüstü bilgisayar"))
+
+    def test_a_failing_archive_never_breaks_the_precheck(self):
+        class Broken:
+            def lookup(self, *args, **kwargs):
+                raise RuntimeError("depo kapalı")
+
+            def search(self, *args, **kwargs):
+                raise RuntimeError("depo kapalı")
+
+        self.advisor.ictihat_archive = Broken()
+        self.advisor.gazette_archive = Broken()
+        self.assertIsNone(self.advisor._case_law_block("847130000000", "x ürünü"))
+        self.assertIsNone(self.advisor._gazette_block("847130000000", "x ürünü"))
+
+    def test_gazette_block_is_marked_non_binding(self):
+        class FakeArchive:
+            def search(self, query, limit=5):
+                return type(
+                    "R", (), {
+                        "as_dict": lambda self: {
+                            "hits": [{"title": "İthalat Tebliği", "date": "2026-01-01"}],
+                            "source_note": "kanıt metni",
+                        },
+                    },
+                )()
+
+        self.advisor.gazette_archive = FakeArchive()
+        block = self.advisor._gazette_block("847130000000", "dizüstü bilgisayar")
+        self.assertIs(block["binding"], False)
+
+    def test_an_empty_result_yields_no_section_rather_than_an_empty_one(self):
+        class Empty:
+            def lookup(self, *args, **kwargs):
+                return type("R", (), {"hits": [], "as_dict": lambda self: {"hits": []}})()
+
+            def search(self, *args, **kwargs):
+                return type("R", (), {"hits": [], "as_dict": lambda self: {"hits": []}})()
+
+        self.advisor.ictihat_archive = Empty()
+        self.advisor.gazette_archive = Empty()
+        # Boş sonuç "böyle bir karar yok" demek değil; bölüm hiç basılmaz.
+        self.assertIsNone(self.advisor._case_law_block("847130000000", "x ürünü"))
+        self.assertIsNone(self.advisor._gazette_block("847130000000", "x ürünü"))
+
+
+class ArbitrationImageTests(unittest.TestCase):
+    """Ayrıştırma turu: resmî tanımlar + görsel, ama görsel metin istemine dökülmeden.
+
+    Kilitlenen iki değişmez:
+
+    * **Görsel ilk tur isteminde yer almaz.** ``model_dump_json`` çıktısı istemin gövdesi
+      olduğu için base64 görselin oraya sızması istemi milyonlarca karaktere çıkarırdı.
+    * **Ayrıştırma turu resmî eşya tanımını görür.** "8471.60.60 mı 8471.60.70 mi"
+      sorusu ancak iki tanım yan yana konursa cevaplanır.
+    """
+
+    def test_the_image_never_lands_in_the_first_round_text_prompt(self):
+        from customs_advisor import ProductClassificationRequest
+
+        request = ProductClassificationRequest(
+            product_description="kablosuz kulaklık, şarj kutulu",
+            image_data_url="data:image/png;base64," + ("A" * 5000),
+        )
+        dumped = request.model_dump_json(indent=2, exclude={"origin_country", "image_data_url"})
+        self.assertNotIn("base64", dumped)
+        self.assertIn("kablosuz kulaklık", dumped)
+
+    def test_the_request_accepts_no_image_and_stays_backward_compatible(self):
+        from customs_advisor import ProductClassificationRequest
+
+        # Görsel alanı olmayan eski gövde hâlâ doğrulanmalı.
+        request = ProductClassificationRequest(product_description="pamuklu tişört, örme")
+        self.assertEqual(request.image_data_url, "")
+
+    def test_only_a_real_image_data_url_is_attached(self):
+        from customs_advisor import ProductClassificationRequest
+
+        # Gönderilen değer bir görsel data URL'si değilse ek içerik parçası kurulmaz;
+        # `startswith("data:image/")` kapısı bunu sağlar.
+        for value in ("", "https://ornek.test/a.png", "data:text/html;base64,AAA"):
+            request = ProductClassificationRequest(
+                product_description="pamuklu tişört, örme", image_data_url=value
+            )
+            self.assertFalse(request.image_data_url.startswith("data:image/"), value)

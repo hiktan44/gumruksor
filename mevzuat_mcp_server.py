@@ -317,6 +317,10 @@ eu_vat_index = EuVatRates()
 customs_advisor_service.eu_vat_index = eu_vat_index
 # Sınıflandırma adaylarını resmî cetvel metninden çeker; gömme sağlayıcısı gerekmez.
 customs_advisor_service.nomenclature_engine = nomenclature_engine
+# Emsal karar ve mevzuat metni kanıt paketine girer; ikisi de bağlayıcı değildir ve
+# hiçbir oran, kod veya belge şartı bu kaynaklardan belirlenmez.
+customs_advisor_service.ictihat_archive = ictihat_archive
+customs_advisor_service.gazette_archive = resmi_gazete_archive
 _register_loop("eu-vat-sync", eu_vat_index.periodic_sync_loop)
 
 

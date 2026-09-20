@@ -70,6 +70,9 @@ _CLASSIFICATION_HYBRID_LIMIT = 8
 _CLASSIFICATION_EVIDENCE_IDS_MAX = 5
 #: Resmî cetvelden kaç aday tanım isteme eklenecek. Hibrit kanıttan ayrı bir bütçe:
 #: canlı ölçümde hibrit katman boş döndüğü için cetvel kanıtı tek başına yeterli olmalı.
+#: Görselin data URL biçiminde en fazla uzunluğu (~3 MB base64). Ayrıştırma turu için
+#: küçük bir görsel yeterli; tavan istemi ve belleği korur.
+_CLASSIFICATION_IMAGE_MAX_CHARS = 4_000_000
 _CLASSIFICATION_NOMENCLATURE_LIMIT = max(
     2, min(int(os.environ.get("CLASSIFICATION_NOMENCLATURE_LIMIT") or 8), 20)
 )
@@ -397,6 +400,10 @@ class ProductClassificationRequest(BaseModel):
     classification_questions: str = Field("", max_length=1500)
     classification_answers: list[ClassificationAnswer] = Field(default_factory=list, max_length=12)
     origin_country: str = Field("", max_length=100)
+    # Ürün fotoğrafı (data URL). Bilinçli olarak yalnız **ayrıştırma turunda** kullanılır:
+    # iki aday arasında karar verirken resmî eşya tanımları görselle karşılaştırılır.
+    # Görsel tek başına asla kod üretmez — aday havuzu deterministik motordan gelir.
+    image_data_url: str = Field("", max_length=_CLASSIFICATION_IMAGE_MAX_CHARS)
 
 
 class TariffCandidateDraft(BaseModel):
@@ -551,6 +558,12 @@ class CustomsEvidencePack(BaseModel):
     control_lookup: ImportControlLookupResult | None = None
     origin_documents: OriginDocumentRequirements | None = None
     export_requirements: ExportRequirements | None = None
+    # Türk yargı içtihadı (Danıştay) ve Resmî Gazete metin eşleşmeleri. İkisi de
+    # **bağlayıcı değildir**: emsal ve mevzuat metnidir. Hiçbir oran, kod veya belge
+    # şartı buradan belirlenmez; bu yüzden ayrı alanlarda ve ``binding: false`` ile
+    # taşınırlar, ``official_rates`` içine hiç girmezler.
+    case_law: dict[str, Any] | None = None
+    gazette_matches: dict[str, Any] | None = None
     sources: list[EvidenceSource]
     legal_notice: str
     image_observation_rule: str = (
@@ -2659,6 +2672,10 @@ class CustomsAdvisor:
         # Resmî eşya tanımı motoru (tariff_nomenclature). Sınıflandırmada adayları
         # cetvelin kendi metninden çeker; gömme sağlayıcısına ihtiyaç duymaz.
         self.nomenclature_engine: Any = None
+        # Danıştay gümrük içtihadı arşivi ve Resmî Gazete metin arşivi; sunucuda
+        # bağlanır. İkisi de emsal/metin kaynağıdır, oran üretmez.
+        self.ictihat_archive: Any = None
+        self.gazette_archive: Any = None
 
 
     async def _eu_free_duty(
@@ -2889,6 +2906,51 @@ class CustomsAdvisor:
             )
         return entries
 
+    def _case_law_block(self, gtip: str, description: str) -> dict[str, Any] | None:
+        """Aday GTİP için Danıştay emsal kararları; **bağlayıcı değil**.
+
+        Kod eşleşmesi kararın kendi metninden okunmuş GTİP'ten gelir. Arşivdeki
+        kararların yaklaşık üçte biri hiç kod anmıyor, bu yüzden kod boş dönerse ürün
+        tanımıyla tam metin aramasına düşülür — boş sonuç "böyle bir karar yok"
+        anlamına gelmez ve blok bunu yazar.
+        """
+        archive = getattr(self, "ictihat_archive", None)
+        if archive is None:
+            return None
+        code = _normalise_gtip(gtip) or ""
+        try:
+            result = archive.lookup(code, limit=4) if len(code) >= 4 else None
+            if (result is None or not result.hits) and str(description or "").strip():
+                result = archive.search(str(description)[:200], limit=4)
+        except Exception:
+            logger.info("İçtihat emsali alınamadı; akış emsalsiz sürer")
+            return None
+        if result is None or not result.hits:
+            return None
+        data = result.as_dict()
+        data["binding"] = False
+        return data
+
+    def _gazette_block(self, gtip: str, description: str) -> dict[str, Any] | None:
+        """Resmî Gazete arşivinde kodla veya ürün tanımıyla eşleşen mevzuat metni."""
+        archive = getattr(self, "gazette_archive", None)
+        if archive is None:
+            return None
+        code = _normalise_gtip(gtip) or ""
+        query = " ".join(part for part in (code[:8], str(description or "")[:160]) if part).strip()
+        if len(query) < 3:
+            return None
+        try:
+            result = archive.search(query, limit=4)
+        except Exception:
+            logger.info("Resmî Gazete eşleşmesi alınamadı; akış metin olmadan sürer")
+            return None
+        data = result.as_dict() if hasattr(result, "as_dict") else result
+        if not isinstance(data, dict) or not data.get("hits"):
+            return None
+        data["binding"] = False
+        return data
+
     async def evidence_pack(self, inquiry: CustomsInquiry) -> CustomsEvidencePack:
         as_of = datetime.now().astimezone().isoformat(timespec="seconds")
         is_export = inquiry.direction == "export"
@@ -3085,6 +3147,10 @@ class CustomsAdvisor:
                 dispatch_country=inquiry.dispatch_country,
             ),
             export_requirements=await self._export_requirements(inquiry) if is_export else None,
+            # Emsal ve mevzuat metni iki yönde de değerlidir: AB'ye ihracatta da Danıştay
+            # kararı ve tebliğ metni aynı sınıflandırma sorusunu aydınlatır.
+            case_law=self._case_law_block(inquiry.candidate_gtip or "", inquiry.product_description or ""),
+            gazette_matches=self._gazette_block(inquiry.candidate_gtip or "", inquiry.product_description or ""),
             sources=sources,
             legal_notice=_legal_notice(as_of),
             # Mevcut karar sorularının hepsi ithalat vergisi sorusudur (KDV, KKDF, gözetim,
@@ -3203,7 +3269,12 @@ class CustomsAdvisor:
                 *hybrid_entries,
             ]
         hybrid_ids = {entry["id"] for entry in hybrid_entries}
-        user_content = request.model_dump_json(indent=2, exclude={"origin_country"})
+        # ``image_data_url`` **dışarıda**: base64 gövdeyi metin istemine dökmek istemi
+        # milyonlarca karaktere çıkarır ve ilk turun işine yaramaz. Görsel yalnız
+        # ayrıştırma turunda, kendi içerik parçası olarak gönderilir.
+        user_content = request.model_dump_json(
+            indent=2, exclude={"origin_country", "image_data_url"}
+        )
         if hybrid_entries:
             user_content = f"{user_content}\n\n{_official_evidence_prompt(hybrid_entries)}"
         messages = [
@@ -3288,9 +3359,23 @@ class CustomsAdvisor:
         top_disagreement = bool(primary_top and verifier_top and primary_top != verifier_top)
         arbitrated = False
         if top_disagreement and len(configured_models) > 2 and assets:
+            # Ayrışan adayların **resmî eşya tanımı**. Asıl karşılaştırma malzemesi bu:
+            # "8471.60.60 mı 8471.60.70 mi" sorusu ancak iki tanımı yan yana koyarak
+            # cevaplanır. Cetvel bağlı değilse alanlar boş kalır ve tur eskisi gibi
+            # yalnız kanıt özetiyle çalışır.
+            official_descriptions = {}
+            engine = getattr(self, "nomenclature_engine", None)
+            if engine is not None:
+                try:
+                    official_descriptions = engine.describe_many(assets.keys())
+                except Exception:
+                    logger.info("Ayrıştırma turuna eşya tanımı eklenemedi")
             evidence_summary = {
                 code: {
                     "official_gtip12_descendants": lookup.matched_gtip_count,
+                    "official_goods_description": official_descriptions.get(code, {}).get("description", ""),
+                    "official_goods_full_path": official_descriptions.get(code, {}).get("full_path", ""),
+                    "official_unit": official_descriptions.get(code, {}).get("unit", ""),
                     "classification_evidence": [
                         {
                             "id": hit.id,
@@ -3303,23 +3388,39 @@ class CustomsAdvisor:
                 }
                 for code, (lookup, evidence) in assets.items()
             }
+            arbitration_prompt = (
+                "İki bağımsız modelin ilk tercihi ayrıştı. Yalnız aşağıdaki aday kodlar arasından, "
+                "ürün evsafı ve resmî kanıt özetini kullanarak yeniden sırala; yeni kod üretme.\n"
+                "Adayları ayırt ederken önce `official_goods_description` ve "
+                "`official_goods_full_path` alanlarını karşılaştır: bunlar resmî Türk Gümrük "
+                "Tarife Cetvelinin kendi metnidir. Bir görsel verildiyse görselde gördüğün "
+                "somut özelliği bu tanımlardaki ayırt edici ölçütle (malzeme, işlev, ölçü, "
+                "ambalaj, kullanım) eşleştir ve gerekçende hangi özelliğin hangi tanıma "
+                "uyduğunu yaz. Görselde göremediğin bir özelliği varsaymak yerine "
+                "decisive_missing_information alanına yaz.\n"
+                + json.dumps(
+                    {
+                        "product": request.model_dump(
+                            mode="json", exclude={"origin_country", "image_data_url"}
+                        ),
+                        "model_reports": [item.model_dump(mode="json") for item, _ in opinions],
+                        "official_evidence": evidence_summary,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            # Görsel **yalnız bu turda** kullanılır: iki aday arasında karar verirken
+            # fotoğraf, tanımdaki ayırt edici ölçütü doğrulayan tek kanıttır. Aday havuzu
+            # deterministik motordan geldiği için görsel yeni kod üretemez.
+            arbitration_content: Any = arbitration_prompt
+            if request.image_data_url.startswith("data:image/"):
+                arbitration_content = [
+                    {"type": "text", "text": arbitration_prompt},
+                    {"type": "image_url", "image_url": {"url": request.image_data_url}},
+                ]
             arbitration_messages = [
                 {"role": "system", "content": _CLASSIFICATION_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "İki bağımsız modelin ilk tercihi ayrıştı. Yalnız aşağıdaki aday kodlar arasından, "
-                        "ürün evsafı ve resmî kanıt özetini kullanarak yeniden sırala; yeni kod üretme.\n"
-                        + json.dumps(
-                            {
-                                "product": request.model_dump(mode="json", exclude={"origin_country"}),
-                                "model_reports": [item.model_dump(mode="json") for item, _ in opinions],
-                                "official_evidence": evidence_summary,
-                            },
-                            ensure_ascii=False,
-                        )
-                    ),
-                },
+                {"role": "user", "content": arbitration_content},
             ]
             try:
                 arbitration_text, arbitration_model = await _openrouter_chat(

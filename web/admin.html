@@ -160,6 +160,32 @@
         <div id="llmDiagnosticsOutput"><p>Test için yukarıdaki düğmelerden birine basın.</p></div>
       </section>
 
+      <section class="results admin-section" id="indexStatusSection">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Hibrit Arama İndeksi</h2>
+            <p>Sınıflandırma kanıtı ve arama bu indeksten beslenir. <b>Belge sayısı 0 ise katman ölüdür</b> ve model resmî kanıt görmeden cevap üretir. Gömme sağlayıcısı yoksa arama yalnız sözlüksel çalışır.</p>
+          </div>
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="indexStatusRefresh">Durumu göster</button>
+          </div>
+        </header>
+        <div id="indexStatusOutput"><p>İndeks durumunu görmek için düğmeye basın.</p></div>
+      </section>
+
+      <section class="results admin-section" id="nomenclatureSection">
+        <header class="results-header flex-header">
+          <div>
+            <h2>Resmî Eşya Tanımı Cetveli</h2>
+            <p>Türk Gümrük Tarife Cetveli (eşya tanımı, ölçü birimi, fasıl notları) resmî Excel arşivinden alınır ve tarife ağacı, sınıflandırma kanıtı ile hibrit aramayı besler. <b>Cetvelin "474 Vergi Haddi" sütunu kanuni azami haddir; uygulanan gümrük vergisi değildir ve hiçbir hesaba girmez.</b></p>
+          </div>
+          <div class="filter-pills">
+            <button type="button" class="filter-pill active" id="nomenclatureStatus">Durumu göster</button>
+          </div>
+        </header>
+        <div id="nomenclatureOutput"><p>Cetvel künyesini görmek için düğmeye basın.</p></div>
+      </section>
+
       <section class="results admin-section" id="benchmarkSection">
         <header class="results-header flex-header">
           <div>

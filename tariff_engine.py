@@ -164,6 +164,14 @@ class TariffLookupResult(BaseModel):
     status: Literal["matched", "partial", "not_found", "unavailable"]
     gtip: str
     match_mode: Literal["exact", "prefix"] = "exact"
+    # Resmî Türk Gümrük Tarife Cetvelinden gelen eşya tanımı (``tariff_nomenclature``).
+    # Motor bağlı değilse boş kalır ve yanıt eskisiyle birebir aynıdır. ``goods_full_path``
+    # ata satırlarla birleştirilmiş hâl: çoğu 12 haneli satırın kendi tanımı yalnız
+    # "Diğerleri"dir ve tek başına hiçbir sınıflandırma sorusunu cevaplamaz.
+    goods_description: str = ""
+    goods_full_path: str = ""
+    goods_unit: str = ""
+    goods_matched_code: str = ""
     matched_gtips: list[str] = Field(default_factory=list)
     matched_gtip_count: int = 0
     origin_country: str | None = None
@@ -1609,7 +1617,7 @@ class TariffEngine:
         )
         self._stamp_validity(result, snapshots, as_of)
         self._attach_trade_measures(result)
-        return result
+        return self._describe_lookup(result)
 
     async def decision_tree(
         self,
@@ -1728,6 +1736,32 @@ class TariffEngine:
             exact_gtip_selected=False,
             warnings=warnings,
             as_of=current.as_of, as_of_date=current.as_of_date, validity_basis=current.validity_basis,
+        )
+
+    def _describe_lookup(self, result: TariffLookupResult) -> TariffLookupResult:
+        """Sorgu sonucuna resmî eşya tanımını ekler; motor yoksa hiçbir şey yapmaz.
+
+        Tam eşleşme yoksa nomenklatür motoru en yakın üst pozisyondan cevap verir ve
+        ``goods_matched_code`` hangi seviyeden geldiğini söyler — 12 haneli bir kodun
+        tanımı 8 haneden geliyorsa kullanıcının bunu bilmesi gerekir.
+        """
+        engine = getattr(self, "nomenclature", None)
+        if engine is None or not result.gtip:
+            return result
+        try:
+            described = engine.lookup(result.gtip, with_children=False)
+        except Exception:
+            logger.exception("Tarife sonucuna eşya tanımı eklenemedi")
+            return result
+        if getattr(described, "status", "") != "matched":
+            return result
+        return result.model_copy(
+            update={
+                "goods_description": described.description,
+                "goods_full_path": described.full_path,
+                "goods_unit": described.unit,
+                "goods_matched_code": described.matched_code,
+            }
         )
 
     def _describe_children(self, children: list[TariffTreeNode]) -> None:
