@@ -225,6 +225,12 @@ class TariffTreeNode(BaseModel):
     description: str = ""
     full_path: str = ""
     unit: str = ""
+    #: Tanım metninin nereden geldiği. Cetvel satırlarını yalnız 4, 6 ve 12 hanede
+    #: yayımlıyor (8 hanede 14 satır, 10 hanede hiç), bu yüzden ağacın seçim yapılan
+    #: iki ara seviyesinde tanım kodsuz ağaç satırlarından geri okunur. Kullanıcının
+    #: metnin kendi kodundan mı üst pozisyondan mı geldiğini bilmesi gerekir.
+    description_source: Literal["", "exact", "descendants", "ancestor"] = ""
+    description_code: str = ""
     descendant_count: int = Field(..., ge=1)
     rate_status: Literal["unambiguous", "ambiguous", "origin_required"]
     unambiguous_rates: dict[str, float] = Field(default_factory=dict)
@@ -1785,6 +1791,8 @@ class TariffEngine:
             node.description = str(row.get("description") or "")
             node.full_path = str(row.get("full_path") or "")
             node.unit = str(row.get("unit") or "")
+            node.description_source = str(row.get("source") or "exact")
+            node.description_code = str(row.get("matched_code") or node.code)
 
     async def calculate(
         self,

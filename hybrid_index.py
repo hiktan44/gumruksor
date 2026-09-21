@@ -624,16 +624,24 @@ class HybridIndex:
             "as_of": as_of,
             "history": bool(as_of),
         }
-        if not items:
+        if not items or mode != "hybrid":
             # Boş sonuç iki tamamen farklı şeyin aynı cevabı olabilir: "bu sorgu
             # eşleşmedi" ya da "indeks boş / gömme sağlayıcısı yok". Yanıt bunları
             # ayırt etmediği için canlıda hangisi olduğunu **saatlerce** bilemedim.
-            # Bu blok yalnız sonuç boşken eklenir; dolu sonuçta maliyeti yok.
-            payload["diagnostics"] = self._empty_result_diagnostics(mode)
+            #
+            # Teşhis **düşmüş modda da** eklenir, yalnız boş sonuçta değil: canlıda
+            # ``mode: lexical`` ile dolu sonuç aldım ve "vektör katmanı neden kapalı"
+            # sorusunun cevabı yine hiçbir yerde yazmıyordu — asıl sorulan soru buydu.
+            # Hibrit ve dolu sonuçta blok hiç eklenmez, o yolda maliyeti yok.
+            payload["diagnostics"] = self._result_diagnostics(mode, empty=not items)
         return payload
 
-    def _empty_result_diagnostics(self, mode: str) -> dict[str, Any]:
-        """Boş sonucun sebebini söyler: indeks mi boş, gömme mi kapalı, sorgu mu tutmadı."""
+    def _result_diagnostics(self, mode: str, *, empty: bool = True) -> dict[str, Any]:
+        """Sebebi söyler: indeks mi boş, gömme mi kapalı, sorgu mu tutmadı.
+
+        ``empty`` yanlışsa sonuç dolu ama mod düşmüş demektir; metinler bu iki durumu
+        karıştırmamalı, yoksa teşhis kullanıcıyı yanlış yere bakmaya gönderir.
+        """
         try:
             with self._connect() as connection:
                 documents = int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
@@ -651,7 +659,8 @@ class HybridIndex:
             reason = "embedding_disabled"
             note = (
                 "İndeks dolu ama gömme sağlayıcısı kurulu değil (EMBEDDING_PROVIDER "
-                "ya da anahtar eksik); yalnız sözlüksel arama çalışıyor ve bu sorgu eşleşmedi."
+                "ya da anahtar eksik); yalnız sözlüksel arama çalışıyor"
+                + (" ve bu sorgu eşleşmedi." if empty else ", anlamsal eşleşme yapılamıyor.")
             )
         elif mode == "lexical":
             reason = "embedding_unavailable_this_query"

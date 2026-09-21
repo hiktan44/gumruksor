@@ -609,6 +609,34 @@ class EmptyResultDiagnosticsTests(unittest.TestCase):
         # Gömme çalıştı, indeks dolu: gerçekten eşleşme yok.
         self.assertEqual(diagnostics["reason"], "no_match")
 
+    def test_a_degraded_mode_with_results_still_reports_why(self):
+        """Asıl kilit: sonuç dolu ama mod ``lexical`` ise sebep yine yazılmalı.
+
+        Canlıda ölçtüm: ``/api/search/hybrid?q=kablosuz kulaklik`` sonuç döndürdü,
+        ``mode: lexical`` yazdı ve ``diagnostics`` **null** geldi. "Vektör katmanı neden
+        kapalı" sorusu tam olarak bu durumda sorulur; teşhis yalnız boş sonuçta eklendiği
+        için cevap hiçbir yerde yazmıyordu.
+        """
+        index = self._index(None)
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        result = asyncio.run(index.search("kontrol"))
+        self.assertTrue(result["items"], "kurgu eşleşmeli, yoksa test boş sonucu ölçer")
+        self.assertEqual(result["mode"], "lexical")
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["reason"], "embedding_disabled")
+        # Sonuç dolu; metin "bu sorgu eşleşmedi" dememeli, yoksa teşhis yanlış yere bakar.
+        self.assertNotIn("eşleşmedi", diagnostics["note"])
+
+    def test_a_healthy_hybrid_query_with_results_carries_no_diagnostics(self):
+        """Gerileme kilidi: sağlıklı yolda blok eklenmez, yanıt büyümez."""
+        index = self._index(FakeEmbedder())
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        asyncio.run(index.embed_pending())
+        result = asyncio.run(index.search("kontrol"))
+        self.assertTrue(result["items"])
+        self.assertEqual(result["mode"], "hybrid")
+        self.assertNotIn("diagnostics", result)
+
     def test_a_failing_embedder_is_distinguished_from_a_missing_one(self):
         index = self._index(FakeEmbedder(fail=True))
         index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
