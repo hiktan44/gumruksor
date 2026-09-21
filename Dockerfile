@@ -20,10 +20,15 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
 # Copy Python files and the reviewed dependency lock
 COPY pyproject.toml uv.lock setup.py README.md ./
 COPY *.py ./
-COPY ticaret_sources.json ./
-COPY customs_sources.json ./
-COPY tariff_sources.json ./
-COPY control_sources.json ./
+# Kaynak künyeleri tek tek değil topluca kopyalanır.
+#
+# Tek tek yazıldığında yeni bir künye dosyası eklemek Dockerfile'ı güncellemeyi de
+# gerektiriyordu ve bu unutuldu: `tariff_nomenclature_sources.json` imaja hiç girmedi,
+# `NomenclatureEngine()` içe aktarma anında FileNotFoundError fırlattı, uygulama hiç
+# açılmadı ve Coolify her denemede eski sürüme geri döndü. Yıldızlı kopyalama
+# (yukarıdaki `*.py` ile aynı desen) bu hata sınıfını kapatır; ayrıca
+# `tests/test_dockerfile_packaging.py` her künye dosyasının imaja girdiğini kilitler.
+COPY *.json ./
 COPY data/ ./data/
 COPY semantic_search/ ./semantic_search/
 COPY benchmarks/ ./benchmarks/
