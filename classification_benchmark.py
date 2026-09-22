@@ -437,6 +437,15 @@ async def run_and_score(
         "case_ids": [str(case["id"]) for case in batch],
         "failed": [item.to_dict() for item in predictions if item.error],
     }
+    # **Kalan vaka listesi burada da dönmeli.** Canlıda ölçtüğüm hata: bu alanı yalnız
+    # ``GET`` rotası eklediği için parti koşusundan sonra panel her seferinde "Tüm
+    # vakalar ölçüldü" yazıyordu — 8/16'da bile. Kullanıcı bu yüzden ölçümü yarıda
+    # bıraktı ve yarım ölçümü tam sanıp okudu. Alan eksik olduğunda arayüzün
+    # varsayılanı "bitti" oluyor, yani sessiz değil, **yanlış** cevap veriyor.
+    report["pending_cases"] = [
+        str(case["id"])
+        for case in select_cases(cases, skip_ids=ledger.stored_ids(dataset))
+    ]
     return report
 
 

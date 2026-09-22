@@ -401,9 +401,21 @@ function renderBenchmark(data) {
   const batch = data.batch
     ? `<p><b>Bu turda koşulan:</b> ${escapeHtml(data.batch.requested)} vaka${(data.batch.failed || []).length ? ` · ${escapeHtml(data.batch.failed.length)} hata` : ""}</p>`
     : "";
+  // Koşulmayan vaka sayısını **rapordan** oku; `pending_cases` eksikse "bitti" varsayma.
+  // Canlıda bu varsayım yarım ölçümü tam gösterdi ve kullanıcı 8/16'da durdu.
+  const notRun = Number(data.counts?.not_run ?? Math.max(0, (data.case_count || 0) - (data.measured_cases || 0)));
+  const pending = (data.pending_cases || []).length;
+  const measuredPct = (key) => (data.metrics_measured && data.metrics_measured[key] != null ? pct(data.metrics_measured[key]) : "—");
+  const completion = notRun === 0
+    ? " Tüm vakalar ölçüldü."
+    : ` <b>Kalan ${escapeHtml(notRun)} vaka henüz koşulmadı${pending && pending !== notRun ? ` (kuyrukta ${escapeHtml(pending)})` : ""}</b> ve aşağıdaki toplam skorda <b>başarısız sayılıyor</b>. Bitirmek için "Parti koş"a ${escapeHtml(Math.ceil(notRun / 4))} kez daha basın.`;
+  const measuredLine = notRun > 0 && data.measured_cases
+    ? `<p><b>Koşulanlarda doğruluk:</b> Top-1 HS6 ${measuredPct("top1_hs6")} · Top-3 HS6 ${measuredPct("top3_hs6")} · Top-1 CN8 ${measuredPct("top1_cn8")} · Top-3 CN8 ${measuredPct("top3_cn8")} <small>(yalnız ${escapeHtml(data.measured_cases)} koşulan vaka üzerinden; "sistem cevap verdiğinde ne kadar doğru" sorusunun cevabı)</small></p>`
+    : "";
   return `
     ${batch}
-    <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${(data.pending_cases || []).length ? ` Kalan ${escapeHtml(data.pending_cases.length)} vaka için yeniden "Parti koş"a basın.` : " Tüm vakalar ölçüldü."}</p>
+    <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${completion}</p>
+    ${measuredLine}
     <table class="mini-table">
       <thead><tr><th>Veri seti</th><th>Top-1 HS6</th><th>Top-3 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead>
       <tbody>
@@ -411,7 +423,7 @@ function renderBenchmark(data) {
         <tr><td><b>Toplam</b></td><td><b>${pct(metrics.top1_hs6)}</b></td><td><b>${pct(metrics.top3_hs6)}</b></td><td><b>${pct(metrics.top1_cn8)}</b></td><td><b>${pct(metrics.top3_cn8)}</b></td></tr>
       </tbody>
     </table>
-    <p><small>Çekimser (aday üretmedi): ${pct(metrics.abstained)}${(data.code_versions || []).length ? ` · sürüm: ${escapeHtml(data.code_versions.join(", "))}` : ""}</small></p>
+    <p><small>Çekimser (koştu, aday üretmedi): ${pct(metrics.abstained)}${notRun ? ` · koşulmadı: ${escapeHtml(notRun)} vaka` : ""}${(data.code_versions || []).length ? ` · sürüm: ${escapeHtml(data.code_versions.join(", "))}` : ""}</small></p>
     <p><small>${escapeHtml(data.gtip12_note || "")}</small></p>
     <p><small>${escapeHtml(data.runner_warning || "")}</small></p>
     ${errorRows ? `<h3>Ölçülemeyen vakalar</h3><ul>${errorRows}</ul>` : ""}

@@ -61,5 +61,40 @@ class CustomsBenchmarkTests(unittest.TestCase):
                 load_cases(path)
 
 
+    def test_an_unrun_case_is_not_reported_as_an_abstention(self):
+        """Koşulmamış vaka çekimser değildir: model konuşmadı çünkü sorulmadı.
+
+        **Canlıda ölçüldü.** 16 vakanın 8'i koşulmuşken panel "Çekimser (aday üretmedi):
+        %50" yazıyordu. O 8 vaka çekimser kalmamıştı, hiç koşulmamıştı; koşulan 8'in
+        8'i de doğruydu. İki farklı olguyu tek sayaçta toplamak raporu yanlış yapar:
+        "model bu ürünü sınıflandıramadı" ile "bu ürünü hiç sormadık" aynı şey değil ve
+        farklı işler gerektirir.
+        """
+        cases = [
+            {"id": "a", "description": "x", "expected_cn8": {"12345678"}, "accepted_hs6": {"123456"}},
+            {"id": "b", "description": "y", "expected_cn8": {"87654321"}, "accepted_hs6": {"876543"}},
+        ]
+        # "a" koştu ve aday üretmedi (gerçek çekimser); "b" hiç koşulmadı.
+        report = evaluate_predictions(cases, [{"id": "a", "candidates": []}])
+        self.assertEqual(report["counts"]["abstained"], 1, "yalnız koşan ve susan vaka")
+        self.assertEqual(report["counts"]["not_run"], 1, "koşulmayan ayrı sayılmalı")
+        self.assertEqual(report["measured_case_count"], 1)
+
+    def test_measured_only_accuracy_is_reported_beside_the_total(self):
+        """Kısmi ölçümde iki oran gerekir: toplam ve koşulanlar.
+
+        Toplam oran koşulmayanı başarısız sayar, bu kasıtlıdır ve veri setinin
+        tamamındaki başarımı verir. Ama "sistem cevap verdiğinde ne kadar doğru"
+        sorusunun cevabı ayrı bir orandır; ikisini karıştırmak yarım ölçümde sistemi
+        olduğundan kötü gösterir. Canlıda tam bu oldu: gerçek 8/8 iken panel %50 dedi.
+        """
+        cases = [
+            {"id": "a", "description": "x", "expected_cn8": {"12345678"}, "accepted_hs6": {"123456"}},
+            {"id": "b", "description": "y", "expected_cn8": {"87654321"}, "accepted_hs6": {"876543"}},
+        ]
+        report = evaluate_predictions(cases, [{"id": "a", "candidates": ["12345678"]}])
+        self.assertEqual(report["metrics"]["top1_cn8"], 0.5, "toplam: koşulmayan başarısız")
+        self.assertEqual(report["metrics_measured"]["top1_cn8"], 1.0, "koşulanlarda tam isabet")
+
 if __name__ == "__main__":
     unittest.main()
