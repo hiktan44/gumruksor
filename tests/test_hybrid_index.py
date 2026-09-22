@@ -8,6 +8,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -637,14 +638,73 @@ class EmptyResultDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["mode"], "hybrid")
         self.assertNotIn("diagnostics", result)
 
+    def test_the_diagnostics_report_the_real_embedding_latency_and_budget(self):
+        """Bütçe ölçüme göre ayarlanabilsin: geçen süre ve sınır teşhiste yazmalı.
+
+        Canlıda ölçtüm: indeks 45.013 belgenin 45.013'ü gömülü, sağlayıcı `gemini`,
+        `last_error` yok — yani indeks sağlamdı. Başarısız olan tek adım sorgu anında
+        vektör üretmekti, çünkü bütçe 450 ms'ydi ve ağ + sağlayıcı gecikmesi tek bir metin
+        için bile bunu aşıyor. "Zaman aşımı mı, sağlayıcı hatası mı" ayrımını görmeden
+        doğru bütçeyi seçmek mümkün değil, bu yüzden ölçüm yanıtta duruyor.
+        """
+        index = self._index(FakeEmbedder())
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        asyncio.run(index.embed_pending())
+        # İndeks gömülü; başarısız olan **yalnız sorgu anı** olsun — canlıda ölçülen durum.
+        index.embedder = FakeEmbedder(fail=True)
+        result = asyncio.run(index.search("kontrol"))
+        self.assertEqual(result["mode"], "lexical")
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["reason"], "embedding_unavailable_this_query")
+        self.assertIsInstance(diagnostics["embed_timeout_seconds"], float)
+        self.assertIsInstance(diagnostics["embed_elapsed_ms"], int)
+        self.assertTrue(diagnostics["embed_error"], "başarısızlığın türü yazılmalı")
+
+    def test_an_index_without_embeddings_is_not_blamed_on_the_query(self):
+        """Teşhis dürüstlüğü: gömme hiç kurulmamışsa sorgu suçlanmamalı.
+
+        Bu ayrımı, yukarıdaki testin kurgusunu yazarken buldum: gömme matrisi hiç
+        kurulmamışken sorgu vektörü **denenmiyor** bile, ama yanıt "bu sorgu için
+        üretilemedi" diyordu. İki farklı arıza, iki farklı yere bakmayı gerektirir.
+        """
+        index = self._index(FakeEmbedder())
+        index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
+        result = asyncio.run(index.search("kontrol"))  # embed_pending çağrılmadı
+        diagnostics = result["diagnostics"]
+        self.assertEqual(diagnostics["reason"], "embeddings_not_built")
+        self.assertIsNone(diagnostics["embed_elapsed_ms"], "sorgu hiç denenmedi")
+
+    def test_the_embedding_budget_is_configurable_and_bounded(self):
+        """Coolify'dan ayarlanabilmeli, ama aramayı kilitleyecek kadar değil."""
+        from hybrid_index import _env_float
+
+        with mock.patch.dict(os.environ, {"X_TEST_BUDGET": "2.5"}):
+            self.assertEqual(_env_float("X_TEST_BUDGET", 1.5), 2.5)
+        with mock.patch.dict(os.environ, {"X_TEST_BUDGET": "999"}):
+            self.assertEqual(_env_float("X_TEST_BUDGET", 1.5), 10.0)
+        with mock.patch.dict(os.environ, {"X_TEST_BUDGET": "0"}):
+            self.assertEqual(_env_float("X_TEST_BUDGET", 1.5), 0.05)
+        with mock.patch.dict(os.environ, {"X_TEST_BUDGET": "sayi-degil"}):
+            self.assertEqual(_env_float("X_TEST_BUDGET", 1.5), 1.5)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("X_TEST_BUDGET", None)
+            self.assertEqual(_env_float("X_TEST_BUDGET", 1.5), 1.5)
+
     def test_a_failing_embedder_is_distinguished_from_a_missing_one(self):
+        """Bozuk sağlayıcı ile hiç olmayan sağlayıcı aynı şey değildir.
+
+        Sağlayıcı bozuksa hiçbir belge gömülemez, dolayısıyla doğru sebep
+        ``embeddings_not_built``; ``embedder`` alanı dolu olduğu için bunun "sağlayıcı
+        yok" hâlinden ayırt edilebilir. Bu testin sebebi ilk yazıldığında
+        ``embedding_unavailable_this_query`` bekliyordu; o cevap yanlış yere bakmaya
+        gönderiyordu, çünkü bu durumda sorgu vektörü hiç denenmiyor.
+        """
         index = self._index(FakeEmbedder(fail=True))
         index.upsert_documents([_doc("controls:1", "Kontrol kapsamı", "kontrol kapsamı satırı", codes=["84713000"])])
         result = asyncio.run(index.search("zzzz-eslesmeyen-ifade"))
         diagnostics = result["diagnostics"]
-        # Sağlayıcı kurulu ama bu sorguda vektör üretemedi; "hiç yok"tan farklı.
-        self.assertEqual(diagnostics["reason"], "embedding_unavailable_this_query")
-        self.assertIsNotNone(diagnostics["embedder"])
+        self.assertEqual(diagnostics["reason"], "embeddings_not_built")
+        self.assertIsNotNone(diagnostics["embedder"], "sağlayıcı kurulu, yalnız çalışmıyor")
 
     def test_a_successful_search_carries_no_diagnostics_block(self):
         index = self._index(FakeEmbedder())

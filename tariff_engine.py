@@ -229,7 +229,7 @@ class TariffTreeNode(BaseModel):
     #: yayımlıyor (8 hanede 14 satır, 10 hanede hiç), bu yüzden ağacın seçim yapılan
     #: iki ara seviyesinde tanım kodsuz ağaç satırlarından geri okunur. Kullanıcının
     #: metnin kendi kodundan mı üst pozisyondan mı geldiğini bilmesi gerekir.
-    description_source: Literal["", "exact", "descendants", "ancestor"] = ""
+    description_source: Literal["", "exact", "single_line", "descendants", "ancestor"] = ""
     description_code: str = ""
     descendant_count: int = Field(..., ge=1)
     rate_status: Literal["unambiguous", "ambiguous", "origin_required"]

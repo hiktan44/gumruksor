@@ -265,6 +265,8 @@ döngüsü `hybrid-index-refresh` açılıştan 60 saniye sonra başlar ve `HYBR
 sayılarıyla son yenilemeyi gösterir. `/api/tariff/autocomplete` ve `/api/search/unified` yanıtlarında mevcut
 LIKE sonuçları korunur, hibrit eşleşmeler `mode` alanıyla eklenir.
 
+**Sorgu gömme bütçesi (canlıda ölçülerek düzeltildi).** Hibrit arama üretimde hiç çalışmıyordu ve sebebi veri değildi: teşhis 45.013 belgenin **45.013'ünün** gömülü olduğunu, sağlayıcının (`gemini`) kurulu olduğunu ve `last_error` bulunmadığını gösterdi. Başarısız olan tek adım **sorgu anında** vektör üretmekti (`embedding_unavailable_this_query`), çünkü bütçe 450 ms'ye sabitlenmişti ve ağ + TLS + sağlayıcı gecikmesi tek bir metin için bile bunu aşıyor. Bütçe artık `HYBRID_EMBED_TIMEOUT_SECONDS` ile ayarlanabilir (varsayılan 1,5 sn; 0,05-10 sn arasına kırpılır) ve **ölçülebilir**: düşmüş her sorgunun `diagnostics` bloğu gerçek geçen süreyi (`embed_elapsed_ms`), bütçeyi (`embed_timeout_seconds`) ve başarısızlığın türünü (`embed_error`) yazar, böylece değer tahminle değil ölçümle ayarlanır. Teşhis ayrıca "indekste hiç gömme yok" durumunu (`embeddings_not_built`) "bu sorguda üretilemedi" durumundan ayırır; ikisi farklı yere bakmayı gerektirir.
+
 #### Geçmiş sürümlerde arama (`as_of`)
 
 Motor veritabanlarında geçmiş **zaten duruyordu** — her farklı sha256 ayrı bir anlık görüntü ve eski
