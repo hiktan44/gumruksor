@@ -2140,11 +2140,13 @@ function treeNodeDescription(node) {
   // görmeli, yoksa üst pozisyonun tanımını kendi kodunun tanımı sanar.
   const source = node.description_source || "";
   const from = node.description_code || "";
-  const origin = source === "descendants"
-    ? "Cetvelde bu kod için ayrı satır yok; tanım alt satırların ortak kırılım başlığından alındı."
-    : source === "ancestor" && from && from !== node.code
-      ? `Tanım ${from} üst pozisyonundan alındı.`
-      : "";
+  const origin = source === "single_line"
+    ? "Cetvelde bu kod için ayrı satır yok; altındaki tek istatistik satırının tanımı gösteriliyor."
+    : source === "descendants"
+      ? "Cetvelde bu kod için ayrı satır yok; tanım alt satırların ortak kırılım başlığından alındı."
+      : source === "ancestor" && from && from !== node.code
+        ? `Tanım ${from} üst pozisyonundan alındı.`
+        : "";
   return `<span class="tariff-tree-goods">
     <b>${escapeHtml(own)}</b>
     ${context ? `<small>${escapeHtml(context)}</small>` : ""}

@@ -645,11 +645,58 @@ class IntermediateLevelDescriptionTests(unittest.TestCase):
         self.assertIn("Uranyum", row["description"])
         self.assertIn("Uranyum", row["full_path"])
 
+    def test_a_node_with_one_sub_line_gets_that_line_own_description(self):
+        """Canlı dağıtım sonrası ölçülen eksik: 10 hanede tanım ayırt edici değildi.
+
+        PR #82 dağıtıldıktan sonra ölçtüm: 8 hane doğru çalışıyordu (8471.60.60 →
+        "Klavyeler:", 8471.60.70 → "Diğerleri:") ama 10 hanede ``8471.60.60.10`` ve
+        ``8471.60.60.90`` **ikisi de** "Klavyeler:" dönüyordu. Sebep: her iki kodun da
+        tek bir alt satırı var, dolayısıyla "her yaprağın son parçasını at" kuralı ortak
+        ön eki üst pozisyonun etiketine kadar geriletiyor ve iki kardeş ayırt edilemiyor.
+        Ayırt edici olmayan tanım işe yaramaz; düzeltilmesi gereken tam olarak buydu.
+
+        Kodun altında tek istatistik satırı varsa o kodun içeriği **tam olarak** o
+        satırdır, bu yüzden cevap satırın kendi tanımıdır ve ``source`` bunu söyler.
+        """
+        row = self.engine.describe_many(["8401200090"])["8401200090"]
+        self.assertEqual(row["source"], "single_line")
+        self.assertEqual(row["description"], "Cihazlar")
+        self.assertEqual(row["matched_code"], "840120009011")
+
+    def test_a_node_with_several_sub_lines_still_uses_the_shared_label(self):
+        """Gerileme kilidi: çok alt satırlı düğümde ortak kırılım başlığı korunuyor."""
+        row = self.engine.describe_many(["8401200010"])["8401200010"]
+        self.assertEqual(row["source"], "descendants")
+        self.assertIn("Uranyum", row["description"])
+
+    def test_two_single_line_siblings_are_distinguishable(self):
+        """Asıl kazanç: iki kardeş artık aynı metni döndürmüyor."""
+        described = self.engine.describe_many(["8401200010", "8401200090"])
+        self.assertNotEqual(
+            described["8401200010"]["description"], described["8401200090"]["description"]
+        )
+        self.assertNotEqual(
+            described["8401200010"]["full_path"], described["8401200090"]["full_path"]
+        )
+
+    def test_the_single_line_unit_is_carried_because_it_is_that_line(self):
+        """Ölçü birimi yalnız tek satır durumunda taşınır: o satır kodun kendisidir."""
+        self.assertEqual(self.engine.describe_many(["8401200090"])["8401200090"]["unit"], "-")
+        # Çok alt satırlı düğümde birim taşınmaz: birim tek bir satıra aittir.
+        self.assertEqual(self.engine.describe_many(["8401200010"])["8401200010"]["unit"], "")
+
     def test_two_sibling_nodes_get_different_labels(self):
-        """Ayırt edici olmayan tanım işe yaramaz: iki kardeş farklı etiket almalı."""
+        """Ayırt edici olmayan tanım işe yaramaz: iki kardeş farklı cevap almalı.
+
+        İki kardeş iki farklı yoldan cevaplanır ve bu doğrudur: ``8401.20.00.10`` iki alt
+        satır taşıdığı için ortak kırılım başlığını alır, ``8401.20.00.90`` tek alt satır
+        taşıdığı için o satırın kendi tanımını alır. İkisinin de tam yolu farklıdır.
+        """
         described = self.engine.describe_many(["8401200010", "8401200090"])
         self.assertIn("Uranyum", described["8401200010"]["description"])
-        self.assertIn("Diğerleri", described["8401200090"]["description"])
+        self.assertEqual(described["8401200010"]["source"], "descendants")
+        self.assertEqual(described["8401200090"]["source"], "single_line")
+        self.assertIn("Diğerleri", described["8401200090"]["full_path"])
 
     def test_an_eight_digit_node_falls_back_to_the_deepest_shared_label(self):
         """Alt kodlar farklı kırılımlara dağılıyorsa ortak olan en derin etiket verilir.

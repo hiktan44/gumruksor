@@ -590,7 +590,10 @@ class NomenclatureStore:
         yolundan kendi son parçası atılır ve kalan yolların en uzun ortak ön eki alınır
         (bkz. ``_common_parent_path``).
 
-        Alt kod da yoksa ``lookup`` ile aynı davranış: en yakın **kodlu** üst pozisyon.
+        Tek alt satır varsa cevap o satırın **kendi** tanımıdır (``single_line``): kodun
+        içeriği tam olarak o satır olduğu için ortak ön ek kuralı orada ayırt edici olmayan
+        bir cevap üretiyordu. Alt kod hiç yoksa ``lookup`` ile aynı davranış: en yakın
+        **kodlu** üst pozisyon.
         Her iki durumda ``source`` ve ``matched_code`` alanları metnin nereden geldiğini
         söyler; arayüz bunu rozetle gösterir, çünkü 8 haneli bir kodun tanımının 6
         haneden geldiğini kullanıcının bilmesi gerekir.
@@ -603,12 +606,34 @@ class NomenclatureStore:
             for code in wanted:
                 rows = connection.execute(
                     """
-                    SELECT full_path FROM codes
+                    SELECT code, full_path, unit FROM codes
                     WHERE snapshot_id=? AND code GLOB ? AND length(code) > ?
                     ORDER BY code LIMIT ?
                     """,
                     (snapshot_id, f"{code}*", len(code), int(sample_limit)),
                 ).fetchall()
+                if len(rows) == 1:
+                    # **Tek alt satır özel durumu.** Kod cetvelde yoksa ve altında tek bir
+                    # istatistik satırı varsa, o kodun içeriği tam olarak o satırdır;
+                    # dolayısıyla satırın kendi tanımı düğümün de tanımıdır. Ortak ön ek
+                    # kuralını burada uygulamak yanlış cevap üretiyordu: canlıda ölçtüm,
+                    # 8471.60.60.10 ve 8471.60.60.90 ikisi de "Klavyeler:" dönüyordu —
+                    # yani ayırt edici olmayan, dolayısıyla işe yaramayan bir tanım. Doğru
+                    # cevap "Sivil hava taşıtlarında kullanılmaya mahsus olanlar" ile
+                    # "Diğerleri"dir ve ikisi de cetvelde yazıyor, 12 haneli satırda.
+                    only = rows[0]
+                    path = str(only["full_path"] or "")
+                    if path:
+                        out[code] = {
+                            "description": path.split(_PATH_SEP)[-1],
+                            "full_path": path,
+                            # Ölçü birimi tek satırdan gelir ve o satır bu kodun kendisidir.
+                            "unit": str(only["unit"] or ""),
+                            "level": len(code),
+                            "matched_code": str(only["code"]),
+                            "source": "single_line",
+                        }
+                        continue
                 derived = _common_parent_path([str(row["full_path"] or "") for row in rows])
                 if derived:
                     out[code] = {

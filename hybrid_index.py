@@ -20,6 +20,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from array import array
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,7 +43,31 @@ GTIP_BOOST = 0.05
 # (ilgisiz belgeler yalnız sıralamaya girdikleri için RRF puanı almasın).
 VECTOR_MIN_SIMILARITY = 0.05
 MAX_TEXT_CHARS = 12_000
-DEFAULT_EMBED_TIMEOUT = 0.45
+#: Sorgu gömmesi için süre bütçesi. **Canlıda ölçülerek değiştirildi.** 0,45 sn ile
+#: hibrit arama üretimde hiç çalışmıyordu: teşhis 45.013 belgenin 45.013'ünün gömülü
+#: olduğunu, sağlayıcının (`gemini`) kurulu olduğunu ve `last_error` bulunmadığını
+#: gösterdi; başarısız olan tek adım sorgu anında vektör üretmekti
+#: (`embedding_unavailable_this_query`). Yani indeks sağlamdı, bütçe gerçekçi değildi:
+#: ağ + TLS + sağlayıcı gecikmesi tek bir metin için bile 450 ms'yi aşıyor.
+#:
+#: Yeni varsayılan bir tahmin olduğu için **ölçülebilir** bırakıldı: her düşmüş sorgunun
+#: teşhisi gerçek geçen süreyi (`embed_elapsed_ms`) ve bütçeyi yazıyor, böylece değer
+#: ölçüme göre ayarlanabilir. Coolify'dan `HYBRID_EMBED_TIMEOUT_SECONDS` ile yeniden
+#: dağıtım gerekmeden değiştirilebilir.
+def _env_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s sayı değil (%r); varsayılan %s kullanılıyor", name, raw, default)
+        return default
+    # Üst sınır aramayı kilitlemeyi engeller; alt sınır "0 yaz da kapat" kazasını.
+    return min(max(value, 0.05), 10.0)
+
+
+DEFAULT_EMBED_TIMEOUT = _env_float("HYBRID_EMBED_TIMEOUT_SECONDS", 1.5)
 _TOKEN_RE = re.compile(r"[0-9A-Za-zÇĞİÖŞÜçğıöşü]+", re.UNICODE)
 
 
@@ -526,13 +551,21 @@ class HybridIndex:
         """
         text = guard_text(query, source="hibrit arama", max_chars=500)
         query_vector: list[float] | None = None
+        # Gerçek geçen süre ölçülür ve teşhise yazılır: "gömme neden olmadı" sorusunun
+        # cevabı "zaman aşımı mı, sağlayıcı hatası mı" ayrımından geçiyor ve bunu
+        # bilmeden bütçeyi doğru seçmek mümkün değil.
+        self._last_embed_elapsed_ms: int | None = None
+        self._last_embed_error: str | None = None
         if self.embedder is not None and text and self._matrix is not None:
+            started = time.monotonic()
             try:
                 vectors = await asyncio.wait_for(self.embedder.embed([text], task="query"), timeout=embed_timeout)
                 query_vector = list(vectors[0]) if vectors else None
             except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
                 logger.info("Hybrid query embedding unavailable (%s); lexical only", type(exc).__name__)
                 query_vector = None
+                self._last_embed_error = type(exc).__name__
+            self._last_embed_elapsed_ms = int((time.monotonic() - started) * 1000)
         return await asyncio.to_thread(
             self._fuse,
             text,
@@ -662,6 +695,15 @@ class HybridIndex:
                 "ya da anahtar eksik); yalnız sözlüksel arama çalışıyor"
                 + (" ve bu sorgu eşleşmedi." if empty else ", anlamsal eşleşme yapılamıyor.")
             )
+        elif self._matrix is None:
+            # Ayrı bir sebep: sağlayıcı kurulu ama indekste hiç gömme yok (ya da henüz
+            # yüklenmedi). "Bu sorgu için üretilemedi" demek burada yanlış yere bakmaya
+            # gönderirdi; sorgu hiç denenmedi bile.
+            reason = "embeddings_not_built"
+            note = (
+                "Gömme sağlayıcısı kurulu ama indekste hiç gömme yok; sorgu vektörü "
+                "denenmedi. `hybrid-index-refresh` işinin gömme adımını kontrol edin."
+            )
         elif mode == "lexical":
             reason = "embedding_unavailable_this_query"
             note = (
@@ -671,7 +713,7 @@ class HybridIndex:
         else:
             reason = "no_match"
             note = "İndeks dolu ve hibrit arama çalıştı; bu sorgu hiçbir belgeyle eşleşmedi."
-        return {
+        payload = {
             "reason": reason,
             "note": note,
             "index_documents": documents,
@@ -679,7 +721,13 @@ class HybridIndex:
             "embedding_count": len(self._ids),
             "last_refresh_at": self.last_refresh_at or last_refresh,
             "last_error": self.last_error,
+            # Bütçeyi ölçüme göre ayarlamak için: gerçekten kaç ms sürdü, sınır neydi ve
+            # başarısızlık zaman aşımı mı yoksa sağlayıcı hatası mı.
+            "embed_timeout_seconds": DEFAULT_EMBED_TIMEOUT,
+            "embed_elapsed_ms": getattr(self, "_last_embed_elapsed_ms", None),
+            "embed_error": getattr(self, "_last_embed_error", None),
         }
+        return payload
 
     # ---- status
     def status(self) -> dict[str, Any]:
