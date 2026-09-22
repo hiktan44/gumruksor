@@ -174,6 +174,24 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(second["missing_predictions"], [])
         self.assertEqual(second["measured_cases"], 4)
 
+    def test_a_batch_run_reports_what_is_still_pending(self):
+        """Asıl gerileme kilidi: parti koşusundan sonra "bitti" demek yalandı.
+
+        **Canlıda ölçüldü.** ``pending_cases`` alanını yalnız ``GET`` rotası eklediği için
+        ``POST`` yanıtında hiç yoktu; yönetim paneli de alan yoksa "Tüm vakalar ölçüldü"
+        yazıyordu. Kullanıcı 16 vakanın 8'ini koşmuşken paneli "bitti" olarak okudu, ölçümü
+        yarıda bıraktı ve yarım skoru (%50) tam skor sanıp değerlendirdi. Oysa koşulan 8
+        vakanın **8'i de doğruydu**. Eksik alanın varsayılanı sessizlik değil, yanlış
+        cevaptı — bu depoda en pahalıya mal olan hata sınıfı tam olarak bu.
+        """
+        service = FakeService({"ayak ısıtma": ["63079010"], "demo cep telefonu": ["85171200"]})
+        report = asyncio.run(bench.run_and_score(service, dataset="tr", limit=2, store=self.store))
+        self.assertIn("pending_cases", report, "POST yanıtı kalan vakaları söylemeli")
+        self.assertEqual(len(report["pending_cases"]), 2)
+        # Bitince gerçekten boşalmalı.
+        final = asyncio.run(bench.run_and_score(service, dataset="tr", limit=2, store=self.store))
+        self.assertEqual(final["pending_cases"], [])
+
     def test_a_failed_case_is_retried_on_the_next_batch(self):
         service = FakeService({"ayak ısıtma": ["63079010"]}, fail_on={"ayak ısıtma"})
         asyncio.run(bench.run_and_score(service, dataset="tr", limit=1, store=self.store))

@@ -75,11 +75,18 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
         "top1_gtip12": 0,
         "top3_gtip12": 0,
         "abstained": 0,
+        # Hiç koşulmamış vaka **çekimser değildir**: model konuşmadı çünkü ona hiç
+        # sorulmadı. İkisini aynı sayaçta toplamak canlıda yanlış rapora yol açtı —
+        # 8/16 koşulmuş bir ölçümde panel "çekimser %50" diyordu, oysa o 8 vaka
+        # koşulmamıştı ve koşulanların 8'i de doğruydu. İki ayrı sayaç, iki ayrı gerçek.
+        "not_run": 0,
     }
     gtip12_case_count = 0
     details: list[dict[str, Any]] = []
     for case in cases:
-        prediction = by_id.get(case["id"], {})
+        prediction = by_id.get(case["id"])
+        ran = prediction is not None
+        prediction = prediction or {}
         codes = [_code(item) for item in prediction.get("candidates", []) if _code(item)][:3]
         expected_cn8 = set(case["expected_cn8"])
         accepted_hs6 = set(case["accepted_hs6"])
@@ -96,7 +103,8 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
         totals["top3_cn8"] += int(top3_cn8)
         totals["top1_gtip12"] += int(top1_gtip12)
         totals["top3_gtip12"] += int(top3_gtip12)
-        totals["abstained"] += int(not codes)
+        totals["abstained"] += int(ran and not codes)
+        totals["not_run"] += int(not ran)
         gtip12_case_count += int(bool(expected_gtip12))
         details.append(
             {
@@ -129,10 +137,27 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
             "Türk GTİP12 ölçümü tarihsel ve yayımlanmış BTB örneklerine dayanır. Kodların güncel tarife "
             "geçerliliğini veya başka kişiler bakımından hukuki bağlayıcılığını göstermez."
         )
+    # **İki ayrı soru, iki ayrı oran.** ``metrics`` bütün vakalara böler: "bu veri
+    # setinin tamamında ne kadar doğru" sorusunun cevabı ve kısmi ölçümde kasıtlı
+    # olarak düşüktür (koşulmayan vaka başarısız sayılır). ``metrics_measured``
+    # yalnız koşulan vakalara böler: "sistem cevap verdiğinde ne kadar doğru".
+    # Birini diğerinin yerine koymak raporu yanıltıcı yapar, bu yüzden ikisi de döner.
+    measured = count - totals["not_run"]
+    metrics_measured = (
+        {
+            key: round(value / measured, 4)
+            for key, value in totals.items()
+            if key not in {"top1_gtip12", "top3_gtip12", "not_run"}
+        }
+        if measured
+        else {}
+    )
     return {
         "case_count": count,
         "gtip12_case_count": gtip12_case_count,
+        "measured_case_count": measured,
         "metrics": metrics,
+        "metrics_measured": metrics_measured,
         "counts": totals,
         "details": details,
         "warning": warning,
