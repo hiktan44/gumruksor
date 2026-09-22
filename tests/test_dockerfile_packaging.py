@@ -39,14 +39,23 @@ def _copy_patterns() -> list[str]:
 
 
 def _tracked_root_files(suffix: str) -> list[str]:
-    """Kök dizinde git tarafından takip edilen, verilen uzantıdaki dosyalar."""
-    out = subprocess.run(
-        ["git", "ls-files", f"*{suffix}"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    """Kök dizinde git tarafından takip edilen, verilen uzantıdaki dosyalar.
+
+    Git yoksa (ör. ``git archive`` ile ayrı bir dizine çıkarılmış ağaçta doğrulama
+    yapılırken) test **atlanır**, hata vermez: bu testin ölçtüğü şey depo içeriği ile
+    Dockerfile arasındaki tutarlılık, ve depo bilgisi olmadan o ölçülemez. Sessizce
+    yeşile dönmemesi için atlama açıkça raporlanır.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", f"*{suffix}"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise unittest.SkipTest(f"git dosya listesi okunamadı: {error}") from error
     return sorted(name for name in out.split() if "/" not in name)
 
 

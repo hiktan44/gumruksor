@@ -2135,9 +2135,20 @@ function treeNodeDescription(node) {
   // Tam yol kendi tanımıyla bitiyor; tekrar etmemek için son parçası atılır.
   const context = path && path !== own ? path.replace(/\s*>\s*[^>]*$/, "").trim() : "";
   const unit = (node.unit || "").trim();
+  // Cetvel 8 ve 10 hanede satır yayımlamıyor; o seviyelerde tanım kodsuz ağaç
+  // satırlarından geri okunuyor. Kullanıcı metnin kendi koduna mı ait olduğunu
+  // görmeli, yoksa üst pozisyonun tanımını kendi kodunun tanımı sanar.
+  const source = node.description_source || "";
+  const from = node.description_code || "";
+  const origin = source === "descendants"
+    ? "Cetvelde bu kod için ayrı satır yok; tanım alt satırların ortak kırılım başlığından alındı."
+    : source === "ancestor" && from && from !== node.code
+      ? `Tanım ${from} üst pozisyonundan alındı.`
+      : "";
   return `<span class="tariff-tree-goods">
     <b>${escapeHtml(own)}</b>
     ${context ? `<small>${escapeHtml(context)}</small>` : ""}
+    ${origin ? `<i class="tariff-tree-goods-origin">${escapeHtml(origin)}</i>` : ""}
     ${unit && unit !== "-" ? `<em>Ölçü birimi: ${escapeHtml(unit)}</em>` : ""}
   </span>`;
 }

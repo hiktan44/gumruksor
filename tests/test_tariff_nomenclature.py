@@ -591,6 +591,150 @@ class TariffTreeDescriptionTests(unittest.TestCase):
         self.assertEqual(nodes[0].description, "")
 
 
+class IntermediateLevelDescriptionTests(unittest.TestCase):
+    """Cetvelde satırı olmayan ara seviyelerde tanım nereden gelir.
+
+    **Bu sınıfın var olma sebebi canlıda ölçüldü.** PR #80 resmî eşya tanımını ürüne
+    soktu ve `/api/tariff/nomenclature` tek kod sorgusunda çalıştı, ama `/api/tariff/tree`
+    dallarında tanım **boş** döndü. Sebep: cetvel satırlarını yalnız 4, 6 ve 12 hanede
+    yayımlıyor — 2026 cetvelinde canlı saydım, 964 / 3.008 / 15.718 satır; 8 hanede
+    yalnız **14**, 10 hanede **hiç** satır yok. Ağaç ise HS6 → CN8 → TR10 → GTİP12
+    yürüyor, yani kullanıcının "8471.60.60 mı 8471.60.70 mi" diye seçim yaptığı iki
+    seviyede tam eşleşme hiç tutmuyordu ve `describe_many` yalnız tam eşleşme arıyordu.
+
+    Kayıt için ölçülen canlı değerler: `847160601000` yolu "… > Klavyeler: > Sivil hava
+    taşıtlarında…", `847160709011` yolu "… > Diğerleri: > Diğerleri: > Optik okuyucular".
+    Yani 8 haneli seviyenin resmî etiketi ("Klavyeler:", "Diğerleri:") cetvelde **var**,
+    sadece kodsuz bir ağaç satırı olarak duruyor ve alt kodların yoluna taşınmış. Bu
+    yüzden metin uydurulmuyor, taşındığı yerden geri okunuyor.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = nom.NomenclatureStore(self._tmp.name)
+        rows, notes, _ = nom.NomenclatureEngine.parse_archive(build_archive())
+        self.store.save_snapshot(
+            snapshot_id="nomenclature:test", sha256="b" * 64, rows=rows, notes=notes,
+            source_url="https://ggm.ticaret.gov.tr/duyurular/x",
+            archive_url="https://ggm.ticaret.gov.tr/data/x/2026%20TGTC.zip",
+            legal_act="Cumhurbaşkanlığı Kararı 10781", valid_from="2026-01-01",
+        )
+        self.engine = nom.NomenclatureEngine(data_dir=self._tmp.name)
+        self.engine.store = self.store
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_the_fixture_really_lacks_the_intermediate_rows(self):
+        """Kurgu gerçek cetvelin biçimini taşımalı, yoksa test bir şeyi kilitlemez."""
+        counts = self.store.counts("nomenclature:test")
+        self.assertNotIn("8", counts)
+        self.assertNotIn("10", counts)
+        self.assertIn("12", counts)
+
+    def test_a_ten_digit_node_gets_the_official_intermediate_label(self):
+        """Asıl gerileme kilidi: ağacın seçim seviyesinde tanım artık boş değil.
+
+        ``8401200010`` cetvelde yok; etiketi kodsuz ata satırında duruyor ve alt
+        kodların ortak yolundan geri okunur.
+        """
+        described = self.engine.describe_many(["8401200010"])
+        row = described.get("8401200010")
+        self.assertIsNotNone(row, "ara seviyede tanım hâlâ boş dönüyor")
+        self.assertEqual(row["source"], "descendants")
+        self.assertIn("Uranyum", row["description"])
+        self.assertIn("Uranyum", row["full_path"])
+
+    def test_two_sibling_nodes_get_different_labels(self):
+        """Ayırt edici olmayan tanım işe yaramaz: iki kardeş farklı etiket almalı."""
+        described = self.engine.describe_many(["8401200010", "8401200090"])
+        self.assertIn("Uranyum", described["8401200010"]["description"])
+        self.assertIn("Diğerleri", described["8401200090"]["description"])
+
+    def test_an_eight_digit_node_falls_back_to_the_deepest_shared_label(self):
+        """Alt kodlar farklı kırılımlara dağılıyorsa ortak olan en derin etiket verilir.
+
+        Uydurma yapılmaz: 8 haneli seviyede ayırt edici resmî bir etiket yoksa cevap
+        6 haneli pozisyonun metnidir.
+        """
+        row = self.engine.describe_many(["84012000"])["84012000"]
+        self.assertEqual(row["source"], "descendants")
+        self.assertIn("İzotopik ayırım", row["description"])
+
+    def test_a_code_without_descendants_falls_back_to_the_nearest_coded_ancestor(self):
+        row = self.engine.describe_many(["840110000011"])["840110000011"]
+        self.assertEqual(row["source"], "ancestor")
+        # ``840110000000`` **kardeş**, ata değil: aynı uzunlukta. Ata araması yalnız
+        # daha kısa kodlara iner, bu yüzden cevap 4 haneli pozisyondan gelir.
+        self.assertEqual(row["matched_code"], "8401")
+        # Ölçü birimi o istatistik satırına aittir; üst pozisyondan taşınmamalı.
+        self.assertEqual(row["unit"], "")
+
+    def test_an_exact_row_is_still_marked_exact(self):
+        """Gerileme kilidi: tam eşleşme yolu değişmedi ve ölçü birimini taşımaya devam ediyor."""
+        row = self.engine.describe_many(["840120001011"])["840120001011"]
+        self.assertEqual(row["source"], "exact")
+        self.assertEqual(row["matched_code"], "840120001011")
+        self.assertEqual(row["description"], "Cihazlar")
+
+    def test_a_code_outside_the_schedule_is_still_omitted(self):
+        self.assertEqual(self.engine.describe_many(["9999999999"]), {})
+
+    def test_tree_nodes_carry_where_the_text_came_from(self):
+        from tariff_engine import TariffEngine, TariffTreeNode
+
+        nodes = [
+            TariffTreeNode(
+                code="8401200010", level="TR10", final=False, descendant_count=2,
+                rate_status="origin_required",
+            )
+        ]
+        engine = TariffEngine.__new__(TariffEngine)
+        engine.nomenclature = self.engine
+        engine._describe_children(nodes)
+        self.assertIn("Uranyum", nodes[0].description)
+        self.assertEqual(nodes[0].description_source, "descendants")
+        self.assertEqual(nodes[0].description_code, "8401200010")
+
+
+class CommonParentPathTests(unittest.TestCase):
+    """``_common_parent_path`` saf fonksiyonu: etiketi yoldan geri okuma kuralı."""
+
+    def test_the_leaf_own_segment_is_dropped_even_with_a_single_descendant(self):
+        """Tek alt kodda yaprağın kendi tanımı düğüme ait sayılamaz."""
+        self.assertEqual(
+            nom._common_parent_path(["Aile > Klavyeler: > Sivil hava taşıtları"]),
+            "Aile > Klavyeler:",
+        )
+
+    def test_the_deepest_shared_segment_wins(self):
+        self.assertEqual(
+            nom._common_parent_path([
+                "Aile > Klavyeler: > Sivil hava taşıtları",
+                "Aile > Klavyeler: > Diğerleri",
+            ]),
+            "Aile > Klavyeler:",
+        )
+
+    def test_a_deeper_branch_does_not_drag_the_label_down(self):
+        self.assertEqual(
+            nom._common_parent_path([
+                "Aile > Diğerleri: > Sivil hava taşıtları",
+                "Aile > Diğerleri: > Diğerleri: > Optik okuyucular",
+            ]),
+            "Aile > Diğerleri:",
+        )
+
+    def test_disjoint_paths_produce_nothing(self):
+        self.assertEqual(nom._common_parent_path(["A > B", "C > D"]), "")
+
+    def test_a_single_segment_path_carries_no_parent_label(self):
+        self.assertEqual(nom._common_parent_path(["Yalnız kendisi"]), "")
+
+    def test_no_paths_produce_nothing(self):
+        self.assertEqual(nom._common_parent_path([]), "")
+
+
 class RouteTests(unittest.TestCase):
     """Rotalar: tanım döner, oran dönmez, yetki gerektirmez."""
 

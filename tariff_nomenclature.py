@@ -103,6 +103,37 @@ _NOTES_FILE = re.compile(r"fas[iı]l\s*(\d{1,2})\.xls", re.IGNORECASE)
 _MAX_CHAPTER = 99
 
 
+_PATH_SEP = " > "
+
+
+def _common_parent_path(paths: list[str]) -> str:
+    """Alt kodların yollarından ara düğümün resmî etiket yolunu çıkarır.
+
+    Her alt kodun yolundan **kendi son parçası** atılır (yaprağın kendi tanımı o
+    düğüme ait değildir), kalan yolların en uzun ortak ön eki alınır. Sonucun son
+    parçası, aranan ara düğümün cetveldeki etiketidir. Metin türetilmez, yalnız
+    taşındığı yerden geri okunur.
+    """
+    stacks: list[list[str]] = []
+    for path in paths:
+        parts = [part for part in str(path or "").split(_PATH_SEP) if part.strip()]
+        if len(parts) < 2:
+            continue
+        stacks.append(parts[:-1])
+    if not stacks:
+        return ""
+    common = stacks[0]
+    for parts in stacks[1:]:
+        cut = 0
+        limit = min(len(common), len(parts))
+        while cut < limit and common[cut] == parts[cut]:
+            cut += 1
+        common = common[:cut]
+        if not common:
+            return ""
+    return _PATH_SEP.join(common)
+
+
 def normalise_code(value: Any) -> str:
     """``"8401.10.00.00.00"`` → ``"840110000000"``; geçersizse boş dize.
 
@@ -288,7 +319,7 @@ def parse_chapter_rows(rows: Sequence[Sequence[Any]], chapter: str = "") -> list
 def _rebuild_path(stack: dict[int, NomenclatureRow], node: NomenclatureRow) -> str:
     parts = [stack[key].description for key in sorted(stack) if stack[key] is not node]
     parts.append(node.description)
-    return " > ".join(part for part in parts if part)
+    return _PATH_SEP.join(part for part in parts if part)
 
 
 def _nearest_coded_ancestor(stack: dict[int, NomenclatureRow], depth: int) -> str:
@@ -538,6 +569,84 @@ class NomenclatureStore:
                 for row in rows:
                     out[row["code"]] = dict(row)
         return out
+
+    def derive_descriptions(
+        self, codes: Iterable[str], snapshot_id: str, *, sample_limit: int = 200
+    ) -> dict[str, dict[str, Any]]:
+        """Cetvelde **kendi satırı olmayan** kodlar için resmî tanımı geri okur.
+
+        Ölçülen boşluk: Türk Gümrük Tarife Cetveli satırlarını 4, 6 ve 12 hanede
+        yayımlıyor. 2026 cetvelinde canlı saydım: 964 / 3.008 / 15.718 satır; 8 hanede
+        yalnız **14**, 10 hanede **hiç** satır yok. Tarife ağacı ise HS6 → CN8 → TR10 →
+        GTİP12 yürüyor, yani kullanıcının "8471.60.60 mı 8471.60.70 mi" diye seçim
+        yaptığı iki ara seviyede tam eşleşme neredeyse hiç tutmuyor. ``descriptions_for``
+        yalnız tam eşleşme aradığı için ağaç dalları bu iki seviyede **boş tanımla**
+        dönüyordu: veri canlıda, özellik ölü.
+
+        Metin uydurulmaz. Ara düğümün etiketi cetvelde zaten var, ama **kodsuz bir ağaç
+        satırı** olarak (ölçülen örnek: 8471.60.60 → "Klavyeler:", 8471.60.70 →
+        "Diğerleri:"). Ayrıştırıcı bu kodsuz satırları alt kodların ``full_path``
+        değerine taşıdığı için etiket oradan birebir geri okunabilir: her alt kodun
+        yolundan kendi son parçası atılır ve kalan yolların en uzun ortak ön eki alınır
+        (bkz. ``_common_parent_path``).
+
+        Alt kod da yoksa ``lookup`` ile aynı davranış: en yakın **kodlu** üst pozisyon.
+        Her iki durumda ``source`` ve ``matched_code`` alanları metnin nereden geldiğini
+        söyler; arayüz bunu rozetle gösterir, çünkü 8 haneli bir kodun tanımının 6
+        haneden geldiğini kullanıcının bilmesi gerekir.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        wanted = sorted({str(item or "") for item in codes} - {""})
+        if not wanted:
+            return out
+        with self._connect() as connection:
+            for code in wanted:
+                rows = connection.execute(
+                    """
+                    SELECT full_path FROM codes
+                    WHERE snapshot_id=? AND code GLOB ? AND length(code) > ?
+                    ORDER BY code LIMIT ?
+                    """,
+                    (snapshot_id, f"{code}*", len(code), int(sample_limit)),
+                ).fetchall()
+                derived = _common_parent_path([str(row["full_path"] or "") for row in rows])
+                if derived:
+                    out[code] = {
+                        "description": derived.split(_PATH_SEP)[-1],
+                        "full_path": derived,
+                        "unit": "",
+                        "level": len(code),
+                        "matched_code": code,
+                        "source": "descendants",
+                    }
+                    continue
+                ancestor = self._nearest_ancestor_row(connection, code, snapshot_id)
+                if ancestor is not None:
+                    out[code] = {
+                        "description": str(ancestor["description"] or ""),
+                        "full_path": str(ancestor["full_path"] or ""),
+                        # Ölçü birimi o istatistik satırına aittir; üst pozisyondan
+                        # taşınması yanlış olurdu.
+                        "unit": "",
+                        "level": int(ancestor["level"]),
+                        "matched_code": str(ancestor["code"]),
+                        "source": "ancestor",
+                    }
+        return out
+
+    def _nearest_ancestor_row(
+        self, connection: sqlite3.Connection, code: str, snapshot_id: str
+    ) -> sqlite3.Row | None:
+        for width in (10, 8, 6, 4, 2):
+            if width >= len(code):
+                continue
+            row = connection.execute(
+                "SELECT * FROM codes WHERE snapshot_id=? AND code=?",
+                (snapshot_id, code[:width]),
+            ).fetchone()
+            if row is not None:
+                return row
+        return None
 
     def note(self, chapter: str, snapshot_id: str, kind: str = "chapter") -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -1001,21 +1110,32 @@ class NomenclatureEngine:
         }
 
     def describe_many(self, codes: Iterable[str]) -> dict[str, dict[str, Any]]:
-        """Toplu tanım: tarife ağacı çocuklarını tek sorguda zenginleştirmek için."""
+        """Toplu tanım: tarife ağacı çocuklarını tek sorguda zenginleştirmek için.
+
+        Tam eşleşme bulunamayan kodlar ``derive_descriptions`` ile tamamlanır — cetvel 8
+        ve 10 hanede satır yayımlamadığı için ağacın tam da seçim yapılan iki seviyesi
+        aksi hâlde boş kalıyordu. Her kaydın ``source`` alanı metnin nereden geldiğini
+        söyler: ``exact`` | ``descendants`` | ``ancestor``.
+        """
         snapshot = self.store.active_snapshot()
         if not snapshot:
             return {}
         normalised = {normalise_code(code): code for code in codes}
-        rows = self.store.descriptions_for(
-            [code for code in normalised if code], str(snapshot["id"])
-        )
-        return {
+        wanted = [code for code in normalised if code]
+        snapshot_id = str(snapshot["id"])
+        rows = self.store.descriptions_for(wanted, snapshot_id)
+        out: dict[str, dict[str, Any]] = {
             code: {
                 "description": row["description"], "full_path": row["full_path"],
                 "unit": row["unit"], "level": row["level"],
+                "matched_code": code, "source": "exact",
             }
             for code, row in rows.items()
         }
+        missing = [code for code in wanted if code not in out]
+        if missing:
+            out.update(self.store.derive_descriptions(missing, snapshot_id))
+        return out
 
     def export(self, *, limit: int = 40_000) -> dict[str, Any]:
         """Cetvelin tamamını künyesiyle döndürür (TradeOne gibi tüketiciler için).

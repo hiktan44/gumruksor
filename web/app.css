@@ -429,6 +429,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .tariff-tree-node > .tariff-tree-goods b { color: var(--ink); font-size: .6rem; line-height: 1.35; white-space: normal; }
 .tariff-tree-node > .tariff-tree-goods small { color: var(--ink-3); font-size: .5rem; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tariff-tree-node > .tariff-tree-goods em { color: var(--ink-3); font-size: .47rem; font-style: normal; }
+.tariff-tree-node > .tariff-tree-goods .tariff-tree-goods-origin { color: var(--warn, #9a6b00); font-size: .47rem; font-style: normal; line-height: 1.35; }
 /* Cetvel henuz indirilmediyse tanim bosdur; o zaman eski 3 sutunlu duzen korunur. */
 .tariff-tree-node:not(:has(.tariff-tree-goods)) { grid-template-columns: 148px minmax(0,1fr) auto; }
 /* Emsal karar ve Resmi Gazete metni listesi. "baglayici degil" rozeti bilincli olarak
