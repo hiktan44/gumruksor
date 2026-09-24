@@ -1,0 +1,192 @@
+{
+  "note": "Ölçülmüş taban. Kayıtlı adaylar yönetim panelindeki ölçümün gerçek çıktısıdır; metrikler bu dosyadan değil, customs_benchmark.evaluate_predictions'tan türetilir ve tests/test_measured_baseline.py kayıtlı metriklerin hâlâ o hesapla örtüştüğünü doğrular. Ölçüm canlı model çağrısı gerektirdiği için CI'da koşulamaz; bu yüzden taban elle kaydedilir.",
+  "datasets": [
+    "benchmarks/customs_classification_v1.jsonl",
+    "benchmarks/turkish_btb_gtip12_historical_v1.jsonl"
+  ],
+  "runs": [
+    {
+      "code_version": "df34dff25e29",
+      "measured_at": "2026-09-24T19:50:00Z",
+      "candidates": {
+        "eu-2022-1524-p687": [
+          "63069000",
+          "63079098"
+        ],
+        "eu-2022-2076-p688": [
+          "85443000",
+          "85444290"
+        ],
+        "eu-2022-2260-p689": [
+          "39249000",
+          "39269097"
+        ],
+        "eu-2023-248-p690": [
+          "05119985",
+          "230910"
+        ],
+        "eu-2023-745-p692": [
+          "82055100",
+          "82119300"
+        ],
+        "eu-2023-1057-p694": [
+          "39269097",
+          "392113"
+        ],
+        "eu-2023-1131-p695": [
+          "21069092",
+          "21069098",
+          "170490"
+        ],
+        "eu-2023-1419-p696": [
+          "69111000",
+          "69131000"
+        ],
+        "eu-2023-1420-p697": [
+          "69111000",
+          "69131000"
+        ],
+        "eu-2023-1427-p698": [
+          "721070",
+          "72106100",
+          "721090"
+        ],
+        "eu-2023-2218-p698": [
+          "39139000",
+          "38229000"
+        ],
+        "eu-2023-2451-p699": [
+          "64052099",
+          "64041990",
+          "64041100"
+        ],
+        "tr-istanbul-btb-2016-ayak-isitici": [
+          "63079098",
+          "63079010"
+        ],
+        "tr-istanbul-btb-2016-demo-telefon": [
+          "85171400",
+          "85176200",
+          "84713000"
+        ],
+        "tr-istanbul-btb-2016-iki-tekerlekli-oyuncak": [
+          "95030010"
+        ],
+        "tr-istanbul-btb-2016-sivrisinek-bilekligi": [
+          "38089190",
+          "39269097"
+        ]
+      },
+      "metrics": {
+        "top1_hs6": 0.875,
+        "top3_hs6": 1.0,
+        "top1_cn8": 0.6875,
+        "top3_cn8": 0.9375
+      },
+      "cn8_attempted_case_count": 15,
+      "top1_cn8_when_attempted": 0.7333,
+      "measured_case_count": 16
+    },
+    {
+      "code_version": "df34dff25e29",
+      "measured_at": "2026-09-24T20:20:00Z",
+      "candidates": {
+        "eu-2022-1524-p687": [
+          "63069000",
+          "63079098",
+          "630140"
+        ],
+        "eu-2022-2076-p688": [
+          "85443000",
+          "85444290"
+        ],
+        "eu-2022-2260-p689": [
+          "39249000",
+          "39269097"
+        ],
+        "eu-2023-248-p690": [
+          "05119985",
+          "230990"
+        ],
+        "eu-2023-745-p692": [
+          "82055100",
+          "82055980"
+        ],
+        "eu-2023-1057-p694": [
+          "39269097",
+          "39211390"
+        ],
+        "eu-2023-1131-p695": [
+          "21069092",
+          "21069098",
+          "170490"
+        ],
+        "eu-2023-1419-p696": [
+          "69111000",
+          "69131000"
+        ],
+        "eu-2023-1420-p697": [
+          "69111000",
+          "69131000"
+        ],
+        "eu-2023-1427-p698": [
+          "721070",
+          "72106100",
+          "721090"
+        ],
+        "eu-2023-2218-p698": [
+          "39139000",
+          "38229000"
+        ],
+        "eu-2023-2451-p699": [
+          "64052099",
+          "64041990"
+        ],
+        "tr-istanbul-btb-2016-ayak-isitici": [
+          "630790",
+          "63079010"
+        ],
+        "tr-istanbul-btb-2016-demo-telefon": [
+          "85171400",
+          "85176200",
+          "84713000"
+        ],
+        "tr-istanbul-btb-2016-iki-tekerlekli-oyuncak": [
+          "95030010"
+        ],
+        "tr-istanbul-btb-2016-sivrisinek-bilekligi": [
+          "38089190",
+          "39269097"
+        ]
+      },
+      "metrics": {
+        "top1_hs6": 0.875,
+        "top3_hs6": 1.0,
+        "top1_cn8": 0.6875,
+        "top3_cn8": 0.9375
+      },
+      "cn8_attempted_case_count": 14,
+      "top1_cn8_when_attempted": 0.7857,
+      "measured_case_count": 16
+    }
+  ],
+  "known_reproducible_failures": [
+    {
+      "id": "eu-2023-1131-p695",
+      "symptom": "İlk aday 21069092; doğru kod 21069098 ikinci sırada (Top-1 CN8 kaybı).",
+      "cause": "21069092 'katı süt yağı, sakkaroz, izoglikoz, nişasta veya glikoz içermeyen' koşulunu taşır; vaka tanımı içerik yüzdesi vermiyor, dolayısıyla kalıntı satırı 21069098 doğrudur. Model koşulunu doğrulayamadığı satırı seçiyor.",
+      "seen_in_runs": 2
+    },
+    {
+      "id": "eu-2023-1427-p698",
+      "symptom": "Doğru kod 72107080 hiç aday listesine girmiyor; ilk aday 6 hanede kalıyor.",
+      "cause": "721070'in iki CN8 alt satırı var (72107010 / 72107080), bu yüzden tek-çocuk daraltması haklı olarak devreye girmiyor ve model de ikisinden birini seçmiyor.",
+      "seen_in_runs": 2
+    }
+  ],
+  "limits": [
+    "16 vaka küçük bir örneklemdir; tek vakanın yön değiştirmesi ölçütleri %6,25 oynatır.",
+    "Ölçülen şey metinden GTİP adayı üretmedir; görselden evsaf çıkarımı kapsam dışıdır.",
+    "Aday listeleri koşudan koşuya değişir (iki koşuda 16 vakanın 6'sında liste farklıydı); kaydedilen iki koşuda toplam ölçütler yine birebir aynı çıkmıştır."
+  ]
+}
