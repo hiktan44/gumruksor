@@ -139,6 +139,8 @@ Nereye bağlandığı: tarife karar ağacı çocukları artık `description`, `f
 
 * Ölçülen şey **metinden GTİP adayı üretme**dir; görselden evsaf çıkarımı bu ölçümün dışındadır (vakalar resmî kararların eşya tanımlarıdır).
 * `classify_product` tasarımı gereği yalnız **HS6/CN8** aday üretir; 12 haneli GTİP tarife ağacından kullanıcı tarafından seçilir. Bu yüzden `top1_gtip12`/`top3_gtip12` bu katmanda **yapısal olarak 0**'dır ve doğruluk ölçüsü değildir — Türk vakalarında ölçüt `top1_cn8`/`top3_cn8`'dir. Rapor bu notu her zaman taşır.
+* `top1_cn8`/`top3_cn8` **ilk adayın en az 8 haneli olmasını şart koşar**: model 6 hanede durursa pozisyon doğru olsa bile başarısız sayılır. Bu yüzden rapor ölçütü ikiye böler — `cn8_attempted_case_count` kaç vakada 8 haneye inildiğini, `top1_cn8_when_attempted` inildiğinde isabet oranını verir. İlk tam ölçümde (16/16, `136c58a`) altı CN8 hatasının **altısı da** 6 hanede kalmaktan geliyordu ve 8 haneye inilen 10 vakanın 10'u doğruydu; tek başına okunan `top1_cn8` bu iki olguyu birbirine karıştırır. Panel de bu üç sayıyı ayrı satırlarda gösterir.
+* Aday 6 hanede kaldığında, cetvelde o pozisyonun **tek bir CN8 alt satırı** varsa kod 8 haneye indirilir (`_narrow_to_single_cn8`); bu tahmin değildir, seçilecek başka satır yoktur. Birden fazla alt satır varsa kod 6 hanede **kalır** — seçim kullanıcınındır ve `decision_tree` de aynı sebeple alt kodu kendisi seçmez.
 * Hat hatası ve süre aşımı **yanlış cevap sayılmaz**: `errors` listesinde ayrıca gösterilir, `measured_cases` bunları dışarıda bırakır ve vaka sonraki partide yeniden denenir.
 * Aynı vaka iki koşuda farklı sonuç verebilir; bu yüzden her tahmin hangi modellerle ve hangi commit (`SOURCE_COMMIT`) ile üretildiğini taşır.
 

@@ -98,3 +98,66 @@ class CustomsBenchmarkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Cn8AttemptTests(unittest.TestCase):
+    """``top1_cn8`` iki ayrı olguyu topluyor; rapor ikisini ayırmalı.
+
+    **Canlıda ölçüldü (16/16, sürüm 136c58a).** Altı vakada Top-1 CN8 başarısızdı ve
+    altısının da tek sebebi vardı: model ilk adayı 6 hanede bırakmıştı. 8 haneye indiği
+    10 vakanın 10'u doğruydu. Yani ``top1_cn8 = %62,5`` bir "8 hane doğruluğu" değil,
+    büyük ölçüde bir "8 haneye inme oranı"ydı — ve öyle okundu, yanlış okundu.
+    Ölçüt bu ayrımı kendisi göstermezse aynı yanılgı her turda tekrar eder.
+    """
+
+    def test_a_six_digit_first_candidate_is_reported_as_not_attempted(self):
+        cases = [
+            {"id": "a", "description": "x", "expected_cn8": {"12345678"}, "accepted_hs6": {"123456"}},
+        ]
+        # Doğru pozisyon (HS6) bulundu, ama 8 haneye inilmedi.
+        report = evaluate_predictions(cases, [{"id": "a", "candidates": ["123456"]}])
+        self.assertTrue(report["details"][0]["top1_hs6"], "pozisyon doğru")
+        self.assertFalse(report["details"][0]["top1_cn8"], "8 hane yok, ölçüt başarısız sayar")
+        self.assertFalse(report["details"][0]["cn8_attempted"], "8 haneye inilmedi")
+        self.assertEqual(report["counts"]["cn8_attempted"], 0)
+        self.assertEqual(report["cn8_attempted_case_count"], 0)
+        self.assertIsNone(
+            report["top1_cn8_when_attempted"],
+            "hiç denenmemişken oran uydurulmamalı",
+        )
+
+    def test_accuracy_when_attempted_is_separated_from_the_attempt_rate(self):
+        cases = [
+            {"id": "a", "description": "x", "expected_cn8": {"12345678"}, "accepted_hs6": {"123456"}},
+            {"id": "b", "description": "y", "expected_cn8": {"87654321"}, "accepted_hs6": {"876543"}},
+            {"id": "c", "description": "z", "expected_cn8": {"11112222"}, "accepted_hs6": {"111122"}},
+        ]
+        report = evaluate_predictions(
+            cases,
+            [
+                {"id": "a", "candidates": ["12345678"]},  # indi ve doğru
+                {"id": "b", "candidates": ["876543"]},    # 6 hanede kaldı
+                {"id": "c", "candidates": ["11119999"]},  # indi ama yanlış
+            ],
+        )
+        self.assertEqual(report["cn8_attempted_case_count"], 2, "iki vakada 8 haneye inildi")
+        self.assertEqual(report["top1_cn8_when_attempted"], 0.5, "indiği iki vakada 1 doğru")
+        # Toplam oran değişmiyor: üç vakanın biri doğru.
+        self.assertAlmostEqual(report["metrics"]["top1_cn8"], round(1 / 3, 4))
+        # Bu ikisi farklı sorular; aynı sayı olmaları tesadüf olabilir, eşitlenmemeli.
+        self.assertNotEqual(
+            report["top1_cn8_when_attempted"],
+            report["metrics"]["top1_cn8"],
+        )
+
+    def test_the_attempt_rate_is_also_reported_over_measured_cases_only(self):
+        cases = [
+            {"id": "a", "description": "x", "expected_cn8": {"12345678"}, "accepted_hs6": {"123456"}},
+            {"id": "b", "description": "y", "expected_cn8": {"87654321"}, "accepted_hs6": {"876543"}},
+        ]
+        # "b" hiç koşulmadı: koşulmayan vaka "8 haneye inmedi" diye suçlanamaz.
+        report = evaluate_predictions(cases, [{"id": "a", "candidates": ["12345678"]}])
+        self.assertEqual(report["metrics"]["cn8_attempted"], 0.5, "tüm veri setine bölünmüş")
+        self.assertEqual(
+            report["metrics_measured"]["cn8_attempted"], 1.0, "koşulanların hepsinde inildi"
+        )

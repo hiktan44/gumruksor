@@ -80,7 +80,14 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
         # 8/16 koşulmuş bir ölçümde panel "çekimser %50" diyordu, oysa o 8 vaka
         # koşulmamıştı ve koşulanların 8'i de doğruydu. İki ayrı sayaç, iki ayrı gerçek.
         "not_run": 0,
+        # **CN8 ölçütünün iki ayrı şeyi topladığı yer.** ``top1_cn8`` ilk adayın en az 8
+        # haneli OLMASINI şart koşar; model 6 hanede durursa kod doğru olsa bile
+        # başarısız yazılır. Canlı ölçümde 6 CN8 hatasının 6'sı buydu ve rakam "8 hane
+        # doğruluğu" sanıldı. Bu sayaç ikisini ayırır: kaç vakada 8 haneye inmeye
+        # çalıştı (aşağıda ``cn8_attempted``), indiğinde ne kadar doğruydu.
+        "cn8_attempted": 0,
     }
+    cn8_attempted_correct = 0
     gtip12_case_count = 0
     details: list[dict[str, Any]] = []
     for case in cases:
@@ -105,11 +112,15 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
         totals["top3_gtip12"] += int(top3_gtip12)
         totals["abstained"] += int(ran and not codes)
         totals["not_run"] += int(not ran)
+        cn8_attempted = bool(codes and len(codes[0]) >= 8)
+        totals["cn8_attempted"] += int(cn8_attempted)
+        cn8_attempted_correct += int(cn8_attempted and top1_cn8)
         gtip12_case_count += int(bool(expected_gtip12))
         details.append(
             {
                 "id": case["id"],
                 "candidates": codes,
+                "cn8_attempted": cn8_attempted,
                 "top1_hs6": top1_hs6,
                 "top3_hs6": top3_hs6,
                 "top1_cn8": top1_cn8,
@@ -152,10 +163,19 @@ def evaluate_predictions(cases: list[dict[str, Any]], predictions: list[dict[str
         if measured
         else {}
     )
+    # **Üçüncü oran: "8 haneye indiğinde ne kadar doğru".** ``metrics["top1_cn8"]``
+    # bu soruyu cevaplamaz, çünkü 6 hanede kalan vakayı da başarısız sayar. Bu iki alan
+    # ölçütü ikiye böler: ``cn8_attempted`` çabayı, ``top1_cn8_when_attempted`` isabeti
+    # ölçer. İstem değişikliğinin işe yarayıp yaramadığı yalnız bu ikisiyle görülür.
+    attempted = totals["cn8_attempted"]
     return {
         "case_count": count,
         "gtip12_case_count": gtip12_case_count,
         "measured_case_count": measured,
+        "cn8_attempted_case_count": attempted,
+        "top1_cn8_when_attempted": (
+            round(cn8_attempted_correct / attempted, 4) if attempted else None
+        ),
         "metrics": metrics,
         "metrics_measured": metrics_measured,
         "counts": totals,

@@ -391,6 +391,7 @@ function renderBenchmark(data) {
         <td><small>${escapeHtml(item.id)}</small></td>
         <td><small>${escapeHtml((item.candidates || []).join(", ") || "—")}</small></td>
         <td>${item.top1_hs6 ? "✅" : "—"}</td>
+        <td>${item.cn8_attempted ? "8 hane" : "<b>6 hanede kaldı</b>"}</td>
         <td>${item.top1_cn8 ? "✅" : "—"}</td>
         <td>${item.top3_cn8 ? "✅" : "—"}</td>
       </tr>`)
@@ -412,10 +413,22 @@ function renderBenchmark(data) {
   const measuredLine = notRun > 0 && data.measured_cases
     ? `<p><b>Koşulanlarda doğruluk:</b> Top-1 HS6 ${measuredPct("top1_hs6")} · Top-3 HS6 ${measuredPct("top3_hs6")} · Top-1 CN8 ${measuredPct("top1_cn8")} · Top-3 CN8 ${measuredPct("top3_cn8")} <small>(yalnız ${escapeHtml(data.measured_cases)} koşulan vaka üzerinden; "sistem cevap verdiğinde ne kadar doğru" sorusunun cevabı)</small></p>`
     : "";
+  // **CN8 sütunu tek başına okunmamalı.** Ölçüt ilk adayın en az 8 haneli olmasını şart
+  // koşuyor, bu yüzden "8 haneye inmedi" ile "8 hane yanlış" aynı kutuya düşüyor. Canlı
+  // ölçümde altı CN8 hatasının altısı birinci sebeptendi ve rakam doğruluk sanıldı.
+  const attempted = Number(data.cn8_attempted_case_count ?? data.counts?.cn8_attempted ?? 0);
+  const attemptLine = data.measured_cases
+    ? `<p><b>8 haneye inme:</b> ${escapeHtml(attempted)}/${escapeHtml(data.measured_cases)} ölçülen vakada model 8 haneli aday verdi${
+        data.top1_cn8_when_attempted != null
+          ? ` · <b>indiğinde Top-1 CN8 doğruluğu: ${pct(data.top1_cn8_when_attempted)}</b>`
+          : ""
+      } <small>6 hanede kalan vaka aşağıdaki CN8 sütunlarında <b>başarısız</b> sayılır; bu bir kod hatası değil, daha dar seviyeye inilmemesidir.</small></p>`
+    : "";
   return `
     ${batch}
     <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${completion}</p>
     ${measuredLine}
+    ${attemptLine}
     <table class="mini-table">
       <thead><tr><th>Veri seti</th><th>Top-1 HS6</th><th>Top-3 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead>
       <tbody>
@@ -427,7 +440,7 @@ function renderBenchmark(data) {
     <p><small>${escapeHtml(data.gtip12_note || "")}</small></p>
     <p><small>${escapeHtml(data.runner_warning || "")}</small></p>
     ${errorRows ? `<h3>Ölçülemeyen vakalar</h3><ul>${errorRows}</ul>` : ""}
-    ${caseRows ? `<h3>Vaka bazında</h3><table class="mini-table"><thead><tr><th>Vaka</th><th>Adaylar</th><th>Top-1 HS6</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead><tbody>${caseRows}</tbody></table>` : ""}`;
+    ${caseRows ? `<h3>Vaka bazında</h3><table class="mini-table"><thead><tr><th>Vaka</th><th>Adaylar</th><th>Top-1 HS6</th><th>İlk aday</th><th>Top-1 CN8</th><th>Top-3 CN8</th></tr></thead><tbody>${caseRows}</tbody></table>` : ""}`;
 }
 
 async function loadBenchmark(options) {
