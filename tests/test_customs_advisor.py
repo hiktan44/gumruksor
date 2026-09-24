@@ -1937,3 +1937,56 @@ class ZaiDescribeImageProviderTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SingleChildNarrowingTests(unittest.IsolatedAsyncioTestCase):
+    """6 hanede kalan adayı, seçim gerektirmediği zaman 8 haneye indir.
+
+    **Canlı ölçümün gösterdiği kusur.** 16 vakanın 6'sında model ilk adayı 6 hanede
+    bıraktı; bunların biri (``847130``, demo telefon) cetvelde tek bir CN8 alt satırına
+    sahipti — yani orada seçilecek bir şey yoktu ve doğru cevap ``84713000``'di. Geri
+    kalanlarda (``721070`` 2 alt satır, ``380891`` 5, ``950300`` 19) seçim kullanıcının
+    ve kod 6 hanede kalmalıdır: ``decision_tree`` da bu yüzden alt kodu kendisi seçmez.
+    """
+
+    @staticmethod
+    def _engine(children_by_code):
+        class Engine:
+            async def lookup(self, code, **kwargs):
+                gtips = children_by_code.get(code, [])
+                return SimpleNamespace(matched_gtip_count=len(gtips), matched_gtips=list(gtips))
+
+        return Engine()
+
+    async def test_a_lone_cn8_child_narrows_the_candidate(self):
+        advisor = CustomsAdvisor(
+            tariff_engine=self._engine({"847130": ["847130000000", "847130000011"]})
+        )
+        self.assertEqual(await advisor._narrow_to_single_cn8("847130"), "84713000")
+
+    async def test_several_cn8_children_leave_the_candidate_untouched(self):
+        # 721070 altında 72107010 ve 72107080 var: hangisi olduğu evsafa bağlı, motor seçmez.
+        advisor = CustomsAdvisor(
+            tariff_engine=self._engine({"721070": ["721070100000", "721070800000"]})
+        )
+        self.assertEqual(await advisor._narrow_to_single_cn8("721070"), "721070")
+
+    async def test_an_eight_digit_candidate_is_returned_as_is(self):
+        advisor = CustomsAdvisor(tariff_engine=self._engine({}))
+        self.assertEqual(await advisor._narrow_to_single_cn8("84713000"), "84713000")
+
+    async def test_a_lookup_failure_never_breaks_classification(self):
+        class Broken:
+            async def lookup(self, code, **kwargs):
+                raise RuntimeError("tarife motoru yok")
+
+        advisor = CustomsAdvisor(tariff_engine=Broken())
+        self.assertEqual(await advisor._narrow_to_single_cn8("847130"), "847130")
+
+    async def test_a_result_without_matched_gtips_is_tolerated(self):
+        class Sparse:
+            async def lookup(self, code, **kwargs):
+                return SimpleNamespace(matched_gtip_count=1)
+
+        advisor = CustomsAdvisor(tariff_engine=Sparse())
+        self.assertEqual(await advisor._narrow_to_single_cn8("847130"), "847130")

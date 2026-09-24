@@ -2070,7 +2070,10 @@ tarife sınıflandırma ön inceleme uzmanısın. Kullanıcının onayladığı 
 incele ve yalnızca JSON döndür.
 
 Kurallar:
-- Yalnızca 6 haneli HS veya güvenilir olduğunda 8 haneli CN düzeyinde aday üret.
+- Yalnızca 6 haneli HS veya 8 haneli CN düzeyinde aday üret.
+- **Gidebildiğin en dar seviyeye in.** Evsaflar 8 haneli CN alt açılımını ayırt etmeye
+  yetiyorsa 8 hane ver; 6 hanede durmak yalnızca alt açılımı ayırt eden evsaf gerçekten
+  eksikse doğrudur. O durumda eksik evsafı decisive_missing_information alanına yaz.
 - 10/12 haneli Türk GTİP, vergi oranı, TAREKS/TSE sonucu veya kesin hukuki hüküm üretme.
 - Kod yalnız rakamlardan oluşmalı ve tam olarak 6 ya da 8 haneli olmalı.
 - En olası adayı ilk sıraya koy; en fazla 3 aday ver.
@@ -3218,6 +3221,37 @@ class CustomsAdvisor:
             )
             raise
 
+    async def _narrow_to_single_cn8(
+        self,
+        code: str,
+        *,
+        origin_country: str | None = None,
+    ) -> str:
+        """6 haneli adayı, cetvelde tek bir CN8 alt satırı varsa 8 haneye indirir.
+
+        Bu **tahmin değil**: alt açılım tek satırdan oluşuyorsa seçilecek bir şey yoktur,
+        8 haneli kod 6 haneli kodun kendisidir. Birden fazla alt satır varsa kod olduğu
+        gibi kalır — ``TariffEngine.decision_tree`` alt kodu bilinçli olarak kendisi
+        seçmez ("bir oran satırının o kodun var olduğunu kanıtlaması, eşyanın o kodun
+        altına girdiğini kanıtlamaz") ve o ray burada da korunur; seçim kullanıcının.
+
+        Canlı ölçümde 16 vakanın 6'sında model 6 hanede kaldı ve CN8 ölçütü bunların
+        hepsini başarısız yazdı. Bu yöntem yalnız seçim gerektirmeyen vakayı kurtarır.
+        """
+        if len(code) != 6 or not self.tariff_engine:
+            return code
+        try:
+            lookup = await self.tariff_engine.lookup(
+                code, origin_country=origin_country, auto_sync=True
+            )
+        except Exception:
+            return code
+        # ``getattr``: alanı taşımayan bir sonuç şekli daraltmayı çökertmemeli. Daraltma
+        # bir iyileştirmedir; belirsizlikte sessizce devre dışı kalır, hata üretmez.
+        matched = getattr(lookup, "matched_gtips", None) or []
+        children = {item[:8] for item in matched if len(item) >= 8}
+        return next(iter(children)) if len(children) == 1 else code
+
     async def classify_product(
         self,
         request: ProductClassificationRequest,
@@ -3334,6 +3368,27 @@ class CustomsAdvisor:
                 codes.append(code)
                 drafts_by_code.setdefault(code, draft)
             report_codes.append(codes)
+
+        # Seçim gerektirmeyen daraltma: 6 hanede kalan aday, cetvelde tek CN8 alt satırı
+        # varsa 8 haneye iner. Birden fazla alt satırda kod aynen kalır.
+        pending = [code for code in drafts_by_code if len(code) == 6]
+        resolved = await asyncio.gather(
+            *(
+                self._narrow_to_single_cn8(code, origin_country=request.origin_country or None)
+                for code in pending
+            )
+        )
+        narrowed = {
+            code: better for code, better in zip(pending, resolved) if better != code
+        }
+        for old_code, new_code in narrowed.items():
+            draft = drafts_by_code.pop(old_code)
+            drafts_by_code.setdefault(new_code, draft)
+        if narrowed:
+            report_codes = [
+                list(dict.fromkeys(narrowed.get(code, code) for code in codes))
+                for codes in report_codes
+            ]
 
         assets: dict[str, tuple[TariffLookupResult, list[ClassificationEvidenceHit]]] = {}
         for code in drafts_by_code:
