@@ -135,6 +135,22 @@ Nereye bağlandığı: tarife karar ağacı çocukları artık `description`, `f
 
 **Ölçüm koşucusu (`classification_benchmark.py`).** `customs_benchmark.py` yalnız puanlıyordu; kendisine verilen tahmin dosyasını üretecek bir koşucu yoktu, bu yüzden hattın doğruluğu **hiç ölçülmemişti**. Koşucu 16 etiketli vakayı gerçek `classify_product` hattından geçirir, adayları `MEVZUAT_DATA_DIR/classification_benchmark.sqlite3` içinde kalıcı tutar ve aynı puanlayıcıyla Top-1/Top-3 verir. Yönetim panelinde **Yapay Zekâ → Sınıflandırma Doğruluk Ölçümü** bölümü bunu üç düğmeye indirir: *Puanı göster* (ücretsiz, model çağırmaz), *Parti koş* (4 vaka; vaka başına iki bağımsız model çağrısı, **kota harcar**) ve *Kayıtları sıfırla*. Tahminler biriktiği için parti parti koşup toplam skoru görebilirsiniz; rotalar `GET`/`POST /api/admin/classification-benchmark` (yalnız yönetici). Ölçüm arka planda **hiç** çalışmaz.
 
+**Ölçülmüş taban ([`benchmarks/measured_baseline.json`](benchmarks/measured_baseline.json)).** Ölçüm canlı model çağrısı gerektirdiği için CI'da koşulamaz; bu yüzden gerçek çıktı elle kaydedilir ve `tests/test_measured_baseline.py` kayıtlı rakamları aynı puanlayıcıyla yeniden hesaplayıp doğrular (kayıt ile hesap ayrışırsa test kırmızıya döner). `df34dff` sürümünde 16/16 vakayla, **aynı sürümde bağımsız iki koşu**:
+
+| Ölçüt | Sonuç |
+|---|---|
+| Top-1 HS6 | %87,5 |
+| Top-3 HS6 | %100 |
+| Top-1 CN8 | %68,8 |
+| Top-3 CN8 | %93,8 |
+
+İki koşuda 16 vakanın 6'sında aday listesi farklı çıktı ama **dört ölçüt de birebir aynı** kaldı; rakamlar bu yüzden koşu gürültüsü değildir. Bir önceki sürüm (`136c58a`) ile karşılaştırma: Top-1 HS6 %81,3 → %87,5, Top-3 CN8 %68,8 → %93,8, 8 haneye inilen vaka 10/16 → 14-15/16.
+
+**Bilinen ve tekrarlanabilir iki kusur** (ikisi de her iki koşuda aynı şekilde çıktı, dosyada gerekçesiyle kayıtlı):
+
+* `eu-2023-1131-p695` — ilk aday `21069092`, doğru kod `21069098` ikinci sırada. `21069092` "katı süt yağı, sakkaroz, izoglikoz, nişasta veya glikoz içermeyen" koşulunu taşır; vaka tanımı içerik yüzdesi vermediği için doğru yer kalıntı satırıdır. İstemdeki "derinlik kanıta bağlıdır" kuralı bu hatayı hedefler; etkisi bir sonraki ölçüm turunda görülecektir.
+* `eu-2023-1427-p698` — doğru kod `72107080` hiç aday listesine girmiyor. `721070`'in iki CN8 alt satırı olduğu için tek-çocuk daraltması haklı olarak devreye girmez ve model de ikisinden birini seçmez.
+
 Ölçümün sınırları, abartmamak için açıkça:
 
 * Ölçülen şey **metinden GTİP adayı üretme**dir; görselden evsaf çıkarımı bu ölçümün dışındadır (vakalar resmî kararların eşya tanımlarıdır).

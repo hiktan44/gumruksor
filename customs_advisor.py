@@ -2074,6 +2074,11 @@ Kurallar:
 - **Gidebildiğin en dar seviyeye in.** Evsaflar 8 haneli CN alt açılımını ayırt etmeye
   yetiyorsa 8 hane ver; 6 hanede durmak yalnızca alt açılımı ayırt eden evsaf gerçekten
   eksikse doğrudur. O durumda eksik evsafı decisive_missing_information alanına yaz.
+- **Derinlik kanıta bağlıdır.** Kalıntı satırı ("Diğerleri") ile koşul taşıyan özgül bir
+  satır arasında seçim yapıyorsan, o koşulu (içerik yüzdesi, malzeme oranı, ağırlık eşiği,
+  kullanım şartı) doğrulayan somut evsaf **yoksa kalıntı satırını seç** ve eksik evsafı
+  decisive_missing_information alanına yaz. Koşulu varsaymak, bir seviye yukarıda kalmaktan
+  daha büyük hatadır: yanlış oranı doğru görünümlü bir kodla birlikte getirir.
 - 10/12 haneli Türk GTİP, vergi oranı, TAREKS/TSE sonucu veya kesin hukuki hüküm üretme.
 - Kod yalnız rakamlardan oluşmalı ve tam olarak 6 ya da 8 haneli olmalı.
 - En olası adayı ilk sıraya koy; en fazla 3 aday ver.
