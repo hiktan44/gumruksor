@@ -151,6 +151,18 @@ Nereye bağlandığı: tarife karar ağacı çocukları artık `description`, `f
 * `eu-2023-1131-p695` — ilk aday `21069092`, doğru kod `21069098` ikinci sırada. `21069092` "katı süt yağı, sakkaroz, izoglikoz, nişasta veya glikoz içermeyen" koşulunu taşır; vaka tanımı içerik yüzdesi vermediği için doğru yer kalıntı satırıdır. İstemdeki "derinlik kanıta bağlıdır" kuralı bu hatayı hedefler; etkisi bir sonraki ölçüm turunda görülecektir.
 * `eu-2023-1427-p698` — doğru kod `72107080` hiç aday listesine girmiyor. `721070`'in iki CN8 alt satırı olduğu için tek-çocuk daraltması haklı olarak devreye girmez ve model de ikisinden birini seçmez.
 
+**Jev (TypeSafe AI) ile alt satır daraltması ([`typesafe_client.py`](typesafe_client.py)).** Model bir adayı 6 hanede bıraktığında ve cetvelde o pozisyonun **birden fazla** CN8 alt satırı olduğunda (tek alt satır varsa zaten `_narrow_to_single_cn8` çözer), [Jev](https://docs.typesafe.ai/) `choice` ilkeliyle doğru alt satırı seçmeye çalışır. Jev metin üretmez; bir seçenek listesinden birini seçer ve kalibre edilmiş bir güven döndürür. Raylar:
+
+* **Seçenekler yalnız resmî cetvelden gelir**: pozisyonun CN8 alt satırları ve her birinin resmî eşya tanımı, artı bir "hiçbiri" seçeneği. Jev listede olmayan bir kod döndürürse cevap atılır, yani **model kod uyduramaz**.
+* Bir alt satırın tanımı kardeşlerinden ayırt edici değilse (kaynağı `ancestor` ise ya da iki kardeş aynı tanımı taşıyorsa) o pozisyon **sorulmaz**; seçim yazı-turaya dönerdi.
+* Güven `JEV_MIN_CONFIDENCE` (varsayılan 0,6) altındaysa ya da "hiçbiri" seçildiyse kod 6 hanede kalır ve seçim kullanıcıya kalır. Seçilen kod yine bir **aday**dır: açıklamasına "Jev modeliyle seçildi (güven %NN); tarife ağacında doğrulayın" notu düşer, tarife ağacında onayı kullanıcı verir.
+* Durum metnine yalnız kullanıcının **onayladığı** evsaf girer; fotoğraftan tahmin edilen özellikler (`inferred_features`) girmez. Metin gönderilmeden önce kişisel veri ve gizli değerlerden arındırılır (`redact_text`).
+* Jev'in her hatası sessizce yutulur; bu bir iyileştirmedir, sınıflandırmayı bozamaz.
+* **Yalnız resmî uç nokta** (`https://api.typesafe.ai/v1/systemone`) kullanılır ve adres ortam değişkeniyle değiştirilemez; yönlendirme izlenmez, yanıt boyutu sınırlıdır, API anahtarı hiçbir hata metnine sızmaz. `jevai.org` kendini resmî olmayan bir topluluk sitesi olarak tanımlar, kendi anahtarını ve farklı bir API sunar; gümrük verisi oraya **gönderilmez** ve oradan alınan anahtar burada çalışmaz.
+* **Varsayılan kapalı**: `TYPESAFE_API_KEY` tanımlamak tek başına davranışı değiştirmez. Özellik `JEV_NARROWING_ENABLED=1` ile açılır. Açmadan önce yukarıdaki ölçüm tabanına karşı ölçülmelidir: Jev bir haftalık, erken erişim aşamasında bir modeldir ve Türkçe eşya tanımlarındaki başarımı henüz ölçülmemiştir.
+
+`GET /api/admin/llm-diagnostics` raporundaki `typesafe` bölümü anahtarın sunucuya ulaşıp ulaşmadığını (`configured`), resmî API'de çalışıp çalışmadığını (`ok`, sabit bir sentetik test cümlesiyle; **müşteri verisi gönderilmez**) ve özelliğin açık olup olmadığını (`narrowing_enabled`) gösterir. `401`/`403` hatası, anahtarın resmî bir TypeSafe anahtarı olmadığı anlamına gelir.
+
 Ölçümün sınırları, abartmamak için açıkça:
 
 * Ölçülen şey **metinden GTİP adayı üretme**dir; görselden evsaf çıkarımı bu ölçümün dışındadır (vakalar resmî kararların eşya tanımlarıdır).
