@@ -1318,6 +1318,18 @@ async def web_admin_llm_diagnostics(request: Request):
             report = {"mode": "recent", "recent": recent_llm_events()}
         else:
             report = await diagnose_llm_providers(vision=vision)
+            # Jev (TypeSafe): anahtar sunucuya ulaştı mı, resmî API'de çalışıyor mu?
+            # Sentetik bir cümleyle sınanır; müşteri verisi gönderilmez. Jev'in hatası
+            # tanılamanın geri kalanını bozmaz.
+            jev_client = getattr(customs_advisor_service, "typesafe_client", None)
+            if jev_client is not None:
+                from customs_advisor import _jev_narrowing_enabled
+
+                try:
+                    report["typesafe"] = await jev_client.diagnose()
+                except Exception as exc:
+                    report["typesafe"] = {"ok": False, "error": type(exc).__name__}
+                report["typesafe"]["narrowing_enabled"] = _jev_narrowing_enabled()
     except Exception:
         logger.exception("LLM diagnostics failed")
         return JSONResponse({"error": "Bağlantı testi çalıştırılamadı."}, status_code=500)

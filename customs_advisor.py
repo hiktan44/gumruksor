@@ -1149,6 +1149,24 @@ def _env_seconds(name: str, default: float, *, low: float, high: float) -> float
     return max(low, min(value, high))
 
 
+# ---- Jev (TypeSafe) alt satır daraltması
+# 6 hanede kalan adayı, cetvelde birden fazla CN8 alt satırı varsa, resmî seçenekler
+# arasından Jev "choice" ilkeliyle daraltır. Varsayılan KAPALI: anahtar tek başına davranışı
+# değiştirmez; ölçüm tabanına karşı doğrulandıktan sonra JEV_NARROWING_ENABLED=1 ile açılır.
+_JEV_NONE_OPTION = "hicbiri"
+# Bir alt satırın tanımı kardeşlerinden ayırt edici olmalı. ``ancestor`` kaynağı üst
+# pozisyonun etiketini taşır; bütün kardeşlerde aynı olur ve seçimi yazı-turaya çevirir.
+_JEV_USABLE_SOURCES = frozenset({"exact", "single_line", "descendants"})
+
+
+def _jev_narrowing_enabled() -> bool:
+    return (os.environ.get("JEV_NARROWING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _jev_min_confidence() -> float:
+    return _env_seconds("JEV_MIN_CONFIDENCE", 0.6, low=0.0, high=1.0)
+
+
 def _llm_request_timeout() -> httpx.Timeout:
     total = _env_seconds("LLM_REQUEST_TIMEOUT_SECONDS", _LLM_REQUEST_TIMEOUT_SECONDS, low=10.0, high=300.0)
     connect = min(_LLM_CONNECT_TIMEOUT_SECONDS, total)
@@ -2680,6 +2698,9 @@ class CustomsAdvisor:
         # Resmî eşya tanımı motoru (tariff_nomenclature). Sınıflandırmada adayları
         # cetvelin kendi metninden çeker; gömme sağlayıcısına ihtiyaç duymaz.
         self.nomenclature_engine: Any = None
+        # Jev (TypeSafe) istemcisi; sunucuda bağlanır. Anahtar ve JEV_NARROWING_ENABLED
+        # olmadan hiç çağrılmaz. Yalnız resmî seçenekler arasından seçim yaptırılır.
+        self.typesafe_client: Any = None
         # Danıştay gümrük içtihadı arşivi ve Resmî Gazete metin arşivi; sunucuda
         # bağlanır. İkisi de emsal/metin kaynağıdır, oran üretmez.
         self.ictihat_archive: Any = None
@@ -3257,6 +3278,126 @@ class CustomsAdvisor:
         children = {item[:8] for item in matched if len(item) >= 8}
         return next(iter(children)) if len(children) == 1 else code
 
+    @staticmethod
+    def _jev_state(request: "ProductClassificationRequest") -> str:
+        """Jev'e gidecek durum metni: yalnız kullanıcının onayladığı evsaf.
+
+        ``inferred_features`` bilinçli olarak dışarıda: fotoğraftan tahmin edilen özellik
+        kesin kabul edilmez (sınıflandırma isteminin kuralı). Kullanıcının kendi cevapları
+        ise gerçektir ve dahil edilir.
+        """
+        labelled = (
+            ("Ürün tanımı", request.product_description),
+            ("Kategori", request.product_category),
+            ("Beyan edilen tür", request.declared_product_type),
+            ("Bileşim/malzeme", request.composition),
+            ("Kullanım amacı", request.intended_use),
+            ("Hedef kullanıcı", request.target_user),
+            ("Yapı/biçim", request.construction_form),
+            ("İşlev/çalışma", request.function_mechanism),
+            ("Parçalar/aksesuar", request.components_accessories),
+            ("Etiket metni", request.label_text),
+            ("Görülen özellikler", request.visible_features),
+        )
+        lines = [f"{label}: {str(value).strip()}" for label, value in labelled if str(value or "").strip()]
+        lines.extend(
+            f"Soru: {item.question.strip()} — Cevap: {item.answer.strip()}"
+            for item in request.classification_answers
+        )
+        return "\n".join(lines)[:6000]
+
+    async def _jev_narrow(
+        self,
+        codes: list[str],
+        request: "ProductClassificationRequest",
+    ) -> dict[str, tuple[str, float]]:
+        """6 hanede kalan adayları, resmî CN8 alt satırları arasından Jev'e seçtirir.
+
+        Dönen eşleme ``{hs6: (cn8, güven)}``; yalnız güven eşiği aşan ve "hiçbiri" olmayan
+        seçimleri içerir. Güvenlik rayları:
+
+        * Seçenekler yalnız resmî cetvelin alt satırlarıdır; Jev listede olmayan kod
+          döndürürse istemci onu zaten atar.
+        * Alt satırlardan birinin ayırt edici resmî tanımı yoksa o pozisyon **sorulmaz**.
+        * Jev'in her hatası sessizce yutulur: bu bir iyileştirmedir, sınıflandırmayı bozamaz.
+        * Seçilen kod bir **aday**dır; tarife ağacında kullanıcı yine kendisi onaylar.
+        """
+        client = getattr(self, "typesafe_client", None)
+        if (
+            not codes
+            or client is None
+            or not getattr(client, "configured", False)
+            or not _jev_narrowing_enabled()
+        ):
+            return {}
+        engine = getattr(self, "nomenclature_engine", None)
+        if engine is None or not self.tariff_engine:
+            return {}
+
+        async def children_of(code: str) -> list[str]:
+            try:
+                lookup = await self.tariff_engine.lookup(
+                    code, origin_country=request.origin_country or None, auto_sync=True
+                )
+            except Exception:
+                return []
+            matched = getattr(lookup, "matched_gtips", None) or []
+            return sorted({item[:8] for item in matched if len(item) >= 8})
+
+        children_lists = await asyncio.gather(*(children_of(code) for code in codes))
+        questions: dict[str, dict[str, Any]] = {}
+        for code, children in zip(codes, children_lists):
+            if len(children) < 2:
+                continue  # 0 çocuk: kod yok; 1 çocuk: tek-çocuk daraltması zaten çözer.
+            try:
+                described = engine.describe_many([code, *children])
+            except Exception:
+                continue
+            criteria: dict[str, str] = {}
+            for child in children:
+                row = described.get(child) or {}
+                text = str(row.get("description") or "").strip()
+                if row.get("source") not in _JEV_USABLE_SOURCES or not text:
+                    criteria = {}
+                    break
+                criteria[child] = text[:400]
+            # Aynı tanımı taşıyan iki kardeş ayırt edilemez; seçtirmek tahmin olur.
+            if not criteria or len(set(criteria.values())) < len(criteria):
+                continue
+            criteria[_JEV_NONE_OPTION] = (
+                "Eşya bu alt satırların hiçbirine girmiyor; üst pozisyon yanlış olabilir."
+            )
+            parent = str((described.get(code) or {}).get("description") or "").strip()[:300]
+            questions[f"hs{code}"] = {
+                "type": "choice",
+                "instructions": (
+                    f"Bu eşya {code} pozisyonunun{f' ({parent})' if parent else ''} hangi resmî "
+                    "alt satırına girer? Bir alt satırın koşulunu (içerik oranı, malzeme, ağırlık "
+                    "eşiği, kullanım şartı) doğrulayan evsaf yoksa 'Diğerleri' satırını seç."
+                ),
+                "criteria": criteria,
+            }
+        if not questions:
+            return {}
+        try:
+            answers = await client.choose(self._jev_state(request), questions)
+        except Exception as exc:
+            # İstemci mesajları anahtarı içermez; yine de yalnız tür adı günlüğe yazılır.
+            logger.warning("Jev alt satır daraltması atlandı: %s", type(exc).__name__)
+            return {}
+        threshold = _jev_min_confidence()
+        chosen: dict[str, tuple[str, float]] = {}
+        for question_id, answer in answers.items():
+            code = question_id[2:]
+            if code not in codes or answer.choice == _JEV_NONE_OPTION:
+                continue
+            if answer.confidence < threshold:
+                continue
+            if not (len(answer.choice) == 8 and answer.choice.startswith(code)):
+                continue
+            chosen[code] = (answer.choice, answer.confidence)
+        return chosen
+
     async def classify_product(
         self,
         request: ProductClassificationRequest,
@@ -3392,6 +3533,28 @@ class CustomsAdvisor:
         if narrowed:
             report_codes = [
                 list(dict.fromkeys(narrowed.get(code, code) for code in codes))
+                for codes in report_codes
+            ]
+
+        # Seçim gerektiren daraltma: birden fazla alt satır varsa Jev resmî seçenekler
+        # arasından seçer. Kapalıysa veya emin değilse kod 6 hanede kalır.
+        jev_chosen = await self._jev_narrow(
+            [code for code in drafts_by_code if len(code) == 6], request
+        )
+        for old_code, (new_code, confidence) in jev_chosen.items():
+            draft = drafts_by_code.pop(old_code)
+            note = (
+                f"Alt satır Jev modeliyle resmî seçenekler arasından seçildi "
+                f"(güven %{confidence * 100:.0f}); tarife ağacında doğrulayın. "
+            )
+            drafts_by_code.setdefault(
+                new_code,
+                draft.model_copy(update={"explanation": (note + draft.explanation)[:1200]}),
+            )
+        if jev_chosen:
+            jev_map = {old: new for old, (new, _) in jev_chosen.items()}
+            report_codes = [
+                list(dict.fromkeys(jev_map.get(code, code) for code in codes))
                 for codes in report_codes
             ]
 

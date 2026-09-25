@@ -72,6 +72,7 @@ from resmi_gazete import (
 from background_jobs import registry as job_registry
 from classification_benchmark import BenchmarkStore as ClassificationBenchmarkStore
 from tariff_nomenclature import NomenclatureEngine, SYNC_ENABLED as NOMENCLATURE_SYNC_ENABLED
+from typesafe_client import TypeSafeClient
 from eu_taric import EU_TARIC_FILL_ENABLED, EuTaricEngine
 from change_ledger import ChangeLedger
 from review_policy import ReviewService, policy_from_env
@@ -317,6 +318,9 @@ eu_vat_index = EuVatRates()
 customs_advisor_service.eu_vat_index = eu_vat_index
 # Sınıflandırma adaylarını resmî cetvel metninden çeker; gömme sağlayıcısı gerekmez.
 customs_advisor_service.nomenclature_engine = nomenclature_engine
+# Jev (TypeSafe): 6 hanede kalan adayı resmî alt satırlar arasından daraltır. Anahtar
+# (TYPESAFE_API_KEY) ve JEV_NARROWING_ENABLED=1 olmadan hiçbir istek gönderilmez.
+customs_advisor_service.typesafe_client = TypeSafeClient()
 # Emsal karar ve mevzuat metni kanıt paketine girer; ikisi de bağlayıcı değildir ve
 # hiçbir oran, kod veya belge şartı bu kaynaklardan belirlenmez.
 customs_advisor_service.ictihat_archive = ictihat_archive
