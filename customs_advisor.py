@@ -2097,6 +2097,12 @@ Kurallar:
   kullanım şartı) doğrulayan somut evsaf **yoksa kalıntı satırını seç** ve eksik evsafı
   decisive_missing_information alanına yaz. Koşulu varsaymak, bir seviye yukarıda kalmaktan
   daha büyük hatadır: yanlış oranı doğru görünümlü bir kodla birlikte getirir.
+- **Eşya sunulduğu hâliyle sınıflandırılır; adı veya görünüşü değil, mevcut nitelikleri
+  belirleyicidir.** Eksik eşya, tam eşyanın esas niteliğini taşıyorsa tam eşya gibi
+  sınıflandırılır (GİK 2-a). Ancak tanım, eşyayı bir pozisyona sokan esas işlevin sökülüp
+  çıkarıldığını ya da eşyanın mevcut hâliyle başka bir eşyanın özelliklerini taşıdığını açıkça
+  söylüyorsa, eşyayı adının çağrıştırdığı pozisyona değil, tanımın söylediği mevcut
+  özelliklerin pozisyonuna koy.
 - 10/12 haneli Türk GTİP, vergi oranı, TAREKS/TSE sonucu veya kesin hukuki hüküm üretme.
 - Kod yalnız rakamlardan oluşmalı ve tam olarak 6 ya da 8 haneli olmalı.
 - En olası adayı ilk sıraya koy; en fazla 3 aday ver.

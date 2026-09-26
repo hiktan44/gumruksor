@@ -76,6 +76,26 @@ class CaseLoadingTests(unittest.TestCase):
             self.assertEqual(request.product_category, "")
             self.assertEqual(request.composition, "")
 
+    def test_case_text_keeps_the_facts_the_regulation_decided_on(self):
+        """Vaka metni tüzüğün eşya tanımıdır; kararı belirleyen olgu özetlenirken düşmez.
+
+        Kısaltılmış metinde ayakkabının kauçuk tabanı ve jelibonun şeker oranı yoktu.
+        Model eksik bilgiyle "kalıntı satırı" kuralına uyup farklı kod seçti ve bu,
+        modelin değil vakanın hatasıydı. Kaynak: EUR-Lex 32023R2451 ve 32023R1131, ek sütun (1).
+        """
+        cases = {case["id"]: case["description"] for case in bench.load_cases("eu")}
+        shoe = cases["eu-2023-2451-p699"]
+        self.assertIn("kauçuk tabanı", shoe)
+        gummy = cases["eu-2023-1131-p695"]
+        self.assertIn("%35,0 sakaroz", gummy)
+        self.assertIn("%5,6 glikoz", gummy)
+
+    def test_classification_prompt_classifies_goods_as_presented(self):
+        from customs_advisor import _CLASSIFICATION_PROMPT
+
+        self.assertIn("Eşya sunulduğu hâliyle sınıflandırılır", _CLASSIFICATION_PROMPT)
+        self.assertIn("GİK 2-a", _CLASSIFICATION_PROMPT)
+
     def test_selection_skips_stored_cases_and_honours_limit(self):
         cases = bench.load_cases("all")
         first = str(cases[0]["id"])
@@ -141,6 +161,56 @@ class RunTests(unittest.TestCase):
         self.assertEqual(set(report["by_dataset"]), {"eu", "tr"})
         self.assertGreater(report["by_dataset"]["tr"]["metrics"]["top1_cn8"], 0.0)
         self.assertEqual(report["by_dataset"]["eu"]["metrics"]["top1_cn8"], 0.0)
+
+
+class VersionStatusTests(unittest.TestCase):
+    """Kayıtlı tahmin canlı sürümden eskiyse rapor bunu açıkça söyler.
+
+    Canlıda kayıtlar sıfırlanmadan "Parti koş"a basıldı; koşucu kayıtlı vakaları atladığı
+    için eski sürümün skoru yeni sürümünkü sanıldı.
+    """
+
+    def _rows(self, *versions: str) -> list[dict[str, Any]]:
+        return [
+            {"id": f"case-{index}", "code_version": version}
+            for index, version in enumerate(versions)
+        ]
+
+    def test_rows_from_an_older_build_are_flagged(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333abcdef"}):
+            status = bench.version_status(self._rows("df34dff25e29", "df34dff25e29"))
+        self.assertEqual(status["current_code_version"], "7f6eb3ce8333")
+        self.assertEqual(status["stale_case_count"], 2)
+        self.assertEqual(status["stale_code_versions"], ["df34dff25e29"])
+
+    def test_a_mixed_ledger_flags_only_the_old_rows(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows("7f6eb3ce8333", "df34dff25e29"))
+        self.assertEqual(status["stale_case_ids"], ["case-1"])
+
+    def test_current_rows_are_not_flagged(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows("7f6eb3ce8333"))
+        self.assertEqual(status["stale_case_count"], 0)
+
+    def test_a_row_without_a_version_is_stale_when_the_live_version_is_known(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows(""))
+        self.assertEqual(status["stale_code_versions"], ["bilinmiyor"])
+
+    def test_nothing_is_flagged_when_the_live_version_is_unknown(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": ""}):
+            status = bench.version_status(self._rows("df34dff25e29"))
+        self.assertIsNone(status["current_code_version"])
+        self.assertEqual(status["stale_case_count"], 0)
+
+    def test_the_report_carries_the_version_status(self):
+        case = bench.load_cases("tr")[0]
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            report = bench.evaluate(
+                [case], [{"id": case["id"], "candidates": ["63079010"], "code_version": "df34dff25e29"}]
+            )
+        self.assertEqual(report["stale_case_ids"], [case["id"]])
 
 
 class StoreTests(unittest.TestCase):
