@@ -76,6 +76,26 @@ class CaseLoadingTests(unittest.TestCase):
             self.assertEqual(request.product_category, "")
             self.assertEqual(request.composition, "")
 
+    def test_case_text_keeps_the_facts_the_regulation_decided_on(self):
+        """Vaka metni tüzüğün eşya tanımıdır; kararı belirleyen olgu özetlenirken düşmez.
+
+        Kısaltılmış metinde ayakkabının kauçuk tabanı ve jelibonun şeker oranı yoktu.
+        Model eksik bilgiyle "kalıntı satırı" kuralına uyup farklı kod seçti ve bu,
+        modelin değil vakanın hatasıydı. Kaynak: EUR-Lex 32023R2451 ve 32023R1131, ek sütun (1).
+        """
+        cases = {case["id"]: case["description"] for case in bench.load_cases("eu")}
+        shoe = cases["eu-2023-2451-p699"]
+        self.assertIn("kauçuk tabanı", shoe)
+        gummy = cases["eu-2023-1131-p695"]
+        self.assertIn("%35,0 sakaroz", gummy)
+        self.assertIn("%5,6 glikoz", gummy)
+
+    def test_classification_prompt_classifies_goods_as_presented(self):
+        from customs_advisor import _CLASSIFICATION_PROMPT
+
+        self.assertIn("Eşya sunulduğu hâliyle sınıflandırılır", _CLASSIFICATION_PROMPT)
+        self.assertIn("GİK 2-a", _CLASSIFICATION_PROMPT)
+
     def test_selection_skips_stored_cases_and_honours_limit(self):
         cases = bench.load_cases("all")
         first = str(cases[0]["id"])
