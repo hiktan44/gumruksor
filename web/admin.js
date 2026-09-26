@@ -385,10 +385,24 @@ function renderBenchmark(data) {
         <td>${pct(report.metrics?.top3_cn8)}</td>
       </tr>`)
     .join("");
+  // **Eski sürüm uyarısı.** "Parti koş" kayıtlı vakaları atlar; kayıtlar sıfırlanmadan
+  // koşulan parti yeni sürümü ölçmez, eski tahminleri yeniden puanlar. Canlıda eski
+  // sürümün skoru yeni sürümünkü sanıldı. Karar sunucuda verilir (stale_case_ids).
+  const staleIds = new Set(data.stale_case_ids || []);
+  const staleCount = Number(data.stale_case_count || staleIds.size || 0);
+  const staleVersions = (data.stale_code_versions || []).join(", ");
+  const liveVersion = data.current_code_version || "";
+  const staleWarning = staleCount && data.measured_cases != null
+    ? `<div class="benchmark-stale" role="alert"><b>${
+        staleCount >= (data.details || []).length
+          ? `Kayıtlar eski sürüme (${escapeHtml(staleVersions)}) ait.`
+          : `Kayıtlar karışık: ${escapeHtml(staleCount)} vaka eski sürümden (${escapeHtml(staleVersions)}).`
+      }</b> Canlı sürüm ${escapeHtml(liveVersion)}. Aşağıdaki skor canlı sürümü <b>ölçmüyor</b>. Yeni sürümü ölçmek için önce <b>Kayıtları sıfırla</b>, sonra "Parti koş"a basın.</div>`
+    : "";
   const caseRows = (data.details || [])
     .map((item) => `
       <tr class="${item.top1_cn8 ? "diag-ok" : item.top3_hs6 ? "" : "diag-fail"}">
-        <td><small>${escapeHtml(item.id)}</small></td>
+        <td><small>${escapeHtml(item.id)}</small>${staleIds.has(item.id) ? '<br><small class="benchmark-stale-tag">eski sürüm</small>' : ""}</td>
         <td><small>${escapeHtml((item.candidates || []).join(", ") || "—")}</small></td>
         <td>${item.top1_hs6 ? "✅" : "—"}</td>
         <td>${item.cn8_attempted ? "8 hane" : "<b>6 hanede kaldı</b>"}</td>
@@ -425,6 +439,7 @@ function renderBenchmark(data) {
       } <small>6 hanede kalan vaka aşağıdaki CN8 sütunlarında <b>başarısız</b> sayılır; bu bir kod hatası değil, daha dar seviyeye inilmemesidir.</small></p>`
     : "";
   return `
+    ${staleWarning}
     ${batch}
     <p><b>${escapeHtml(data.measured_cases)}/${escapeHtml(data.case_count)} vaka ölçüldü.</b>${completion}</p>
     ${measuredLine}

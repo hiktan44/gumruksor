@@ -246,6 +246,32 @@ def _breakdown(cases: Sequence[dict[str, Any]], predictions: Sequence[dict[str, 
     return {"measured_cases": measured, "candidate_levels": levels, "errors": errors}
 
 
+def version_status(predictions: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Kayıtlı tahminler canlı sürüme mi ait, yoksa eski bir sürüme mi?
+
+    Koşucu kayıtlı vakaları atlar; kayıtlar sıfırlanmadan koşulan parti yeni sürümü
+    **ölçmez**, eski tahminleri yeniden puanlar. Canlıda bu, eski sürümün skoru yeni
+    sürümünkü sanılarak okundu. Burada karar sunucuda verilir ki panel tahmin etmesin.
+
+    Canlı sürüm bilinmiyorsa (``SOURCE_COMMIT`` yok, örn. yerel çalışma) hiçbir kayıt
+    eski sayılmaz: bilmediğimiz bir şey için uyarı üretmeyiz.
+    """
+    current = _code_version()
+    stale_ids: list[str] = []
+    stale_versions: set[str] = set()
+    for item in predictions:
+        version = str(item.get("code_version") or "")
+        if current and version != current:
+            stale_ids.append(str(item.get("id")))
+            stale_versions.add(version or "bilinmiyor")
+    return {
+        "current_code_version": current or None,
+        "stale_case_ids": sorted(stale_ids),
+        "stale_code_versions": sorted(stale_versions),
+        "stale_case_count": len(stale_ids),
+    }
+
+
 def evaluate(cases: Sequence[dict[str, Any]], predictions: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Puanlar ve veri seti bazında ayırır.
 
@@ -264,6 +290,7 @@ def evaluate(cases: Sequence[dict[str, Any]], predictions: Sequence[dict[str, An
     report["code_versions"] = sorted(
         {str(item.get("code_version") or "") for item in prediction_list if item.get("code_version")}
     )
+    report.update(version_status(prediction_list))
     by_dataset: dict[str, Any] = {}
     for name in sorted({str(case.get("dataset") or "") for case in case_list}):
         if not name:

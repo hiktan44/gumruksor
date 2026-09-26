@@ -143,6 +143,56 @@ class RunTests(unittest.TestCase):
         self.assertEqual(report["by_dataset"]["eu"]["metrics"]["top1_cn8"], 0.0)
 
 
+class VersionStatusTests(unittest.TestCase):
+    """Kayıtlı tahmin canlı sürümden eskiyse rapor bunu açıkça söyler.
+
+    Canlıda kayıtlar sıfırlanmadan "Parti koş"a basıldı; koşucu kayıtlı vakaları atladığı
+    için eski sürümün skoru yeni sürümünkü sanıldı.
+    """
+
+    def _rows(self, *versions: str) -> list[dict[str, Any]]:
+        return [
+            {"id": f"case-{index}", "code_version": version}
+            for index, version in enumerate(versions)
+        ]
+
+    def test_rows_from_an_older_build_are_flagged(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333abcdef"}):
+            status = bench.version_status(self._rows("df34dff25e29", "df34dff25e29"))
+        self.assertEqual(status["current_code_version"], "7f6eb3ce8333")
+        self.assertEqual(status["stale_case_count"], 2)
+        self.assertEqual(status["stale_code_versions"], ["df34dff25e29"])
+
+    def test_a_mixed_ledger_flags_only_the_old_rows(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows("7f6eb3ce8333", "df34dff25e29"))
+        self.assertEqual(status["stale_case_ids"], ["case-1"])
+
+    def test_current_rows_are_not_flagged(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows("7f6eb3ce8333"))
+        self.assertEqual(status["stale_case_count"], 0)
+
+    def test_a_row_without_a_version_is_stale_when_the_live_version_is_known(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            status = bench.version_status(self._rows(""))
+        self.assertEqual(status["stale_code_versions"], ["bilinmiyor"])
+
+    def test_nothing_is_flagged_when_the_live_version_is_unknown(self):
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": ""}):
+            status = bench.version_status(self._rows("df34dff25e29"))
+        self.assertIsNone(status["current_code_version"])
+        self.assertEqual(status["stale_case_count"], 0)
+
+    def test_the_report_carries_the_version_status(self):
+        case = bench.load_cases("tr")[0]
+        with unittest.mock.patch.dict("os.environ", {"SOURCE_COMMIT": "7f6eb3ce8333"}):
+            report = bench.evaluate(
+                [case], [{"id": case["id"], "candidates": ["63079010"], "code_version": "df34dff25e29"}]
+            )
+        self.assertEqual(report["stale_case_ids"], [case["id"]])
+
+
 class StoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
