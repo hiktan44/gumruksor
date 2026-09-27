@@ -375,7 +375,8 @@ function pct(value) {
 
 const BENCHMARK_DATASET_LABELS = {
   eu: "AB tüzüğü (2022-23)",
-  eu2: "AB tüzüğü (2024-26)",
+  eu2: "AB tüzüğü (2022-26)",
+  eu3: "AB tüzüğü (2020-21, saklı sınav)",
   tr: "Türk BTB",
 };
 

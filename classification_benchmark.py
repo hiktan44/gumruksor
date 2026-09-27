@@ -51,6 +51,10 @@ DATASETS: dict[str, str] = {
     "eu": "customs_classification_v1.jsonl",
     # 2022-2026 tüzükleri; metin EUR-Lex ek sütun (1)'den birebir, gerekçe sütunu hariç.
     "eu2": "eu_classification_regulations_v2.jsonl",
+    # **Saklı sınav.** 2020-2021 tüzükleri. İstem kuralları bu setin hatalarına bakılarak
+    # yazılmaz; tek işi, diğer setlerde görülen hatalara göre yapılan değişikliklerin
+    # genelleşip genelleşmediğini ölçmektir.
+    "eu3": "eu_classification_holdout_v3.jsonl",
     "tr": "turkish_btb_gtip12_historical_v1.jsonl",
 }
 
