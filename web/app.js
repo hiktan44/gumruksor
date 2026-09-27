@@ -785,6 +785,14 @@ function renderCompliance(report) {
   if (Array.isArray(report.warnings) && report.warnings.length) {
     $("#complianceAlerts").insertAdjacentHTML("beforeend", `<p class="alert-meta">${report.warnings.map((item) => escapeHtml(item)).join("<br>")}</p>`);
   }
+  if (!report.dossier_count && !report.tracked_gtip_count) {
+    // Hiç kayıt yokken "100 · İyi durumda" göstermek yanıltıcıdır; puan boş bırakılır.
+    ring.dataset.status = "empty";
+    $("#complianceRingValue").style.strokeDashoffset = String(circumference);
+    $("#complianceScore").textContent = "—";
+    $("#complianceComponents").innerHTML = "";
+    $("#complianceStatus").textContent = "Henüz puanlanacak kayıt yok. Bir ön değerlendirmeyi kanıt dosyası olarak kaydettiğinizde veya izleme listesine GTİP eklediğinizde uyum puanı hesaplanır.";
+  }
 }
 
 async function loadCompliance() {
@@ -1836,6 +1844,10 @@ function applyDirectionMode(direction) {
     const label = isExport ? node.dataset.labelExport : node.dataset.labelImport;
     if (label) node.textContent = label;
   });
+  $$("[data-placeholder-import]").forEach((node) => {
+    const text = isExport ? node.dataset.placeholderExport : node.dataset.placeholderImport;
+    if (text) node.placeholder = text;
+  });
 
   const hero = $("#customsWorkspace .customs-hero .eyebrow");
   if (hero) {
@@ -2292,6 +2304,13 @@ function resetGtipSuggestions({ clearAutoCode = false } = {}) {
   updateReadiness();
 }
 
+function showClassificationError(error) {
+  // Yükleniyor göstergesi hata sonrasında ekranda asılı kalmasın.
+  $("#gtipSuggestions").hidden = false;
+  $("#gtipSuggestionStatus").textContent = "Adaylar alınamadı";
+  $("#gtipSuggestionList").innerHTML = `<div class="answer-error"><p>${escapeHtml(error?.message || "Aday kodlar üretilemedi.")}</p><p>Tekrar deneyebilir veya GTİP'i elle girebilirsiniz.</p></div>`;
+}
+
 async function classifyApprovedProduct() {
   const panel = $("#gtipSuggestions");
   panel.hidden = false;
@@ -2688,9 +2707,7 @@ async function confirmAttributesAndFindCandidates() {
       showToast("Aday kod için ürün evsafı yetersiz kaldı.");
     }
   } catch (error) {
-    $("#gtipSuggestions").hidden = false;
-    $("#gtipSuggestionStatus").textContent = "Adaylar alınamadı";
-    $("#gtipSuggestionList").innerHTML = `<div class="answer-error"><p>${escapeHtml(error.message || "Aday kodlar üretilemedi.")}</p></div>`;
+    showClassificationError(error);
     setVisionState("confirmed", "Evsaflar onaylandı ancak aday GTİP üretilemedi. Tekrar deneyebilir veya kodu elle girebilirsiniz.");
   } finally {
     setConfirmButtons("Evsaflar onaylandı → adayları yeniden bul", false);
@@ -2767,7 +2784,8 @@ $("#customsForm").addEventListener("submit", async (event) => {
   } finally {
     loading.hidden = true;
     button.disabled = false;
-    button.querySelector("span").textContent = "GTİP bul · vergi ve TAREKS'i araştır";
+    const label = button.querySelector("span");
+    label.textContent = label.dataset[state.tradeDirection === "export" ? "labelExport" : "labelImport"] || label.textContent;
   }
 });
 
@@ -3045,7 +3063,7 @@ $("#consultationRequestList").addEventListener("submit", async (event) => {
 function tariffRows(items) {
   if (!items?.length) return '<tr><td colspan="5">Bu menşe sütunu için uygulanabilir satır bulunamadı.</td></tr>';
   return items.map((item) => `<tr>
-    <td><code>${escapeHtml(item.gtip)}</code><br>${escapeHtml(item.measure_type)}</td>
+    <td><code>${escapeHtml(item.gtip)}</code><br>${escapeHtml(tariffMeasureLabels[item.measure_type] || item.measure_type)}</td>
     <td>${item.rate == null ? escapeHtml(item.rate_text) : `%${escapeHtml(item.rate)}`}${item.footnote ? `<br><small>Dipnot: ${escapeHtml(item.footnote)}</small>` : ""}</td>
     <td>${escapeHtml(item.country_group)} · ${escapeHtml(item.country_group_description)}</td>
     <td>${escapeHtml(item.source_file)}<br>${escapeHtml(item.source_sheet)} · satır ${escapeHtml(item.source_row)}</td>
@@ -3057,6 +3075,14 @@ const tariffMeasureLabels = {
   customs_duty: "Gümrük vergisi",
   additional_duty: "İlave gümrük vergisi",
   additional_financial_liability: "Ek mali yükümlülük",
+};
+// Sunucunun İngilizce durum kodları kullanıcıya Türkçe gösterilir.
+const lookupStatusLabels = { matched: "Eşleşti", partial: "Kısmi eşleşme", not_found: "Bulunamadı", unavailable: "Veri yok" };
+const costStatusLabels = { complete: "tam", partial: "eksik girdi", blocked: "hesaplanamadı" };
+const controlScopeLabels = {
+  annex_match: "Ek-1 listesinde eşleşme var",
+  no_indexed_match: "indekslenen listelerde eşleşme yok",
+  unavailable: "listeler henüz indekslenmedi",
 };
 
 function tariffMatchSummary(tariff) {
@@ -3401,14 +3427,14 @@ function renderTariffTool(data) {
   const tariff = data.tariff || data;
   const cost = data.cost;
   const warnings = [...(tariff.warnings || []), ...(cost?.warnings || [])];
-  const costLedger = cost ? `<div class="formula-ledger"><h3>Maliyet formülü · ${escapeHtml(cost.status)}</h3>
+  const costLedger = cost ? `<div class="formula-ledger"><h3>Maliyet formülü · ${escapeHtml(costStatusLabels[cost.status] || cost.status)}</h3>
     ${(cost.lines || []).map((line) => `<div class="formula-line"><span>${escapeHtml(line.label)} <small>${escapeHtml(line.formula)}</small></span><code>${line.amount == null ? "—" : `${numberFormat.format(line.amount)} ${escapeHtml(cost.currency)}`}</code></div>`).join("")}
     <div class="formula-line"><strong>Toplam vergi</strong><code>${cost.total_taxes == null ? "Oran eksik" : `${numberFormat.format(cost.total_taxes)} ${escapeHtml(cost.currency)}`}</code></div>
     <div class="formula-line"><strong>Genel toplam (vergiler dahil)</strong><code>${cost.landed_total == null ? "Oran eksik" : `${numberFormat.format(cost.landed_total)} ${escapeHtml(cost.currency)}`}</code></div>
     ${cost.unit_landed_cost != null ? `<div class="formula-line"><strong>Birim maliyet</strong><code>${numberFormat.format(cost.unit_landed_cost)} ${escapeHtml(cost.currency)}</code></div>` : ""}
     ${(cost.missing_rates || []).length ? `<div class="result-caution"><b>Toplam için eksik girdiler:</b> ${cost.missing_rates.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}
     <p class="rate-warning">Kredili/vadeli ödemede KKDF eklenir, peşin ödemede bu kalem %0'dır. Beyanname damga vergisi ve TL giderler kur girildiğinde TL özetinde gösterilir. Kesin tutar için beyan öncesi gümrük müşaviri teyidi alın.</p></div>${renderLiraSummary(cost.try_summary)}` : "";
-  return `<div class="answer-head"><span class="answer-status${tariff.status === "matched" ? "" : " warning"}">${escapeHtml(tariff.status)}</span><div><h2>${escapeHtml(tariff.gtip)} · ${escapeHtml(tariff.origin_country || "menşe seçilmedi")}</h2><p>Ülke grubu: ${escapeHtml(tariff.resolved_country_group || "çözümlenmedi")} · ${escapeHtml(tariff.as_of)}${validityBadgeHtml(tariff)}</p></div></div>
+  return `<div class="answer-head"><span class="answer-status${tariff.status === "matched" ? "" : " warning"}">${escapeHtml(lookupStatusLabels[tariff.status] || tariff.status)}</span><div><h2>${escapeHtml(tariff.gtip)} · ${escapeHtml(tariff.origin_country || "menşe seçilmedi")}</h2><p>Ülke grubu: ${escapeHtml(tariff.resolved_country_group || "çözümlenmedi")} · ${escapeHtml(formatDate(tariff.as_of, true))}${validityBadgeHtml(tariff)}</p></div></div>
     ${tariffMatchSummary(tariff)}
     ${renderTradeMeasures(tariff.trade_measures)}
     ${renderExciseTax(tariff.excise_tax)}
@@ -4350,7 +4376,7 @@ function renderControlTool(data) {
       ${renderRuleDocuments(rule)}
       <div class="result-caution">${match.cautions.map((item) => escapeHtml(item)).join(" · ")}</div></article>`;
   }).join("");
-  return `<div class="answer-head"><span class="answer-status${data.status === "matched" ? "" : " warning"}">${escapeHtml(data.status)}</span><div><h2>${escapeHtml(data.gtip)} kontrol dosyası</h2><p>${escapeHtml(data.as_of)} itibarıyla indekslenmiş resmî tebliğ ekleri · kapsam: ${escapeHtml(data.scope_determination || "belirsiz")} · fiilî denetim sonucu bu sistemde belirlenmez</p></div></div>
+  return `<div class="answer-head"><span class="answer-status${data.status === "matched" ? "" : " warning"}">${escapeHtml(lookupStatusLabels[data.status] || data.status)}</span><div><h2>${escapeHtml(data.gtip)} kontrol dosyası</h2><p>${escapeHtml(formatDate(data.as_of, true))} itibarıyla indekslenmiş resmî tebliğ ekleri · kapsam: ${escapeHtml(controlScopeLabels[data.scope_determination] || data.scope_determination || "belirsiz")} · fiilî denetim sonucu bu sistemde belirlenmez</p></div></div>
     ${cards || '<p class="missing-list">İndekslenen güncel Ek-1 listelerinde eşleşme bulunamadı.</p>'}
     ${(data.warnings || []).length ? `<div class="result-caution">${data.warnings.map((item) => escapeHtml(item)).join(" · ")}</div>` : ""}`;
 }
@@ -4687,8 +4713,11 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
   let debounceTimer = null;
   let activeIndex = -1;
   let currentItems = [];
+  let suppressNextInput = false;
 
   const closeDropdown = () => {
+    // Bekleyen arama da iptal edilir; yoksa kapandıktan sonra liste yeniden açılır.
+    clearTimeout(debounceTimer);
     dropdownEl.hidden = true;
     dropdownEl.innerHTML = "";
     activeIndex = -1;
@@ -4697,6 +4726,10 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
 
   inputEl.addEventListener("input", () => {
     clearTimeout(debounceTimer);
+    if (suppressNextInput) {
+      suppressNextInput = false;
+      return;
+    }
     const val = inputEl.value.trim();
     if (val.length < 2) {
       closeDropdown();
@@ -4705,6 +4738,8 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
     debounceTimer = setTimeout(async () => {
       try {
         const res = await fetchJson(`/api/tariff/autocomplete?q=${encodeURIComponent(val)}`);
+        // Yanıt gelene kadar kullanıcı yazmaya devam ettiyse veya alandan çıktıysa eski listeyi açma.
+        if (inputEl.value.trim() !== val || document.activeElement !== inputEl) return;
         const items = res.results || [];
         currentItems = items;
         if (!items.length) {
@@ -4727,6 +4762,7 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
             const selected = currentItems[idx];
             if (selected) {
               inputEl.value = selected.code;
+              suppressNextInput = true;
               inputEl.dispatchEvent(new Event("input", { bubbles: true }));
               closeDropdown();
               if (onSelect) onSelect(selected);
@@ -4740,6 +4776,10 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
   });
 
   inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" || e.key === "Tab") {
+      closeDropdown();
+      return;
+    }
     if (dropdownEl.hidden || !currentItems.length) return;
     const items = dropdownEl.querySelectorAll(".autocomplete-item");
     if (e.key === "ArrowDown") {
@@ -4755,8 +4795,6 @@ function setupAutocomplete(inputEl, dropdownEl, onSelect) {
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       items[activeIndex]?.click();
-    } else if (e.key === "Escape") {
-      closeDropdown();
     }
   });
 
@@ -4806,6 +4844,7 @@ $("#directClassifyButton")?.addEventListener("click", async () => {
       showToast("Aday kod için ürün tanımı biraz daha detaylandırılmalı.");
     }
   } catch (error) {
+    showClassificationError(error);
     showToast(error.message || "Sınıflandırma gerçekleştirilemedi.");
   } finally {
     btn.disabled = false;
