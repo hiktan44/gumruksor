@@ -373,12 +373,18 @@ function pct(value) {
   return value == null ? "—" : `${(Number(value) * 100).toFixed(1)}%`;
 }
 
+const BENCHMARK_DATASET_LABELS = {
+  eu: "AB tüzüğü (2022-23)",
+  eu2: "AB tüzüğü (2024-26)",
+  tr: "Türk BTB",
+};
+
 function renderBenchmark(data) {
   const metrics = data.metrics || {};
   const datasetRows = Object.entries(data.by_dataset || {})
     .map(([name, report]) => `
       <tr>
-        <td><b>${escapeHtml(name === "tr" ? "Türk BTB" : "AB tüzüğü")}</b><br><small>${escapeHtml(report.measured_cases)}/${escapeHtml(report.case_count)} ölçüldü</small></td>
+        <td><b>${escapeHtml(BENCHMARK_DATASET_LABELS[name] || name)}</b><br><small>${escapeHtml(report.measured_cases)}/${escapeHtml(report.case_count)} ölçüldü</small></td>
         <td>${pct(report.metrics?.top1_hs6)}</td>
         <td>${pct(report.metrics?.top3_hs6)}</td>
         <td>${pct(report.metrics?.top1_cn8)}</td>
@@ -482,7 +488,56 @@ async function loadBenchmark(options) {
   }
 }
 
+// **Kalanların hepsini koş.** Vaka sayısı arttıkça "Parti koş"a onlarca kez basmak
+// gerekiyordu. Bu döngü aynı 4 vakalık partileri sırayla koşar; kullanıcının tek tıklaması
+// kota harcamaya onaydır. Hız sınırına (429) takılırsa bekleyip devam eder, başka bir
+// hatada durur. Düğmeye tekrar basmak döngüyü bir sonraki partiden önce durdurur.
+let benchmarkLoop = null;
+
+async function runAllBenchmark() {
+  const button = $("#benchmarkRunAll");
+  const output = $("#benchmarkOutput");
+  if (benchmarkLoop) {
+    benchmarkLoop.stop = true;
+    button.textContent = "Durduruluyor…";
+    return;
+  }
+  benchmarkLoop = { stop: false };
+  const others = [$("#benchmarkScore"), $("#benchmarkRun"), $("#benchmarkReset")].filter(Boolean);
+  others.forEach((btn) => { btn.disabled = true; });
+  button.textContent = "Durdur";
+  let batches = 0;
+  try {
+    for (let guard = 0; guard < 40 && !benchmarkLoop.stop; guard += 1) {
+      const response = await fetch("/api/admin/classification-benchmark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 4 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 429 && data.code !== "quota_exceeded") {
+        const wait = Math.min(Math.max(Number(data.retry_after) || 60, 10), 300);
+        output.insertAdjacentHTML("afterbegin", `<p><small>Hız sınırı: ${escapeHtml(wait)} sn bekleniyor…</small></p>`);
+        await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+        continue;
+      }
+      if (!response.ok) throw new Error(data.error || "İstek tamamlanamadı.");
+      batches += 1;
+      output.innerHTML = `<p><b>${escapeHtml(batches)}. parti bitti.</b></p>${renderBenchmark(data)}`;
+      const notRun = Number(data.counts?.not_run ?? (data.pending_cases || []).length);
+      if (!notRun || !Number(data.batch?.requested || 0)) break;
+    }
+  } catch (error) {
+    output.insertAdjacentHTML("afterbegin", `<p class="answer-error">${escapeHtml(error.message)}</p>`);
+  } finally {
+    benchmarkLoop = null;
+    button.textContent = "Kalanların hepsini koş";
+    others.forEach((btn) => { btn.disabled = false; });
+  }
+}
+
 $("#benchmarkScore")?.addEventListener("click", () => loadBenchmark(null));
+$("#benchmarkRunAll")?.addEventListener("click", () => runAllBenchmark());
 $("#benchmarkRun")?.addEventListener("click", () => loadBenchmark({ limit: 4 }));
 $("#benchmarkReset")?.addEventListener("click", () => {
   if (!window.confirm("Kayıtlı tüm ölçüm tahminleri silinecek. Yeni ölçüm model kotası harcar. Devam edilsin mi?")) return;

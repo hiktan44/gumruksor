@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections import deque
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import io
 import json
@@ -21,7 +23,7 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Iterator, Literal
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
@@ -66,6 +68,63 @@ _GTIP_RE = re.compile(r"^\d{4}(?:\d{2}){0,4}$")
 # Sınıflandırmada nomenklatür/tarife tanımları, AB tüzük sayfaları ve önlem ürün
 # tanımları taranır; indeks ya da gömme sağlayıcısı yoksa hiçbir kanıt eklenmez.
 _CLASSIFICATION_HYBRID_CORPORA = ["tariff_descriptions", "eu_classification", "trade_measures"]
+
+# ------------------------------------------------------------------ ölçüm kalkanı
+#: **Yalnız ölçüm koşucusu doldurur.** Ölçüm vakaları AB sınıflandırma tüzüklerinden
+#: alınır; aynı tüzükler sınıflandırmada kanıt olarak da çekilir. Vakanın kendi tüzüğü
+#: kanıta girerse model cevabı sınav kâğıdından okur ve skor sistemin değil aramanın
+#: başarısını ölçer. Üretimde değer her zaman boştur; hiçbir kanıt düşürülmez.
+_EVIDENCE_EXCLUSION: ContextVar[tuple[frozenset[str], frozenset[int]]] = ContextVar(
+    "_EVIDENCE_EXCLUSION", default=(frozenset(), frozenset())
+)
+_REGULATION_REF_RE = re.compile(r"(\d{1,4})/(\d{2,4})")
+_CONSOLIDATED_PAGE_RE = re.compile(r"sayfa\s+(\d+)", re.IGNORECASE)
+
+
+def _regulation_ref(value: str) -> str:
+    match = _REGULATION_REF_RE.search(str(value or ""))
+    return f"{match.group(1)}/{match.group(2)}" if match else ""
+
+
+@contextmanager
+def excluding_classification_evidence(
+    *, regulations: Iterable[str] = (), consolidated_pages: Iterable[int] = ()
+) -> Iterator[None]:
+    """Bu blok içinde verilen tüzükler ve konsolide liste sayfaları kanıttan düşer.
+
+    Değer ``ContextVar``'dadır: eşzamanlı koşan vakalar birbirinin kalkanını görmez.
+    """
+    refs = frozenset(ref for ref in (_regulation_ref(item) for item in regulations) if ref)
+    pages = frozenset(int(page) for page in consolidated_pages)
+    token = _EVIDENCE_EXCLUSION.set((refs, pages))
+    try:
+        yield
+    finally:
+        _EVIDENCE_EXCLUSION.reset(token)
+
+
+def _excluded_by_benchmark(
+    *, regulations: Iterable[str] = (), page: int | None = None, text: str = ""
+) -> bool:
+    refs, pages = _EVIDENCE_EXCLUSION.get()
+    if not refs and not pages:
+        return False
+    if page is not None and page in pages:
+        return True
+    if refs & {_regulation_ref(item) for item in regulations}:
+        return True
+    return any(re.search(rf"(?<!\d){re.escape(ref)}(?!\d)", text or "") for ref in refs)
+
+
+def _hybrid_entry_excluded(entry: dict[str, Any]) -> bool:
+    if entry.get("corpus") != "eu_classification":
+        return False
+    match = _CONSOLIDATED_PAGE_RE.search(str(entry.get("title") or ""))
+    return _excluded_by_benchmark(
+        page=int(match.group(1)) if match else None,
+        text=f"{entry.get('title') or ''} {entry.get('excerpt') or ''}",
+    )
+
 _CLASSIFICATION_HYBRID_LIMIT = 8
 _CLASSIFICATION_EVIDENCE_IDS_MAX = 5
 #: Resmî cetvelden kaç aday tanım isteme eklenecek. Hibrit kanıttan ayrı bir bütçe:
@@ -2893,6 +2952,8 @@ class CustomsAdvisor:
             entry = _hybrid_entry(item)
             if entry is None or not entry["excerpt"] or entry["id"] in seen:
                 continue
+            if _hybrid_entry_excluded(entry):
+                continue
             seen.add(entry["id"])
             entries.append(entry)
         return entries
@@ -3580,7 +3641,15 @@ class CustomsAdvisor:
                     code_prefix=code,
                     limit=3,
                 )
-                evidence = evidence_result.hits
+                evidence = [
+                    hit
+                    for hit in evidence_result.hits
+                    if not _excluded_by_benchmark(
+                        regulations=hit.regulation_references,
+                        page=hit.page_number,
+                        text=hit.excerpt,
+                    )
+                ]
             assets[code] = (lookup, evidence)
 
         primary_top = report_codes[0][0] if report_codes and report_codes[0] else ""
