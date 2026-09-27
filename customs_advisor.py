@@ -2858,7 +2858,7 @@ class CustomsAdvisor:
                             }
                     if duty is None:
                         profile = downgrade_profile(
-                            profile, reason="archive_miss", note=archive_miss_note()
+                            profile, reason="archive_miss", note=archive_miss_note(gtip=code)
                         )
                         on_demand = {
                             "kind": "eu_taric",

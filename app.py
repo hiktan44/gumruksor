@@ -2386,7 +2386,10 @@ async def web_customs_precheck(request: Request):
         guard_data(body, path="gümrük sorusu")
         inquiry = CustomsInquiry.model_validate(body)
         result = await customs_advisor_service.analyse(inquiry)
-        _record_usage(quota_user, "precheck")
+        # Yapay zekâ yorumu üretilemediyse (anahtar yok / resmî metin alınamadı) kullanıcıya
+        # yalnız kanıt paketi döner; bu, kullanıcının hatası olmadığı için kotadan düşülmez.
+        if getattr(result, "status", "") != "evidence_only":
+            _record_usage(quota_user, "precheck")
     except SecurityViolation as exc:
         return _security_response(exc)
     except ValidationError as exc:

@@ -319,10 +319,6 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(turkish_export_procedure({})), 8)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CountriesRouteTierTests(unittest.TestCase):
     """Arayüz kota harcamadan uyarabilsin diye kademe ülke listesinde geliyor."""
 
@@ -338,3 +334,38 @@ class CountriesRouteTierTests(unittest.TestCase):
         self.assertEqual(items["İsviçre"]["export_data_tier"], "nomenclature")
         self.assertEqual(items["Çin"]["export_data_tier"], "agreement_only")
         self.assertIn("vergi oranı verimiz yok", items["Çin"]["export_data_note"])
+
+
+class ArchiveMissNoteTests(unittest.TestCase):
+    """AB arşiv ıskasında 'vergi alınmaz' cümlesi yalnız sanayi ürününe söylenir."""
+
+    def test_basic_agricultural_product_is_not_called_duty_free(self) -> None:
+        from export_requirements import archive_miss_note
+
+        note = archive_miss_note(gtip="080222000000")  # kabuksuz fındık
+        self.assertNotIn("vergi alınmaz", note)
+        self.assertIn("Gümrük Birliği kapsamında değildir", note)
+        self.assertIn("EUR.1", note)
+
+    def test_steel_product_points_to_ecsc_agreement(self) -> None:
+        from export_requirements import archive_miss_note
+
+        note = archive_miss_note(gtip="720851000000")
+        self.assertNotIn("vergi alınmaz", note)
+        self.assertIn("AKÇT", note)
+
+    def test_processed_agricultural_product_mentions_agricultural_component(self) -> None:
+        from export_requirements import archive_miss_note
+
+        note = archive_miss_note(gtip="190531000000")  # bisküvi
+        self.assertIn("tarım payı", note)
+
+    def test_industrial_product_keeps_customs_union_sentence(self) -> None:
+        from export_requirements import archive_miss_note
+
+        self.assertIn("sanayi ürününde AB gümrük vergisi alınmaz", archive_miss_note(gtip="691110000011"))
+        self.assertIn("sanayi ürününde AB gümrük vergisi alınmaz", archive_miss_note())
+
+
+if __name__ == "__main__":
+    unittest.main()
