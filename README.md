@@ -162,6 +162,12 @@ Nereye bağlandığı: tarife karar ağacı çocukları artık `description`, `f
 * **Kopya kalkanı.** Vakalar AB tüzüklerinden alınıyor, aynı tüzükler sınıflandırmada kanıt olarak da çekiliyor; model cevabı kaynaktan okuyabilirdi. Ölçüm koşucusu her vakayı kendi kalkanıyla çalıştırır (`customs_advisor.excluding_classification_evidence`): vakanın tüzüğü ve, konsolide listeden alınmışsa, o sayfa ile bir sonraki sayfa kanıttan düşer. Diğer tüzükler kalır. Üretimde kalkan boştur. Bu yüzden kalkanlı skor, eski 16 vakalık skorla birebir karşılaştırılmamalıdır.
 * Panelde "Kalanların hepsini koş" partileri sırayla koşar (hız sınırında bekler, kota bitince durur).
 
+**Kalkanlı 55 vakalık taban (`f8c501d`, tek koşu)** — [`benchmarks/measured_baseline_v2.json`](benchmarks/measured_baseline_v2.json): Top-1 HS6 %81,8 · Top-3 HS6 %94,5 · Top-1 CN8 %78,2 · Top-3 CN8 %94,5. Eski AB setinde Top-1 CN8 %100'den %66,7'ye indi: dört vaka yalnız kalkansız turda geçiyordu, yani o %100'ün bir kısmı vakanın kendi tüzüğünün kanıta girmesinden geliyordu. Metrikler dosyadaki adaylardan puanlayıcıyla yeniden hesaplanır ve testle kilitlidir.
+
+Bu koşuda tekrar eden iki hata deseni istemde, resmî nota dayanan iki genel kurala çevrildi: 90. fasıl not 1(b) (etkisini yalnız esnekliğinden alan tekstil destek eşyası ortopedik cihaz değildir) ve kullanılabilir sofra/mutfak eşyasının süs eşyası pozisyonuna itilmemesi.
+
+**Saklı sınav (`eu3`)** — [`benchmarks/eu_classification_holdout_v3.jsonl`](benchmarks/eu_classification_holdout_v3.jsonl): 2020-2021 tarihli 30 AB tüzüğünden 30 vaka, aynı kaynak ve çeviri kurallarıyla. Kurallar yukarıdaki 55 vakanın hatalarına bakılarak yazıldığı için o setteki artış kısmen "sınava göre ders çalışma" olabilir; saklı sınav bu yüzden vardır ve **istem kuralları bu setin hatalarına bakılarak yazılmaz**. Beklenen kodu 2026 Türk tarifesinde artık bulunmayan iki tüzük (2020/516, 2020/622) alınmadı; Adalet Divanı'nda dava konusu olan üç tüzük (2021/910, 2021/1367, 2021/1832) hiç alınmadı. Bir tüzük birden fazla veri setinde yer alamaz (testle kilitli).
+
 
 **Jev (TypeSafe AI) ile alt satır daraltması ([`typesafe_client.py`](typesafe_client.py)).** Model bir adayı 6 hanede bıraktığında ve cetvelde o pozisyonun **birden fazla** CN8 alt satırı olduğunda (tek alt satır varsa zaten `_narrow_to_single_cn8` çözer), [Jev](https://docs.typesafe.ai/) `choice` ilkeliyle doğru alt satırı seçmeye çalışır. Jev metin üretmez; bir seçenek listesinden birini seçer ve kalibre edilmiş bir güven döndürür. Raylar:
 

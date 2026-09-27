@@ -113,3 +113,58 @@ class MeasuredBaselineTests(unittest.TestCase):
         self.assertTrue(hasattr(customs_benchmark, "evaluate_predictions"))
         recorded = set(_baseline()["runs"][0]["metrics"])
         self.assertEqual(recorded, set(_METRIC_KEYS), "taban yalnız bilinen ölçütleri kaydeder")
+
+
+BASELINE_V2_PATH = ROOT / "benchmarks" / "measured_baseline_v2.json"
+
+
+class GuardedBaselineTests(unittest.TestCase):
+    """Kopya kalkanlı 55 vakalık taban: aynı kilitler, tek koşu açıkça beyan edilir."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.payload = json.loads(BASELINE_V2_PATH.read_text(encoding="utf-8"))
+        cls.cases = [case for relative in cls.payload["datasets"] for case in load_cases(ROOT / relative)]
+
+    def _report(self, run: dict) -> dict:
+        return evaluate_predictions(
+            self.cases,
+            [{"id": cid, "candidates": codes} for cid, codes in run["candidates"].items()],
+        )
+
+    def test_the_recorded_metrics_match_a_fresh_scoring(self):
+        for run in self.payload["runs"]:
+            report = self._report(run)
+            for key in _METRIC_KEYS:
+                self.assertEqual(report["metrics"][key], run["metrics"][key], key)
+            self.assertEqual(report["cn8_attempted_case_count"], run["cn8_attempted_case_count"])
+            self.assertEqual(report["top1_cn8_when_attempted"], run["top1_cn8_when_attempted"])
+
+    def test_every_case_of_every_dataset_is_covered(self):
+        ids = {str(case["id"]) for case in self.cases}
+        self.assertEqual(len(ids), 55)
+        for run in self.payload["runs"]:
+            self.assertEqual(set(run["candidates"]), ids)
+            self.assertEqual(run["measured_case_count"], len(ids))
+
+    def test_a_single_run_is_declared_not_passed_off_as_stable(self):
+        runs = self.payload["runs"]
+        if len(runs) < 2:
+            self.assertTrue(self.payload.get("single_run"))
+            self.assertTrue(any("Tek koşu" in item for item in self.payload["limits"]))
+        else:
+            first, *rest = runs
+            for run in rest:
+                self.assertEqual(run["code_version"], first["code_version"])
+
+    def test_the_run_was_measured_under_the_evidence_guard(self):
+        self.assertTrue(self.payload["evidence_guard"])
+
+    def test_findings_name_real_cases_that_fail_in_the_record(self):
+        ids = {str(case["id"]) for case in self.cases}
+        report = self._report(self.payload["runs"][0])
+        failing = {d["id"] for d in report["details"] if not d["top1_cn8"]}
+        for finding in self.payload["findings"]:
+            for case_id in finding["ids"]:
+                self.assertIn(case_id, ids)
+                self.assertIn(case_id, failing, f"{case_id} kayıtta geçiyor")

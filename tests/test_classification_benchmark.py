@@ -57,7 +57,8 @@ class CaseLoadingTests(unittest.TestCase):
     def test_all_datasets_load_and_are_tagged(self):
         cases = bench.load_cases("all")
         counts = {name: sum(1 for case in cases if case["dataset"] == name) for name in bench.DATASETS}
-        self.assertEqual(set(counts), {"eu", "eu2", "tr"})
+        self.assertEqual(set(counts), {"eu", "eu2", "eu3", "tr"})
+        self.assertGreaterEqual(counts["eu3"], 30)
         self.assertEqual(counts["eu"], 12)
         self.assertEqual(counts["tr"], 4)
         self.assertGreaterEqual(counts["eu2"], 25)
@@ -98,6 +99,14 @@ class CaseLoadingTests(unittest.TestCase):
         self.assertIn("Eşya sunulduğu hâliyle sınıflandırılır", _CLASSIFICATION_PROMPT)
         self.assertIn("GİK 2-a", _CLASSIFICATION_PROMPT)
 
+    def test_classification_prompt_carries_the_two_legal_notes_from_the_55_case_run(self):
+        """55 vakalık kalkanlı ölçümde tekrar eden iki hata deseni; ikisi de resmî nota dayanır."""
+        from customs_advisor import _CLASSIFICATION_PROMPT
+
+        self.assertIn("90. faslın 1(b) notu", _CLASSIFICATION_PROMPT)
+        self.assertIn("yalnız esnekliğinden", _CLASSIFICATION_PROMPT)
+        self.assertIn("süs eşyası pozisyonuna itilmez", _CLASSIFICATION_PROMPT)
+
     def test_selection_skips_stored_cases_and_honours_limit(self):
         cases = bench.load_cases("all")
         first = str(cases[0]["id"])
@@ -119,7 +128,8 @@ class ExtendedEuDatasetTests(unittest.TestCase):
         import hashlib
 
         cls.hashlib = hashlib
-        cls.cases = bench.load_cases("eu2")
+        # eu3 (saklı sınav) aynı kaynak ve aynı kurallarla derlenir; aynı kilitler geçerli.
+        cls.cases = bench.load_cases("eu2") + bench.load_cases("eu3")
 
     def test_fingerprint_matches_the_stored_english_source_text(self):
         for case in self.cases:
@@ -143,10 +153,14 @@ class ExtendedEuDatasetTests(unittest.TestCase):
             self.assertLessEqual(len(case["description"]), 2000, case["id"])
             bench.request_from_case(case)
 
-    def test_no_regulation_repeats_the_first_dataset(self):
-        v1 = {ref for case in bench.load_cases("eu") for ref in case["regulation_references"]}
-        for case in self.cases:
-            self.assertFalse(set(case["regulation_references"]) & v1, case["id"])
+    def test_no_regulation_appears_in_two_datasets(self):
+        """Saklı sınavın değeri bağımsızlığıdır: aynı tüzük iki sette olamaz."""
+        seen: dict[str, str] = {}
+        for name in ("eu", "eu2", "eu3"):
+            for case in bench.load_cases(name):
+                for ref in case["regulation_references"]:
+                    self.assertNotIn(ref, {k for k, v in seen.items() if v != name}, case["id"])
+                    seen.setdefault(ref, name)
 
     def test_sources_point_at_the_official_journal(self):
         for case in self.cases:
