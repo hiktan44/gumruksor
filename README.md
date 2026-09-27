@@ -153,6 +153,16 @@ Nereye bağlandığı: tarife karar ağacı çocukları artık `description`, `f
 
 **Sonraki sürüm (`7f6eb3c`, tek koşu):** Top-1 CN8 %68,8 → %81,3, Top-3 CN8 → %100, 8 haneye inilen vaka 16/16; `eu-2023-1427` düzeldi. Kalan üç hata incelendi ve ikisinin **vakanın kendisinden** kaynaklandığı görüldü: `eu-2023-1131` ve `eu-2023-2451` vaka metinleri tüzüğün eşya tanımından kısaltılırken kararı belirleyen olgu düşmüştü (jelibonun %35 sakaroz / %5,6 glikoz içeriği; ayakkabının kauçuk tabanı). Model eksik bilgiyle kalıntı satırı kuralına uyuyordu. Metinler EUR-Lex'teki ek sütun (1)'e (32023R1131, 32023R2451) göre düzeltildi; kararın gerekçe sütunu cevabı sızdıracağı için **eklenmedi**. Üçüncü hata (`tr-…-demo-telefon`, beklenen 8471) modelindir; isteme "eşya sunulduğu hâliyle sınıflandırılır" kuralı (GİK 2-a sınırıyla) eklendi. Bu düzeltmelerden sonraki skor, eski koşularla birebir karşılaştırılmamalıdır: iki vakanın metni değişti.
 
+`5e8a94b` (tek koşu, 16 vaka): Top-1 HS6 %93,8 · Top-1 CN8 %93,8 · Top-3 CN8 %100; AB vakalarının 12'si de doğru, kalan tek hata demo telefon.
+
+**Genişletilmiş vaka seti ve kopya kalkanı.** 16 vakada %100 gerçek başarı demek değildir; bu yüzden vaka seti 55'e çıkarıldı:
+
+* `eu2` ([`benchmarks/eu_classification_regulations_v2.jsonl`](benchmarks/eu_classification_regulations_v2.jsonl)): 2022-2026 tarihli 37 AB sınıflandırma tüzüğünden 39 vaka. İlk setle çakışan tüzük yok. Vaka metni EUR-Lex ek sütun (1)'in eksiksiz Türkçe çevirisidir; İngilizce orijinal vakada `source_text_en` olarak saklanır. Gerekçe sütunu cevabı söylediği için alınmaz. EUR-Lex bot koruması kaynak dosyanın otomatik indirilmesine izin vermediğinden metin Yayın Ofisi'nin aynı Resmî Gazete kopyasından (`retrieved_from`) alındı; `source_sha256` bu yüzden saklanan İngilizce metnin parmak izidir ve herkes yeniden hesaplayabilir. Beklenen 8 haneli kodların hepsi canlı Türk tarife ağacında doğrulandı.
+* Dışarıda bırakılanlar: set hâlinde sunulup kalem kalem sınıflandırılan eşya (2022/933, tek cevaplı değil) ve Türkçe metni 2.000 karakterlik istek sınırını aşan bir vaka (2024/1992, 2. satır).
+* **Kopya kalkanı.** Vakalar AB tüzüklerinden alınıyor, aynı tüzükler sınıflandırmada kanıt olarak da çekiliyor; model cevabı kaynaktan okuyabilirdi. Ölçüm koşucusu her vakayı kendi kalkanıyla çalıştırır (`customs_advisor.excluding_classification_evidence`): vakanın tüzüğü ve, konsolide listeden alınmışsa, o sayfa ile bir sonraki sayfa kanıttan düşer. Diğer tüzükler kalır. Üretimde kalkan boştur. Bu yüzden kalkanlı skor, eski 16 vakalık skorla birebir karşılaştırılmamalıdır.
+* Panelde "Kalanların hepsini koş" partileri sırayla koşar (hız sınırında bekler, kota bitince durur).
+
+
 **Jev (TypeSafe AI) ile alt satır daraltması ([`typesafe_client.py`](typesafe_client.py)).** Model bir adayı 6 hanede bıraktığında ve cetvelde o pozisyonun **birden fazla** CN8 alt satırı olduğunda (tek alt satır varsa zaten `_narrow_to_single_cn8` çözer), [Jev](https://docs.typesafe.ai/) `choice` ilkeliyle doğru alt satırı seçmeye çalışır. Jev metin üretmez; bir seçenek listesinden birini seçer ve kalibre edilmiş bir güven döndürür. Raylar:
 
 * **Seçenekler yalnız resmî cetvelden gelir**: pozisyonun CN8 alt satırları ve her birinin resmî eşya tanımı, artı bir "hiçbiri" seçeneği. Jev listede olmayan bir kod döndürürse cevap atılır, yani **model kod uyduramaz**.

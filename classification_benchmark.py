@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Sequence
+from urllib.parse import urlsplit
 
 import customs_benchmark
 
@@ -48,6 +49,8 @@ CASE_DIR = ROOT / "benchmarks"
 #: Etiketli veri setleri. Anahtar CLI ve yönetim rotasındaki ``dataset`` değeridir.
 DATASETS: dict[str, str] = {
     "eu": "customs_classification_v1.jsonl",
+    # 2022-2026 tüzükleri; metin EUR-Lex ek sütun (1)'den birebir, gerekçe sütunu hariç.
+    "eu2": "eu_classification_regulations_v2.jsonl",
     "tr": "turkish_btb_gtip12_historical_v1.jsonl",
 }
 
@@ -66,7 +69,8 @@ GTIP12_NOTE = (
 
 WARNING = (
     "Bu ölçüm metinden GTİP adayı üretme başarımını gösterir; görselden evsaf çıkarımını, "
-    "güncel tarife geçerliliğini veya hukuki bağlayıcılığı ölçmez."
+    "güncel tarife geçerliliğini veya hukuki bağlayıcılığı ölçmez. Her vakada vakanın kendi "
+    "AB tüzüğü kanıt listesinden çıkarılır; model cevabı kaynaktan okuyamaz."
 )
 
 
@@ -130,6 +134,33 @@ def request_from_case(case: dict[str, Any]) -> Any:
 
 
 # ------------------------------------------------------------------ koşu
+_CONSOLIDATED_LIST_HOST = "taxation-customs.ec.europa.eu"
+
+
+def evidence_exclusion(case: dict[str, Any]) -> tuple[list[str], list[int]]:
+    """Vakanın kendi kaynağını kanıttan düşürmek için tüzük ve sayfa listesi.
+
+    **Neden.** Vakalar AB sınıflandırma tüzüklerinden alınır ve aynı tüzükler hatta
+    kanıt olarak çekilir. Vakanın kendi tüzüğü kanıta girerse skor, sınıflandırmayı
+    değil cevabın aranıp bulunmasını ölçer. Konsolide listeden alınan vakada satır bir
+    sonraki sayfaya taşabildiği için o sayfa da düşer. Diğer tüzükler kanıt olarak
+    **kalır**: gerçek kullanımda da oradadırlar.
+    """
+    regulations = [str(item) for item in case.get("regulation_references") or []]
+    pages: list[int] = []
+    host = (urlsplit(str(case.get("source_url") or "")).hostname or "").lower()
+    if host == _CONSOLIDATED_LIST_HOST and isinstance(case.get("source_page"), int):
+        pages = [case["source_page"], case["source_page"] + 1]
+    return regulations, pages
+
+
+def _evidence_guard(case: dict[str, Any]) -> Any:
+    from customs_advisor import excluding_classification_evidence
+
+    regulations, pages = evidence_exclusion(case)
+    return excluding_classification_evidence(regulations=regulations, consolidated_pages=pages)
+
+
 @dataclass(slots=True)
 class CasePrediction:
     """Tek vakanın hat çıktısı. ``candidates`` puanlayıcının beklediği sırada."""
@@ -189,9 +220,10 @@ async def run_case(
     )
     started = time.monotonic()
     try:
-        result = await asyncio.wait_for(
-            service.classify_product(request_from_case(case)), timeout=timeout
-        )
+        with _evidence_guard(case):
+            result = await asyncio.wait_for(
+                service.classify_product(request_from_case(case)), timeout=timeout
+            )
     except (TimeoutError, asyncio.TimeoutError):
         prediction.error = f"timeout: {timeout:.0f} sn"
     except Exception as exc:  # hat hatası ölçümü bozmaz, kaydedilir

@@ -190,11 +190,12 @@
         <header class="results-header flex-header">
           <div>
             <h2>Sınıflandırma Doğruluk Ölçümü</h2>
-            <p>Resmî kaynaklı 16 etiketli vaka (12 AB sınıflandırma tüzüğü kararı + 4 Türk BTB kararı) gerçek sınıflandırma hattından geçirilir ve Top-1/Top-3 doğruluğu ölçülür. <b>Puanı göster ücretsizdir</b> ve model çağırmaz; <b>parti koş model kotası harcar</b> (vaka başına iki bağımsız model çağrısı). Tahminler birikir: partileri arka arkaya koşup toplam skoru görebilirsiniz.</p>
+            <p>Resmî kaynaklı etiketli vakalar (AB sınıflandırma tüzüğü kararları + Türk BTB kararları) gerçek sınıflandırma hattından geçirilir ve Top-1/Top-3 doğruluğu ölçülür. <b>Puanı göster ücretsizdir</b> ve model çağırmaz; <b>parti koş model kotası harcar</b> (vaka başına iki bağımsız model çağrısı). Tahminler birikir: partileri arka arkaya koşup toplam skoru görebilirsiniz; "Kalanların hepsini koş" bunu sizin yerinize yapar. Her vakada vakanın kendi AB tüzüğü kanıt listesinden çıkarılır, yani sistem cevabı kaynaktan okuyamaz.</p>
           </div>
           <div class="filter-pills">
             <button type="button" class="filter-pill active" id="benchmarkScore">Puanı göster</button>
             <button type="button" class="filter-pill" id="benchmarkRun">Parti koş (4 vaka)</button>
+            <button type="button" class="filter-pill" id="benchmarkRunAll">Kalanların hepsini koş</button>
             <button type="button" class="filter-pill" id="benchmarkReset">Kayıtları sıfırla</button>
           </div>
         </header>

@@ -1378,7 +1378,9 @@ async def web_admin_classification_benchmark_run(request: Request):
     parti parti yapılır ve tahminler kalıcı olarak birikir: ``GET`` her zaman
     o ana kadarki toplam skoru verir.
     """
-    limited = _rate_limit_response(request, "admin-benchmark-run", limit=4, window_seconds=300)
+    # Yönetici "Kalanların hepsini koş" ile partileri arka arkaya ister; 60 vakalık ölçüm
+    # 15 parti demek. Tavan yine de kota yakan bir döngüyü sınırlar (5 dk'da 12 parti).
+    limited = _rate_limit_response(request, "admin-benchmark-run", limit=12, window_seconds=300)
     if limited:
         return limited
     try:

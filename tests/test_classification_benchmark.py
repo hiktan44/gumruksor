@@ -54,12 +54,14 @@ class FakeService:
 
 
 class CaseLoadingTests(unittest.TestCase):
-    def test_both_datasets_load_and_are_tagged(self):
+    def test_all_datasets_load_and_are_tagged(self):
         cases = bench.load_cases("all")
-        self.assertEqual(len(cases), 16)
-        datasets = {case["dataset"] for case in cases}
-        self.assertEqual(datasets, {"eu", "tr"})
-        self.assertEqual(sum(1 for case in cases if case["dataset"] == "tr"), 4)
+        counts = {name: sum(1 for case in cases if case["dataset"] == name) for name in bench.DATASETS}
+        self.assertEqual(set(counts), {"eu", "eu2", "tr"})
+        self.assertEqual(counts["eu"], 12)
+        self.assertEqual(counts["tr"], 4)
+        self.assertGreaterEqual(counts["eu2"], 25)
+        self.assertEqual(len(cases), sum(counts.values()))
 
     def test_single_dataset_can_be_selected(self):
         self.assertTrue(all(case["dataset"] == "tr" for case in bench.load_cases("tr")))
@@ -102,6 +104,64 @@ class CaseLoadingTests(unittest.TestCase):
         batch = bench.select_cases(cases, limit=2, skip_ids={first})
         self.assertEqual(len(batch), 2)
         self.assertNotIn(first, {str(case["id"]) for case in batch})
+
+
+class ExtendedEuDatasetTests(unittest.TestCase):
+    """eu2: 2022-2026 AB sınıflandırma tüzükleri, EUR-Lex ek sütun (1)'den.
+
+    Metin kaynaktan birebir alınır, gerekçe sütunu (cevabı söyler) alınmaz. Kaynak
+    baytları bot koruması yüzünden otomatik indirilemediği için parmak izi, vakada
+    saklanan İngilizce orijinal metinden hesaplanır; herkes EUR-Lex'le karşılaştırabilir.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import hashlib
+
+        cls.hashlib = hashlib
+        cls.cases = bench.load_cases("eu2")
+
+    def test_fingerprint_matches_the_stored_english_source_text(self):
+        for case in self.cases:
+            digest = self.hashlib.sha256(case["source_text_en"].encode("utf-8")).hexdigest()
+            self.assertEqual(case["source_sha256"], digest, case["id"])
+            self.assertEqual(case["source_sha256_basis"], "source_text_en")
+
+    def test_the_turkish_text_never_names_the_answer(self):
+        import re
+
+        for case in self.cases:
+            text = case["description"]
+            code = case["expected_cn8"][0]
+            digits = re.sub(r"\D", "", text)
+            self.assertNotIn(code[:6], digits, case["id"])
+            for word in ("pozisyon", "fasıl", "alt pozisyon", "GTİP", "Kombine Nomenklatür"):
+                self.assertNotIn(word, text, case["id"])
+
+    def test_every_case_fits_the_classification_request(self):
+        for case in self.cases:
+            self.assertLessEqual(len(case["description"]), 2000, case["id"])
+            bench.request_from_case(case)
+
+    def test_no_regulation_repeats_the_first_dataset(self):
+        v1 = {ref for case in bench.load_cases("eu") for ref in case["regulation_references"]}
+        for case in self.cases:
+            self.assertFalse(set(case["regulation_references"]) & v1, case["id"])
+
+    def test_sources_point_at_the_official_journal(self):
+        for case in self.cases:
+            (reference,) = case["regulation_references"]
+            year, number = reference.split("/")
+            celex = f"3{year}R{int(number):04d}"
+            self.assertTrue(case["source_url"].endswith(f"CELEX:{celex}"), case["id"])
+            self.assertTrue(case["retrieved_from"].endswith(celex), case["id"])
+            self.assertEqual(case["expected_cn8"][0][:6], case["accepted_hs6"][0])
+
+    def test_the_leak_guard_covers_every_case(self):
+        for case in self.cases:
+            regulations, pages = bench.evidence_exclusion(case)
+            self.assertEqual(regulations, case["regulation_references"])
+            self.assertEqual(pages, [])
 
 
 class RunTests(unittest.TestCase):
@@ -158,7 +218,7 @@ class RunTests(unittest.TestCase):
         service = FakeService({"ayak ısıtma": ["63079010"]})
         predictions = asyncio.run(bench.run_cases(service, cases))
         report = bench.evaluate(cases, [item.to_dict() for item in predictions])
-        self.assertEqual(set(report["by_dataset"]), {"eu", "tr"})
+        self.assertEqual(set(report["by_dataset"]), set(bench.DATASETS))
         self.assertGreater(report["by_dataset"]["tr"]["metrics"]["top1_cn8"], 0.0)
         self.assertEqual(report["by_dataset"]["eu"]["metrics"]["top1_cn8"], 0.0)
 
@@ -391,8 +451,9 @@ class RouteTests(unittest.TestCase):
         response = self.request("GET", "/api/admin/classification-benchmark", self.admin)
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual(body["case_count"], 16)
-        self.assertEqual(len(body["pending_cases"]), 16)
+        total = len(bench.load_cases("all"))
+        self.assertEqual(body["case_count"], total)
+        self.assertEqual(len(body["pending_cases"]), total)
         self.assertEqual(body["measured_cases"], 0)
         self.assertIn("yapısal olarak 0", body["gtip12_note"])
 
