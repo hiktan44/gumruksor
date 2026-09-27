@@ -168,6 +168,18 @@ Bu koşuda tekrar eden iki hata deseni istemde, resmî nota dayanan iki genel ku
 
 **Saklı sınav (`eu3`)** — [`benchmarks/eu_classification_holdout_v3.jsonl`](benchmarks/eu_classification_holdout_v3.jsonl): 2020-2021 tarihli 30 AB tüzüğünden 30 vaka, aynı kaynak ve çeviri kurallarıyla. Kurallar yukarıdaki 55 vakanın hatalarına bakılarak yazıldığı için o setteki artış kısmen "sınava göre ders çalışma" olabilir; saklı sınav bu yüzden vardır ve **istem kuralları bu setin hatalarına bakılarak yazılmaz**. Beklenen kodu 2026 Türk tarifesinde artık bulunmayan iki tüzük (2020/516, 2020/622) alınmadı; Adalet Divanı'nda dava konusu olan üç tüzük (2021/910, 2021/1367, 2021/1832) hiç alınmadı. Bir tüzük birden fazla veri setinde yer alamaz (testle kilitli).
 
+**85 vakalık kalkanlı taban (`b35c792`, tek koşu)** — [`benchmarks/measured_baseline_v3.json`](benchmarks/measured_baseline_v3.json). Ölçüm çalışmasının kapanış kaydıdır:
+
+| | Top-1 HS6 | Top-3 HS6 | Top-1 CN8 | Top-3 CN8 |
+|---|---|---|---|---|
+| Görülen 55 vaka | %87,3 | %96,4 | %85,5 | %94,5 |
+| **Saklı sınav (30 vaka)** | **%80,0** | **%90,0** | **%76,7** | **%83,3** |
+| Toplam 85 vaka | %84,7 | %94,1 | %82,3 | %90,6 |
+
+* Kullanım eşyası kuralı hedeflediği iki porselen vakayı düzeltti; 90. fasıl not 1(b) kuralı hedeflediği iki vakayı düzeltmedi. İkisi de dosyada `findings` olarak kayıtlı ve testle kilitli.
+* **Gerçek kullanım için doğru beklenti saklı sınavdır:** ürünlerin yaklaşık 4'te 3'ünde ilk aday doğru 8 haneli kod, 6'da 5'inde doğru kod ilk üç aday arasında. Bu yüzden 12 haneli GTİP her zaman kullanıcının tarife ağacında onayıyla seçilir.
+* Kalan hatalar dağınık (çelik, ahşap, alüminyum, tekstil); tekrar eden bir desen yok. İstem kurallarına bu sete bakarak eklemeye devam etmek saklı sınavın bağımsızlığını bozar, bu yüzden ölçüm çalışması burada kapatıldı.
+
 
 **Jev (TypeSafe AI) ile alt satır daraltması ([`typesafe_client.py`](typesafe_client.py)).** Model bir adayı 6 hanede bıraktığında ve cetvelde o pozisyonun **birden fazla** CN8 alt satırı olduğunda (tek alt satır varsa zaten `_narrow_to_single_cn8` çözer), [Jev](https://docs.typesafe.ai/) `choice` ilkeliyle doğru alt satırı seçmeye çalışır. Jev metin üretmez; bir seçenek listesinden birini seçer ve kalibre edilmiş bir güven döndürür. Raylar:
 
