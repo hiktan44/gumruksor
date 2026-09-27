@@ -116,20 +116,26 @@ class MeasuredBaselineTests(unittest.TestCase):
 
 
 BASELINE_V2_PATH = ROOT / "benchmarks" / "measured_baseline_v2.json"
+BASELINE_V3_PATH = ROOT / "benchmarks" / "measured_baseline_v3.json"
 
 
-class GuardedBaselineTests(unittest.TestCase):
-    """Kopya kalkanlı 55 vakalık taban: aynı kilitler, tek koşu açıkça beyan edilir."""
+class _GuardedBaselineChecks:
+    """Kopya kalkanlı tabanlar: aynı kilitler, tek koşu açıkça beyan edilir."""
+
+    PATH: Path
+    CASE_COUNT: int
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.payload = json.loads(BASELINE_V2_PATH.read_text(encoding="utf-8"))
+        cls.payload = json.loads(cls.PATH.read_text(encoding="utf-8"))
         cls.cases = [case for relative in cls.payload["datasets"] for case in load_cases(ROOT / relative)]
 
-    def _report(self, run: dict) -> dict:
+    def _report(self, run: dict, cases: list[dict] | None = None) -> dict:
+        cases = self.cases if cases is None else cases
+        ids = {str(case["id"]) for case in cases}
         return evaluate_predictions(
-            self.cases,
-            [{"id": cid, "candidates": codes} for cid, codes in run["candidates"].items()],
+            cases,
+            [{"id": cid, "candidates": codes} for cid, codes in run["candidates"].items() if cid in ids],
         )
 
     def test_the_recorded_metrics_match_a_fresh_scoring(self):
@@ -140,9 +146,23 @@ class GuardedBaselineTests(unittest.TestCase):
             self.assertEqual(report["cn8_attempted_case_count"], run["cn8_attempted_case_count"])
             self.assertEqual(report["top1_cn8_when_attempted"], run["top1_cn8_when_attempted"])
 
+    def test_holdout_and_seen_metrics_match_a_fresh_scoring(self):
+        """Saklı sınav ayrı raporlanıyorsa o rakam da dosyadaki adaylardan türetilebilmeli."""
+        holdout = self.payload.get("holdout_dataset")
+        if not holdout:
+            return
+        held = load_cases(ROOT / holdout)
+        held_ids = {str(case["id"]) for case in held}
+        seen = [case for case in self.cases if str(case["id"]) not in held_ids]
+        for run in self.payload["runs"]:
+            for cases, key in ((held, "holdout_metrics"), (seen, "seen_metrics")):
+                report = self._report(run, cases)
+                for metric in _METRIC_KEYS:
+                    self.assertEqual(report["metrics"][metric], run[key][metric], f"{key}.{metric}")
+
     def test_every_case_of_every_dataset_is_covered(self):
         ids = {str(case["id"]) for case in self.cases}
-        self.assertEqual(len(ids), 55)
+        self.assertEqual(len(ids), self.CASE_COUNT)
         for run in self.payload["runs"]:
             self.assertEqual(set(run["candidates"]), ids)
             self.assertEqual(run["measured_case_count"], len(ids))
@@ -160,11 +180,22 @@ class GuardedBaselineTests(unittest.TestCase):
     def test_the_run_was_measured_under_the_evidence_guard(self):
         self.assertTrue(self.payload["evidence_guard"])
 
-    def test_findings_name_real_cases_that_fail_in_the_record(self):
+    def test_findings_name_real_cases_in_the_state_they_claim(self):
         ids = {str(case["id"]) for case in self.cases}
         report = self._report(self.payload["runs"][0])
-        failing = {d["id"] for d in report["details"] if not d["top1_cn8"]}
+        passing = {d["id"] for d in report["details"] if d["top1_cn8"]}
         for finding in self.payload["findings"]:
+            expect_pass = finding.get("expect", "fail") == "pass"
             for case_id in finding["ids"]:
                 self.assertIn(case_id, ids)
-                self.assertIn(case_id, failing, f"{case_id} kayıtta geçiyor")
+                self.assertEqual(case_id in passing, expect_pass, f"{case_id} kayıtta iddia edilen durumda değil")
+
+
+class GuardedBaselineV2Tests(_GuardedBaselineChecks, unittest.TestCase):
+    PATH = BASELINE_V2_PATH
+    CASE_COUNT = 55
+
+
+class GuardedBaselineV3Tests(_GuardedBaselineChecks, unittest.TestCase):
+    PATH = BASELINE_V3_PATH
+    CASE_COUNT = 85
