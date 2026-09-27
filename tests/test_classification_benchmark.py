@@ -98,6 +98,14 @@ class CaseLoadingTests(unittest.TestCase):
         self.assertIn("Eşya sunulduğu hâliyle sınıflandırılır", _CLASSIFICATION_PROMPT)
         self.assertIn("GİK 2-a", _CLASSIFICATION_PROMPT)
 
+    def test_classification_prompt_carries_the_two_legal_notes_from_the_55_case_run(self):
+        """55 vakalık kalkanlı ölçümde tekrar eden iki hata deseni; ikisi de resmî nota dayanır."""
+        from customs_advisor import _CLASSIFICATION_PROMPT
+
+        self.assertIn("90. faslın 1(b) notu", _CLASSIFICATION_PROMPT)
+        self.assertIn("yalnız esnekliğinden", _CLASSIFICATION_PROMPT)
+        self.assertIn("süs eşyası pozisyonuna itilmez", _CLASSIFICATION_PROMPT)
+
     def test_selection_skips_stored_cases_and_honours_limit(self):
         cases = bench.load_cases("all")
         first = str(cases[0]["id"])

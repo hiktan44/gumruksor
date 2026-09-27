@@ -2162,6 +2162,15 @@ Kurallar:
   çıkarıldığını ya da eşyanın mevcut hâliyle başka bir eşyanın özelliklerini taşıdığını açıkça
   söylüyorsa, eşyayı adının çağrıştırdığı pozisyona değil, tanımın söylediği mevcut
   özelliklerin pozisyonuna koy.
+- **Tekstil destek eşyası ortopedik cihaz değildir.** 90. faslın 1(b) notu uyarınca, destek
+  verdiği veya tuttuğu organ üzerindeki etkisini yalnız esnekliğinden alan tekstil destek
+  eşyaları (hamile kemerleri, göğüs ve karın destek bandajları, eklem veya kas destekleri
+  gibi) 90. fasılda değil, tekstil bölümünde (XI. Bölüm) sınıflandırılır. Tıbbi amaçla
+  kullanılması veya tıbbi dille tanıtılması tek başına ortopedik cihaz saymaya yetmez.
+- **Kullanım eşyası, süs eşyası pozisyonuna itilmez.** Seramik, cam ve benzeri fasıllarda
+  "süs eşyası" pozisyonları esasen süsleme amaçlı eşya içindir. Sofra, mutfak veya tuvalet
+  eşyası olarak kullanılabilen bir eşya, süslü olsa ya da dekorasyonda da kullanılabilse bile
+  kullanım eşyası pozisyonunda kalır.
 - 10/12 haneli Türk GTİP, vergi oranı, TAREKS/TSE sonucu veya kesin hukuki hüküm üretme.
 - Kod yalnız rakamlardan oluşmalı ve tam olarak 6 ya da 8 haneli olmalı.
 - En olası adayı ilk sıraya koy; en fazla 3 aday ver.
