@@ -1010,7 +1010,12 @@ $("#deleteAccount").addEventListener("click", async () => {
 
 function switchScope(scope) {
   if (scope === state.scope) return;
+  // Kaynak araştırma ve genel mevzuat aynı arama kutusunu kullanır; her kapsam kendi
+  // aramasını korur, bir kapsamda yazılan metin diğerinde "sonuç bulunamadı"ya yol açmaz.
+  state.scopeQueries = state.scopeQueries || {};
+  if (state.scope !== "customs") state.scopeQueries[state.scope] = queryInput.value;
   state.scope = scope;
+  if (scope !== "customs") queryInput.value = state.scopeQueries[scope] || "";
   $$("[data-scope]").forEach((button) => button.classList.toggle("active", button.dataset.scope === scope));
   $("#ticaretFilters").hidden = scope !== "ticaret";
   $("#generalFilters").hidden = scope !== "general";
@@ -2922,9 +2927,28 @@ function openConsultationDialog(consultant) {
   $("#consultationDialog").showModal();
 }
 
+// Ürüne Sor'da seçilen GTİP ve menşe, Tarife & Maliyet formuna taşınır. Kullanıcının elle
+// yazdığı değer ezilmez; yalnız boş alan ya da daha önce otomatik doldurulmuş alan güncellenir.
+function prefillTariffFromProduct() {
+  const pairs = [
+    ["#tariffGtip", ($("#candidateGtip")?.value || "").replace(/\D/g, ""), (v) => v.length >= 6],
+    ["#tariffOrigin", ($("#originCountry")?.value || "").trim(), Boolean],
+    ["#tariffDispatch", ($("#dispatchCountry")?.value || "").trim(), Boolean],
+  ];
+  pairs.forEach(([selector, value, valid]) => {
+    const field = $(selector);
+    if (!field || !valid(value)) return;
+    if (!field.value.trim() || field.dataset.autofill === field.value) {
+      field.value = value;
+      field.dataset.autofill = value;
+    }
+  });
+}
+
 function switchCustomsView(view) {
   $$('[data-customs-view]').forEach((button) => button.classList.toggle("active", button.dataset.customsView === view));
   $$('[data-customs-panel]').forEach((panel) => { panel.hidden = panel.dataset.customsPanel !== view; });
+  if (view === "tariff") prefillTariffFromProduct();
   if (view === "changes") {
     renderWatchList();
     loadChanges();
