@@ -584,6 +584,11 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .analyse-button { width: 100%; min-height: 58px; display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; border: 0; background: var(--teal); color: #fff; font-family: var(--display); font-size: 1rem; font-weight: 700; }
 .analyse-button:hover { background: var(--teal-dark); }
 .analyse-button:disabled { opacity: .6; cursor: wait; }
+/* Paketinde olmayan özellik: düğme çalışır (açıklama gösterir) ama önceden kilitli görünür. */
+.analyse-button.is-locked { background: var(--surface); color: var(--ink-2); border: 1px dashed var(--line-strong); }
+.analyse-button.is-locked:hover { background: var(--teal-soft); color: var(--ink); }
+.lock-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: var(--teal-soft); color: var(--ink); font-family: var(--body, inherit); font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.analyse-button .lock-badge svg, .lock-badge svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .analyse-button svg { width: 20px; height: 20px; }
 .readiness-card { position: sticky; top: calc(var(--header-h) + 20px); padding: 23px 20px; }
 .readiness-card h2 { margin: 7px 0 18px; font-family: var(--display); font-size: 1.24rem; }

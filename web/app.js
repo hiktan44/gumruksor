@@ -732,6 +732,8 @@ async function loadAuthState() {
     $("#appAccountButton").textContent = `${firstName} · Hesabım`;
     refreshConsultationBadge();
     renderWatchList();
+    // Paket kataloğu baştan yüklenir: kilit rozetleri ve "… paketine geçin" metni doğru paketi göstersin.
+    ensurePlanCatalog().then(applyFeatureLocks);
     const params = new URLSearchParams(location.search);
     if (params.get("account")) {
       // Abonelik donusu: hesap paneli /api/account'u yeniden okur, yani yeni kota
@@ -811,10 +813,37 @@ function hasCapability(feature) {
   return account.capabilities.includes(feature);
 }
 
+function planNamesFor(feature) {
+  return (state.plans || []).filter((plan) => (plan.capabilities || []).includes(feature)).map((plan) => plan.name);
+}
+
+// Paketinde olmayan özelliğin düğmesine önceden kilit işareti koyar; kullanıcı
+// tıklamadan önce hangi paketle açılacağını görür. Tıklama yine açıklamayı gösterir.
+function applyFeatureLocks() {
+  const known = Array.isArray(state.auth?.account?.capabilities);
+  $$("[data-feature]").forEach((button) => {
+    const feature = button.dataset.feature;
+    const locked = known && !hasCapability(feature);
+    button.classList.toggle("is-locked", locked);
+    button.querySelector(".lock-badge")?.remove();
+    if (!locked) {
+      button.removeAttribute("title");
+      return;
+    }
+    const plans = planNamesFor(feature);
+    const target = plans.length ? `${plans[0]} paketi` : "Üst paket";
+    const badge = document.createElement("small");
+    badge.className = "lock-badge";
+    badge.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>${escapeHtml(target)}`;
+    button.append(badge);
+    button.title = `Bu özellik ${plans.length ? plans.join(" / ") : "üst"} paketinde açılır.`;
+  });
+}
+
 function featureUpsellHtml(feature) {
   const labels = state.featureLabels || {};
   const label = labels[feature] || "Bu özellik";
-  const plans = (state.plans || []).filter((plan) => (plan.capabilities || []).includes(feature)).map((plan) => plan.name);
+  const plans = planNamesFor(feature);
   const target = plans.length ? plans.join(" / ") : "Kurumsal";
   return `<div class="feature-locked"><p><b>${escapeHtml(label)}</b> mevcut paketinizde yok. <button type="button" class="link-button" data-open-plans>${escapeHtml(target)} paketine geçin</button>.</p></div>`;
 }
@@ -828,6 +857,7 @@ function renderAccount(auth) {
   // Sekme yalnız kilidi açık olan pakette görünür; aksi hâlde kullanıcıya
   // üretemeyeceği bir anahtar vaat edilmiş olurdu.
   $("#apiTab").hidden = !(account.capabilities || []).includes("api_access");
+  applyFeatureLocks();
   $("#manageBilling").hidden = !(
     account.subscription.provider === "stripe"
     && ["active", "pending", "past_due"].includes(account.subscription.status)
