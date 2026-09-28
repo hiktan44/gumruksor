@@ -193,6 +193,8 @@ Bu koşuda tekrar eden iki hata deseni istemde, resmî nota dayanan iki genel ku
 
 `GET /api/admin/llm-diagnostics` raporundaki `typesafe` bölümü anahtarın sunucuya ulaşıp ulaşmadığını (`configured`), resmî API'de çalışıp çalışmadığını (`ok`, sabit bir sentetik test cümlesiyle; **müşteri verisi gönderilmez**) ve özelliğin açık olup olmadığını (`narrowing_enabled`) gösterir. `401`/`403` hatası, anahtarın resmî bir TypeSafe anahtarı olmadığı anlamına gelir.
 
+**Jev yetenekleri ([`.claude/skills/`](.claude/skills/)).** Claude Code ile bu depoda Jev üzerinde çalışırken iki yetenek yüklenir: TypeSafe'in resmî `typesafe-ai` yeteneği (v0.5.7, MIT lisansıyla değiştirilmeden) ve projeye özgü [`gumruksor-jev`](.claude/skills/gumruksor-jev/SKILL.md). İkincisi hangi adımın Jev'e, hangisinin büyük modele veya koda ait olduğunu ayıran yönlendirme tablosunu, belirsiz cevaplar için açık bir sözleşmeyi (eşik altı, "hiçbiri", ulaşılamadı), "hiçbiri" seçeneği tuzağını ve yukarıdaki rayları içerir. [`tests/test_jev_skill.py`](tests/test_jev_skill.py) yeteneğin andığı kod adlarının gerçekten var olduğunu denetler.
+
 Ölçümün sınırları, abartmamak için açıkça:
 
 * Ölçülen şey **metinden GTİP adayı üretme**dir; görselden evsaf çıkarımı bu ölçümün dışındadır (vakalar resmî kararların eşya tanımlarıdır).

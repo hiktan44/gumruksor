@@ -178,8 +178,9 @@ data/official/*
 
 # yerel geliştirme verisi
 .dev-data/
-# yerel Claude Code başlatma yapılandırması
-.claude/
+# yerel Claude Code başlatma yapılandırması (proje yetenekleri depoda tutulur)
+.claude/*
+!.claude/skills/
 trade_measures.sqlite3
 
 trade_measures.sqlite3
