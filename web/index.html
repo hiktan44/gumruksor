@@ -224,7 +224,7 @@
 
             <div class="section-heading"><span>01</span><div><h2>Ürün dosyası</h2><p>Doğru sınıflandırma için ticari isimden fazlası gerekir.</p></div></div>
 
-            <label class="field field-wide"><span>Sorunuz <b>*</b></span><textarea id="customsQuestion" maxlength="1500" required placeholder="Örn. Çin menşeli bu çocuk şortunu ithal etmek için TAREKS gerekir mi; vergi ve belge riskleri nelerdir?"></textarea></label>
+            <label class="field field-wide"><span>Sorunuz <b>*</b></span><textarea id="customsQuestion" maxlength="1500" required placeholder="Örn. Çin menşeli bu çocuk şortunu ithal etmek için TAREKS gerekir mi; vergi ve belge riskleri nelerdir?" data-placeholder-import="Örn. Çin menşeli bu çocuk şortunu ithal etmek için TAREKS gerekir mi; vergi ve belge riskleri nelerdir?" data-placeholder-export="Örn. Bu pamuklu tişörtü Almanya'ya ihraç edeceğim; hangi dolaşım belgesi gerekir, alıcı ülkede vergi ve şartlar nelerdir?"></textarea></label>
 
             <div class="product-input-grid">
               <div class="image-intake">
@@ -550,30 +550,30 @@
             <summary><span>Toplu hesap (çok satırlı beyanname)</span><small>CSV veya Excel yükleyin; her satır ayrı hesaplanır</small></summary>
             <p class="rate-warning">Başlık satırı GTİP, Menşe ve Fatura bedeli sütunlarını içermelidir; Sevk ülkesi, Navlun, Sigorta, Miktar, Para birimi, KDV, Ödeme şekli, KKDF, Damping, ÖTV, Gözetim, EMY, GV ve İGV sütunları isteğe bağlıdır. <a href="/api/tariff/bulk/template" download>Şablonu indir</a>.</p>
             <label class="field"><span>CSV / XLSX dosyası</span><input id="bulkFile" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
-            <button class="analyse-button" type="button" id="bulkCalculate"><span>Satırları hesapla</span></button>
+            <button class="analyse-button" type="button" id="bulkCalculate" data-feature="bulk_costing"><span>Satırları hesapla</span></button>
             <div id="bulkOutput" aria-live="polite"></div>
           </details>
           <div class="scenario-box" id="scenarioBox" hidden>
             <h3>Menşe senaryoları</h3>
             <p class="rate-warning">Aynı kod için menşe ülke değişince resmî tarife sütunu, oran ve tercih belgesi de değişir. Karşılaştırma kanıt satırlarıyla bilgilendirme amaçlıdır; senaryo seçimi bağlayıcı değildir.</p>
             <label class="field"><span>Menşe ülkeleri (en az iki, virgülle)</span><input id="scenarioOrigins" maxlength="400" placeholder="Örn. Çin, Almanya, Güney Kore"></label>
-            <button class="analyse-button" type="button" id="scenarioCompare"><span>Senaryoları karşılaştır</span></button>
+            <button class="analyse-button" type="button" id="scenarioCompare" data-feature="scenario_compare"><span>Senaryoları karşılaştır</span></button>
             <div id="scenarioOutput" aria-live="polite"></div>
             <h3>Tasarruf önerisi</h3>
             <p class="rate-warning">Yukarıdaki maliyet kalemleri (fatura, navlun, sigorta, KDV, KKDF, ÖTV, damping, gözetim, EMY…) aynen kullanılır; doğrulanmamış kalem varsa o senaryo karşılaştırılamaz. Sıralama karar desteğidir, bağlayıcı değildir.</p>
-            <button class="analyse-button" type="button" id="scenarioSavings"><span>Tasarruf önerisi</span></button>
+            <button class="analyse-button" type="button" id="scenarioSavings" data-feature="scenario_compare"><span>Tasarruf önerisi</span></button>
             <div id="savingsOutput" aria-live="polite"></div>
             <h3>Yurt dışı tarife karşılaştırma</h3>
             <p class="rate-warning">Birleşik Krallık tarifesi resmî açık API'den oran düzeyinde okunur. Avrupa Birliği (TARIC/EBTI) ve İsviçre (Tares) makine okunur açık veri yayımlamadığı için bu iki ülkede oran otomatik alınamaz; sorgunuzu resmî ekranda açan bağlantılar üretilir. Eşleşme HS-6 düzeyindedir ve <b>hiçbir yurt dışı oran Türkiye maliyet hesabına aktarılmaz</b>.</p>
-            <button class="analyse-button" type="button" id="foreignCompare"><span>BK / AB / İsviçre karşılaştır</span></button>
+            <button class="analyse-button" type="button" id="foreignCompare" data-feature="foreign_tariff"><span>BK / AB / İsviçre karşılaştır</span></button>
             <div id="foreignOutput" aria-live="polite"></div>
             <h3>AB Bağlayıcı Tarife Bilgisi (BTB) kararları</h3>
             <p class="rate-warning">Avrupa Komisyonu'nun her gün yayımladığı resmî EBTI veri dosyasından alınır: aynı eşyanın AB üyesi ülkelerde hangi koda, hangi hukuki gerekçeyle sınıflandırıldığını gösterir. Kararlar kendi dillerinde (Fransızca, Felemenkçe, Almanca…) yayımlanır. <b>Bu kararlar Türkiye'de bağlayıcı değildir</b>; karşılaştırmalı sınıflandırma kanıtıdır.</p>
-            <button class="analyse-button" type="button" id="ebtiSearch"><span>AB BTB kararlarını ara</span></button>
+            <button class="analyse-button" type="button" id="ebtiSearch" data-feature="foreign_tariff"><span>AB BTB kararlarını ara</span></button>
             <div id="ebtiOutput" aria-live="polite"></div>
             <h3>AB vergi oranları (TARIC)</h3>
             <p class="rate-warning">Avrupa Komisyonu'nun resmî aylık TARIC ham veri çıkarımından gelir. <b>TARIC'te tek bir "nihai vergi" sayısı yoktur</b>: oran ek koda, tarife kontenjanına, ibraz edilen belgeye ve nihai kullanıma göre değişir. Bu yüzden üçüncü ülke vergisi, menşeye özgü oran, ek vergiler ve gereken belgeler ayrı ayrı gösterilir. Sonuç <b>Türkiye maliyet hesabına aktarılmaz</b>. Bu kaynak sorgu başına ücretlidir; aynı kod için sonuç arşivden sunulur.</p>
-            <button class="analyse-button" type="button" id="euTaricLookup"><span>AB oranlarını sorgula</span></button>
+            <button class="analyse-button" type="button" id="euTaricLookup" data-feature="foreign_tariff"><span>AB oranlarını sorgula</span></button>
             <div id="euTaricOutput" aria-live="polite"></div>
           </div>
         </section>

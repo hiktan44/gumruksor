@@ -521,11 +521,32 @@ class ProductClassificationResult(BaseModel):
     )
 
 
+def _coerce_choice(value: Any, allowed: tuple[str, ...], default: str, aliases: dict[str, str] | None = None) -> Any:
+    """Model yanıtındaki seçim alanını izinli kümeye indirger.
+
+    Şema modele gönderilse de yedek sağlayıcılar zaman zaman listede olmayan bir değer
+    (ör. ``not_applicable``) döndürüyor; tek bir alan yüzünden bütün ön değerlendirmenin
+    "İstek doğrulanamadı" ile düşmemesi için bilinen eş anlamlılar eşlenir, kalanlar en
+    temkinli varsayılana çevrilir. Metin olmayan değerlere dokunulmaz (normal doğrulama sürer).
+    """
+    if not isinstance(value, str):
+        return value
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if key in allowed:
+        return key
+    return (aliases or {}).get(key, default)
+
+
 class CandidateGtip(BaseModel):
     code: str
     explanation: str
     confidence: Literal["low", "medium", "high"] = "low"
     citations: list[str] = Field(default_factory=list)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _confidence_choice(cls, value: Any) -> Any:
+        return _coerce_choice(value, ("low", "medium", "high"), "low", {"yüksek": "high", "orta": "medium", "düşük": "low"})
 
 
 class Finding(BaseModel):
@@ -533,6 +554,14 @@ class Finding(BaseModel):
     status: Literal["required", "likely", "conditional", "not_found", "unknown"]
     explanation: str
     citations: list[str] = Field(default_factory=list)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _status_choice(cls, value: Any) -> Any:
+        return _coerce_choice(
+            value, ("required", "likely", "conditional", "not_found", "unknown"), "unknown",
+            {"applicable": "required", "possible": "likely", "not_applicable": "not_found", "none": "not_found"},
+        )
 
 
 class TaxFinding(BaseModel):
@@ -543,11 +572,25 @@ class TaxFinding(BaseModel):
     explanation: str
     citations: list[str] = Field(default_factory=list)
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _status_choice(cls, value: Any) -> Any:
+        return _coerce_choice(
+            value, ("applicable", "possible", "not_found", "unknown"), "unknown",
+            {"required": "applicable", "applies": "applicable", "likely": "possible", "conditional": "possible",
+             "not_applicable": "not_found", "none": "not_found", "exempt": "not_found"},
+        )
+
 
 class CustomsModelResult(BaseModel):
     summary: str
     answer_status: Literal["preliminary", "needs_information", "insufficient_evidence"]
     candidate_gtips: list[CandidateGtip] = Field(default_factory=list, max_length=5)
+
+    @field_validator("answer_status", mode="before")
+    @classmethod
+    def _answer_status_choice(cls, value: Any) -> Any:
+        return _coerce_choice(value, ("preliminary", "needs_information", "insufficient_evidence"), "needs_information")
     missing_information: list[str] = Field(default_factory=list, max_length=15)
     controls: list[Finding] = Field(default_factory=list, max_length=20)
     required_documents: list[Finding] = Field(default_factory=list, max_length=20)
@@ -2858,7 +2901,7 @@ class CustomsAdvisor:
                             }
                     if duty is None:
                         profile = downgrade_profile(
-                            profile, reason="archive_miss", note=archive_miss_note()
+                            profile, reason="archive_miss", note=archive_miss_note(gtip=code)
                         )
                         on_demand = {
                             "kind": "eu_taric",

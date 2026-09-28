@@ -584,6 +584,11 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .analyse-button { width: 100%; min-height: 58px; display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; border: 0; background: var(--teal); color: #fff; font-family: var(--display); font-size: 1rem; font-weight: 700; }
 .analyse-button:hover { background: var(--teal-dark); }
 .analyse-button:disabled { opacity: .6; cursor: wait; }
+/* Paketinde olmayan özellik: düğme çalışır (açıklama gösterir) ama önceden kilitli görünür. */
+.analyse-button.is-locked { background: var(--surface); color: var(--ink-2); border: 1px dashed var(--line-strong); }
+.analyse-button.is-locked:hover { background: var(--teal-soft); color: var(--ink); }
+.lock-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: var(--teal-soft); color: var(--ink); font-family: var(--body, inherit); font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.analyse-button .lock-badge svg, .lock-badge svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .analyse-button svg { width: 20px; height: 20px; }
 .readiness-card { position: sticky; top: calc(var(--header-h) + 20px); padding: 23px 20px; }
 .readiness-card h2 { margin: 7px 0 18px; font-family: var(--display); font-size: 1.24rem; }
@@ -647,7 +652,7 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
 .followup-box { display: grid; grid-template-columns: minmax(0,1fr) 250px; gap: 10px; margin-top: 14px; padding: 16px; border: 1px solid var(--line); background: var(--surface); }
 .followup-box .analyse-button { min-height: 46px; margin: 24px 0 0; font-size: .86rem; }
 
-.customs-view-tabs { position: sticky; top: var(--header-h); z-index: 35; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); margin: 0 0 22px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 7%, transparent); }
+.customs-view-tabs { position: sticky; top: var(--header-h); z-index: 35; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr); margin: 0 0 22px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 7%, transparent); }
 .customs-view-tabs button { min-height: 52px; padding: 8px 12px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--ink-2); font-size: .68rem; font-weight: 700; }
 .customs-view-tabs button:last-child { border-right: 0; }
 .customs-view-tabs button:hover { background: var(--teal-soft); color: var(--ink); }
@@ -965,7 +970,7 @@ tr[data-certainty="unavailable"] td:first-child { box-shadow: inset 3px 0 0 var(
   .customs-flow { grid-template-columns: repeat(4,1fr); }
   .customs-flow b { display: none; }
   .customs-flow span { white-space: normal; font-size: .5rem; }
-  .customs-view-tabs { top: calc(var(--header-h) + 46px); overflow-x: auto; grid-template-columns: repeat(6,minmax(150px,1fr)); }
+  .customs-view-tabs { top: calc(var(--header-h) + 46px); overflow-x: auto; grid-auto-columns: minmax(150px,1fr); }
   .customs-form { grid-template-columns: 1fr; }
   .readiness-card { position: static; }
   .readiness-card ul { grid-template-columns: 1fr 1fr; }

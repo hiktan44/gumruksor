@@ -30,6 +30,7 @@ Menşe ispat belgeleri ``countries.py``'deki anlaşma kayıtlarından türetilir
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -260,14 +261,40 @@ def downgrade_profile(profile: DestinationProfile, *, reason: str, note: str) ->
     )
 
 
-def archive_miss_note(archived: int | None = None, total: int | None = None) -> str:
-    """AB arşiv ıskası için rozet metni. İlk cümle 1/95 OKK'nın hukuki sonucudur, tahmin değil."""
+def archive_miss_note(
+    archived: int | None = None, total: int | None = None, *, gtip: Any = None
+) -> str:
+    """AB arşiv ıskası için rozet metni.
+
+    İkinci cümle kodun Gümrük Birliği'ndeki yerine göre seçilir: yalnız sanayi ürünü
+    (ve işlenmiş tarım ürününün sanayi payı) 1/95 OKK ile vergisizdir. Temel tarım ürünü
+    ve AKÇT (kömür-çelik) ürünü Gümrük Birliği dışındadır; onlara "vergi alınmaz" denemez.
+    """
     scope = ""
     if archived is not None and total:
         scope = f" (arşiv {archived}/{total} kod)"
-    return (
-        f"AB TARIC arşivimizde bu kod için satır yok{scope}. Gümrük Birliği kapsamındaki sanayi "
-        "ürününde AB gümrük vergisi alınmaz; ek vergi, kota ve belge şartı için canlı sorgu gerekir."
+    head = f"AB TARIC arşivimizde bu kod için satır yok{scope}. "
+    route = customs_union_route(gtip) if gtip else None
+    code = re.sub(r"\D", "", str(gtip or ""))
+    if route == "eur1_agricultural":
+        return head + (
+            "Bu kod temel tarım ürünüdür ve Gümrük Birliği kapsamında değildir; AB'de ya 1/98 OKK "
+            "tercihli oranı (EUR.1 ile, çoğu kez kota dahilinde) ya da üçüncü ülke (MFN) oranı "
+            "uygulanır. Oranı AB TARIC ekranından doğrulayın."
+        )
+    if route == "eur1_ecsc":
+        return head + (
+            "Bu kod kömür-çelik (AKÇT) ürünüdür; Gümrük Birliği değil Türkiye–AKÇT STA kapsamındadır. "
+            "Tercih EUR.1 ile istenir; korunma önlemi ve kota için canlı sorgu gerekir."
+        )
+    if route == "atr" and len(code) >= 2 and int(code[:2]) <= 24:
+        return head + (
+            "Bu kod işlenmiş tarım ürünüdür: sanayi payı Gümrük Birliği kapsamında A.TR ile vergisizdir, "
+            "tarım payı (EA) alınabilir. Oran için canlı sorgu gerekir."
+        )
+    return head + (
+        "Gümrük Birliği kapsamındaki sanayi ürününde AB gümrük vergisi alınmaz; ek vergi, kota ve "
+        "belge şartı için canlı sorgu gerekir."
     )
 
 
