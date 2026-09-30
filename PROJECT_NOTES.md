@@ -1,6 +1,26 @@
 # Proje Devir Notu — Ticaret Bilgi Masası / mevzuat-mcp
 
-Son güncelleme: 30 Eylül 2026 (UTC)
+Son güncelleme: 1 Ekim 2026 (Europe/Istanbul)
+
+## 1 Ekim 2026 — kod kopyası ikinci bilgisayara eşleştirildi
+
+- `192.168.1.18` Mac mini'ye erişim, açık SSH anahtarının mevcut güvenilen kayıtla
+  birebir eşleşmesi üzerinden doğrulandı; güven kaydı ve hesaplar değiştirilmedi.
+- Düzeltme commit'i `5caf5625a6091508aae6dba5ae768a6c9e36ec04`, iki bilgisayarda
+  `fix/admin-exact-email` dalında bulunuyor. Bu devir notu da iki kopyaya aktarılır.
+- Kaynak repo: `/Users/ht44/Documents/Codex/2026-10-01/task/gumruksor` (`192.168.1.15`).
+- Hedef repo: `/Users/hikmettanriverdi/Documents/Codex/2026-10-01/gumruksor-admin-fix/gumruksor`
+  (`192.168.1.18`). Takip edilen 222 kaynak dosyası SHA-256 ile birebir doğrulandı.
+  Yedekler/veritabanları hariç tutuldu; eski mevzuat-mcp kopyası ve yerel dosyası korundu.
+- Hedefte `uv sync --frozen`, Python 3.12.9: 80 odaklı test başarılı. Test sürecinde
+  dış ağ/DNS erişimi kapalı, veri dizinleri geçiciydi. Kaynakta da aynı 80 test
+  dış ağ kapalı olarak geçti. Kaynaktaki önceki toplu paket sonuçları aşağıdadır;
+  hedefte toplu paket yeniden çalıştırılmadı.
+- Hedefte `compileall`, `git diff --check` ve temiz çalışma kopyası kontrolleri geçti.
+  Her iki proje klasörünün yanındaki `verification/` altında eşleştirme kanıtı,
+  test logları, patch ve Git bundle bulunur. Push/merge/deploy yapılmadı.
+- Bu, talep edilen mevcut kodun tek seferlik eşleştirmesidir; sürekli bir
+  dosya senkronizasyonu görevi veya canlı veri aktarımı oluşturulmadı.
 
 ## 30 Eylül 2026 — yönetici kimliği için tam e-posta eşleşmesi (yerel hazırlık)
 
