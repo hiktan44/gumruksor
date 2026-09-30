@@ -116,7 +116,10 @@ class AdminStorageAuthorizationTests(unittest.TestCase):
 
     def test_anonymous_invalid_tampered_and_expired_sessions_are_denied(self):
         token = self.auth.create_session(ADMIN)
-        tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+        body, signature = token.rsplit(".", 1)
+        # Change significant signature bits so the HMAC verification rejects it.
+        changed_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+        tampered = f"{body}.{changed_signature}"
         with patch("auth_service.time.time", return_value=1):
             expired = self.auth.create_session(ADMIN)
         for candidate in (None, "invalid-session", tampered, expired):

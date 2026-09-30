@@ -2,6 +2,33 @@
 
 Son güncelleme: 1 Ekim 2026 (Europe/Istanbul)
 
+## 1 Ekim 2026 — PR #97 bağımlılık taraması ve imza testi güncellemesi
+
+- Kullanıcı PR güncellemesini onayladı. Dal: `fix/admin-exact-email`;
+  PR: https://github.com/hiktan44/gumruksor/pull/97 (açık, taslak değil).
+- Önceki HEAD `be4354b` üzerinde iki GitHub kontrolü tamamlandı:
+  Agentic Security Guard CI başarılı; Security firewall yalnız Trivy adımında
+  başarısız. Testler, sözdizimi, gitleaks, container build ve appuser kontrolü geçti.
+  Trivy, PyJWT 2.13.0 için altı ve urllib3 2.7.0 için iki bulgu raporladı
+  (toplam bir kritik, yedi yüksek).
+- `uv.lock` yalnız PyJWT **2.14.0** ve urllib3 **2.8.0** kayıtlarını yükseltir.
+  Diğer paket kayıtları ve proje bağımlılık tanımları korunur. Kilit çözümü
+  CI'da kullanılan `uv 0.11.6` ile doğrulandı; `uv sync --frozen` başarılı.
+- İnceleme yorumundaki son karakter `A→B` için 1/16 kararsızlık mevcut kodda
+  doğrulanmadı: `auth_service._b64decode` kanonik biçimi ayrıca kontrol eder.
+  Tüm 16 HMAC son karakteri ve 192 HTTP ret kontrolü geçti. Yine de test artık
+  imzanın **ilk karakterini** değiştirir; bu doğrudan farklı imza baytları ve
+  HMAC doğrulama başarısızlığı üretir, padding denetimine dayanmaz.
+- Yeni sürümlerle, dış ağ/DNS kapalı ve geçici veri dizinleriyle: **80/80 odaklı
+  test başarılı**; **1537 toplu test: 1527 başarılı, 10 atlandı, hata yok**.
+  Toplu paket GitHub runner'ı ile aynı **UTC** saat diliminde çalıştırıldı;
+  önceki yerel iki tarih sınırı başarısızlığı bu koşulda görülmedi.
+- Python compileall, `node --check web/app.js` ve `git diff --check` başarılı.
+  Yerel loglar proje yanındaki `verification/dependency-*.log` dosyalarında.
+  Yeni commit'in container/Trivy sonucu GitHub CI üzerinden doğrulanmalı.
+- Bu çalışma PR dalı kapsamındadır; merge ve canlıya alma yapılmaz. Admin
+  varsayılanları ve OAuth sağlayıcısı politikası aşağıdaki kapsamda korunur.
+
 ## 1 Ekim 2026 — kod kopyası ikinci bilgisayara eşleştirildi
 
 - `192.168.1.18` Mac mini'ye erişim, açık SSH anahtarının mevcut güvenilen kayıtla
