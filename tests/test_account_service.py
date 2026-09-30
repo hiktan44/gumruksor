@@ -283,9 +283,75 @@ class AccountServiceTests(unittest.TestCase):
 
     def test_default_admin_access(self):
         self.assertTrue(self.accounts.is_admin(user("h1", "hikmet044@gmail.com")))
-        self.assertTrue(self.accounts.is_admin(user("h2", "hikmet044@gmail")))
+        self.assertFalse(self.accounts.is_admin(user("h2", "hikmet044@gmail")))
         self.assertTrue(self.accounts.is_admin(user("h3", "hiktan44@gmail.com")))
         self.assertFalse(self.accounts.is_admin(user("other", "normaluser@example.com")))
+
+    def test_admin_matches_only_the_configured_full_email(self):
+        accounts = AccountService(
+            Path(self.temp.name) / "configured-admins",
+            admin_emails=(
+                " Admin@Example.com , auditor@company.example, "
+                "finance+ops@dept.company.example, billing.ops@gmail.com "
+            ),
+        )
+        for email in (
+            "admin@example.com", " ADMIN@EXAMPLE.COM ",
+            "auditor@company.example", "finance+ops@dept.company.example", "billing.ops@gmail.com",
+        ):
+            with self.subTest(email=email):
+                self.assertTrue(accounts.is_admin(user(email=email)))
+        for email in (
+            "admin@other.example", "admin@gmail.com", "admin",
+            "auditor@other.example", "auditor@gmail.com", "auditor",
+            "finance@dept.company.example", "admin@example.com.other.example",
+            "billing.ops@other.example", "billing.ops", "billing.ops@gmail",
+        ):
+            with self.subTest(email=email):
+                self.assertFalse(accounts.is_admin(user(email=email)))
+
+    def test_default_admin_local_parts_do_not_authorize_other_identities(self):
+        for local in ("hikmet044", "hiktan44"):
+            for email in (
+                local, f"{local}@gmail", f"{local}@other.example",
+                f"{local}@gmail.com.other.example", f"{local}@@gmail.com",
+                f"{local}@", f"{local}@gmail.com@other.example",
+            ):
+                with self.subTest(email=email):
+                    self.assertFalse(self.accounts.is_admin(user(email=email)))
+
+    def test_missing_empty_and_nonstring_emails_are_not_admins(self):
+        for identity in (
+            {}, {"sub": "admin"},
+            *({"email": email} for email in (None, "", " \t\n", 44, False, [], {})),
+        ):
+            with self.subTest(identity=identity):
+                self.assertFalse(self.accounts.is_admin(identity))
+
+    def test_malformed_allowlist_entries_do_not_authorize(self):
+        malformed = (
+            "operator", "operator@gmail", "@example.com", "operator@",
+            "operator@@example.com", "operator@.example.com",
+            "operator@example..com", "operator name@example.com",
+        )
+        accounts = AccountService(
+            Path(self.temp.name) / "malformed-admins", admin_emails=",".join(malformed),
+        )
+        for email in (*malformed, "operator@other.example", "operator@gmail.com"):
+            with self.subTest(email=email):
+                self.assertFalse(accounts.is_admin(user(email=email)))
+
+    def test_same_local_part_user_keeps_regular_role_and_quota(self):
+        impostor = user(email="hikmet044@other.example")
+        account = self.accounts.account(impostor)
+        self.assertFalse(account["is_admin"])
+        self.assertEqual(account["role"], "user")
+        self.assertEqual(account["capabilities"], [])
+        self.assertEqual(account["quotas"]["vision"]["limit"], 5)
+        for _ in range(5):
+            self.accounts.consume(impostor, "vision")
+        with self.assertRaises(QuotaExceeded):
+            self.accounts.consume(impostor, "vision")
 
     def test_admin_grant_credit_and_quota_consumption(self):
         admin_actor = user("admin", "hikmet044@gmail.com")

@@ -201,9 +201,7 @@ def collect_official_sources(value: Any, *, limit: int = 100) -> list[str]:
 
 DEFAULT_ADMIN_EMAILS = {
     "hikmet044@gmail.com",
-    "hikmet044@gmail",
     "hiktan44@gmail.com",
-    "hiktan44@gmail",
 }
 
 
@@ -705,19 +703,14 @@ class AccountService:
         return options
 
     def is_admin(self, user: dict[str, Any]) -> bool:
-        email = str(user.get("email", "")).strip().casefold()
-        if not email:
+        raw_email = user.get("email")
+        if not isinstance(raw_email, str):
             return False
-        if email in self.admin_emails:
-            return True
-        if "@" in email:
-            prefix = email.split("@", 1)[0]
-            if prefix in self.admin_emails or f"{prefix}@gmail.com" in self.admin_emails:
-                return True
-        else:
-            if f"{email}@gmail.com" in self.admin_emails:
-                return True
-        return False
+        email = raw_email.strip().casefold()
+        # Only complete identities can authorize; never infer a domain or match a local part.
+        if not re.fullmatch(r"[^@\s<>]+@[^@\s.<>]+(?:\.[^@\s.<>]+)+", email):
+            return False
+        return email in self.admin_emails
 
     def _subscription(self, connection: sqlite3.Connection, google_sub: str) -> sqlite3.Row | None:
         return connection.execute(
