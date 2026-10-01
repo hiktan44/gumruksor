@@ -1,6 +1,88 @@
 # Proje Devir Notu — Ticaret Bilgi Masası / mevzuat-mcp
 
-Son güncelleme: 8 Eylül 2026
+Son güncelleme: 1 Ekim 2026 (Europe/Istanbul)
+
+## 1 Ekim 2026 — PR #97 bağımlılık taraması ve imza testi güncellemesi
+
+- Kullanıcı PR güncellemesini onayladı. Dal: `fix/admin-exact-email`;
+  PR: https://github.com/hiktan44/gumruksor/pull/97 (açık, taslak değil).
+- Önceki HEAD `be4354b` üzerinde iki GitHub kontrolü tamamlandı:
+  Agentic Security Guard CI başarılı; Security firewall yalnız Trivy adımında
+  başarısız. Testler, sözdizimi, gitleaks, container build ve appuser kontrolü geçti.
+  Trivy, PyJWT 2.13.0 için altı ve urllib3 2.7.0 için iki bulgu raporladı
+  (toplam bir kritik, yedi yüksek).
+- `uv.lock` yalnız PyJWT **2.14.0** ve urllib3 **2.8.0** kayıtlarını yükseltir.
+  Diğer paket kayıtları ve proje bağımlılık tanımları korunur. Kilit çözümü
+  CI'da kullanılan `uv 0.11.6` ile doğrulandı; `uv sync --frozen` başarılı.
+- İnceleme yorumundaki son karakter `A→B` için 1/16 kararsızlık mevcut kodda
+  doğrulanmadı: `auth_service._b64decode` kanonik biçimi ayrıca kontrol eder.
+  Tüm 16 HMAC son karakteri ve 192 HTTP ret kontrolü geçti. Yine de test artık
+  imzanın **ilk karakterini** değiştirir; bu doğrudan farklı imza baytları ve
+  HMAC doğrulama başarısızlığı üretir, padding denetimine dayanmaz.
+- Yeni sürümlerle, dış ağ/DNS kapalı ve geçici veri dizinleriyle: **80/80 odaklı
+  test başarılı**; **1537 toplu test: 1527 başarılı, 10 atlandı, hata yok**.
+  Toplu paket GitHub runner'ı ile aynı **UTC** saat diliminde çalıştırıldı;
+  önceki yerel iki tarih sınırı başarısızlığı bu koşulda görülmedi.
+- Python compileall, `node --check web/app.js` ve `git diff --check` başarılı.
+  Yerel loglar proje yanındaki `verification/dependency-*.log` dosyalarında.
+  Yeni commit'in container/Trivy sonucu GitHub CI üzerinden doğrulanmalı.
+- Bu çalışma PR dalı kapsamındadır; merge ve canlıya alma yapılmaz. Admin
+  varsayılanları ve OAuth sağlayıcısı politikası aşağıdaki kapsamda korunur.
+
+## 1 Ekim 2026 — kod kopyası ikinci bilgisayara eşleştirildi
+
+- `192.168.1.18` Mac mini'ye erişim, açık SSH anahtarının mevcut güvenilen kayıtla
+  birebir eşleşmesi üzerinden doğrulandı; güven kaydı ve hesaplar değiştirilmedi.
+- Düzeltme commit'i `5caf5625a6091508aae6dba5ae768a6c9e36ec04`, iki bilgisayarda
+  `fix/admin-exact-email` dalında bulunuyor. Bu devir notu da iki kopyaya aktarılır.
+- Kaynak repo: `/Users/ht44/Documents/Codex/2026-10-01/task/gumruksor` (`192.168.1.15`).
+- Hedef repo: `/Users/hikmettanriverdi/Documents/Codex/2026-10-01/gumruksor-admin-fix/gumruksor`
+  (`192.168.1.18`). Takip edilen 222 kaynak dosyası SHA-256 ile birebir doğrulandı.
+  Yedekler/veritabanları hariç tutuldu; eski mevzuat-mcp kopyası ve yerel dosyası korundu.
+- Hedefte `uv sync --frozen`, Python 3.12.9: 80 odaklı test başarılı. Test sürecinde
+  dış ağ/DNS erişimi kapalı, veri dizinleri geçiciydi. Kaynakta da aynı 80 test
+  dış ağ kapalı olarak geçti. Kaynaktaki önceki toplu paket sonuçları aşağıdadır;
+  hedefte toplu paket yeniden çalıştırılmadı.
+- Hedefte `compileall`, `git diff --check` ve temiz çalışma kopyası kontrolleri geçti.
+  Her iki proje klasörünün yanındaki `verification/` altında eşleştirme kanıtı,
+  test logları, patch ve Git bundle bulunur. Push/merge/deploy yapılmadı.
+- Bu, talep edilen mevcut kodun tek seferlik eşleştirmesidir; sürekli bir
+  dosya senkronizasyonu görevi veya canlı veri aktarımı oluşturulmadı.
+
+## 30 Eylül 2026 — yönetici kimliği için tam e-posta eşleşmesi (yerel hazırlık)
+
+- Taban: `hiktan44/gumruksor` main, `f71528579f9cb3162967ecd6b74044116ec4c6ff`.
+  Yerel dal: `fix/admin-exact-email`.
+- `AccountService.is_admin` yalnız boşlukları ayıklanıp büyük/küçük harfi
+  normalleştirilmiş **tam e-posta adresi** allow-list içinde olduğunda yetki verir.
+  Yerel ad üzerinden eşleşme ve Gmail domaini ekleme kaldırıldı; boş, metin olmayan
+  ve eksik/bozuk adresler reddedilir. Eksik `@gmail` varsayılanları kaldırıldı.
+- Mevcut geçerli yapılandırılmış tam adresler ve iki yerleşik `@gmail.com` adresi
+  korunur. **Kalan politika riski:** bu iki yerleşik adres `ADMIN_EMAILS` boş olsa
+  veya başka adreslerle yapılandırılsa bile her zaman eklenir. Bu davranışı
+  kaldırmak ayrı bir karar gerektirir; bu değişiklikte kapsam genişletilmedi.
+- Sekiz yeni regresyon testi: tam/yapılandırılmış kimlikler, başka domainlerde
+  aynı yerel ad, bozuk/boş kimlikler, normal kullanıcı rolü/kotası ve yedek raporu,
+  oluşturma, indirme yetki sınırları. HTTP testleri gerçek oturum ayrıştırma ve
+  admin kontrolünü kullanır; yetkisiz çağrıda rapor/yedek/dosya çözümleme çalışmaz.
+  Anonim, bozuk, değiştirilmiş ve süresi dolmuş oturumlar da reddedilir.
+- Python 3.12.14, `uv sync --frozen`: 80 odaklı test geçti. Toplu
+  `python -m unittest discover -s tests -v`: 1537 test, 1525 başarılı,
+  2 başarısız, 10 atlandı. Değiştirilmemiş taban kopyasında 1529 test çalıştı;
+  aynı iki başarısızlık ve aynı 10 atlama görüldü:
+  `test_eu_vat.SeedLookupTests.test_a_stale_confirmation_brings_the_warning_back`
+  ve `test_temporal_validity.TariffTemporalTests.test_same_start_date_yields_observed_boundary`.
+  Atlamalar: 9 canlı tarife/kontrol önbelleği testi, 1 Chromium PDF testi.
+- `compileall`, `node --check web/app.js`, `git diff --check` geçti. Test süreçleri
+  yeni geçici veri dizinleriyle ve uygulama ortamını miras almadan çalıştırıldı.
+  Gerçek kullanıcı veritabanı/yedeği ve üretim üzerinde test yapılmadı;
+  OAuth sağlayıcısı ve canlı yapılandırma değiştirilmedi. Push/merge/deploy yok.
+- Kullanıcı kod/repo dosyalarının `192.168.1.18` ile eşleşmesini istedi. Bu hedef
+  oturuma bağlı değil; SSH güven doğrulaması tamamlanmadı. Aktarım henüz yapılmadı;
+  yerel commit ve taşınabilir patch hazırlandıktan sonra hedef erişimi ve mevcut
+  repo değişiklikleri doğrulanarak uygulanmalı.
+- Container build/Trivy, gerçek Google OAuth ve canlı/veri bağımlı E2E kontroller
+  bu yerel hazırlıkta çalıştırılmadı.
 
 ## 8 Eylül 2026 oturumu — 3., 4. ve 5. sıra aşamalarının tamamlanması
 
