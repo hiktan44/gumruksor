@@ -2,6 +2,34 @@
 
 Son güncelleme: 1 Ekim 2026 (Europe/Istanbul)
 
+## 1 Ekim 2026 — açık admin listesi için ayrı PR hazırlığı
+
+- Kullanıcının öneriyi uygulama talimatıyla PR #97, doğrulanan `1d3723a`
+  üzerinden birleştirildi. Main commit'i `2fac4561b00f0be5ab585e84948d6fca71fe0327`.
+  Main Security firewall ve otomatik Coolify deploy workflow'u başarılı;
+  canlı `/health` aynı commit'i ve `healthy` durumunu bildirdi. Ana sayfa 200;
+  Google giriş başlangıcı doğru callback ile accounts.google.com'a yönlendirir.
+  Kullanıcının gerçek Google girişiyle dönüşü ayrıca doğrulanmalıdır.
+- Bu ayrı dal `fix/admin-explicit-allowlist`, `2fac456` üzerinden hazırlandı.
+  `DEFAULT_ADMIN_EMAILS` ve yapılandırmaya otomatik ekleme kaldırıldı.
+  Yalnız açık `ADMIN_EMAILS` veya constructor listesi yetki verir; boş/eksik
+  liste hiçbir e-postaya yönetici yetkisi vermez. Tam adres eşleşmesi korunur.
+- Kullanıcı iki tam adresli yönetici listesini doğruladı. Canlıda bu listenin
+  çalışma zamanı `ADMIN_EMAILS` değerine yazıldığı doğrulanmadan bu PR
+  birleştirilmemeli/yayınlanmamalı; önceki varsayılanla erişen yöneticiler
+  de açıkça yapılandırılmalıdır. Canlı yapılandırma bu PR'da değiştirilmez.
+  Kullanıcıya ait adresler kaynak koda yeni bir varsayılan olarak gömülmez.
+- Beş yeni test ve güncellenen regresyonlar: eksik/boş liste, ortamdan liste,
+  constructor'ın ortamı geçersiz kılması, eski varsayılanların yalnız listede
+  olduğunda yetkili olması, üç yedekleme ucunda boş listenin erişimi reddetmesi.
+  Önceki davranışta 5 regresyon testi 15 başarısız assertion üretti; hata yok.
+- Düzeltmeyle, UTC ve dış ağ/DNS kapalı geçici verilerde **85/85 odaklı test**
+  ve **1542 toplu test: 1532 başarılı, 10 atlandı, hata yok**.
+  compileall, JavaScript sözdizimi ve diff kontrolleri başarılı.
+- README ve .env.example, geçişten önce açık admin listesinin tanımlanmasını
+  belgeliyor. Atanmış kullanıcı rolleri, genel OAuth domain politikası ve
+  bağımlılıklar değişmedi. Bu ayrı PR canlıya alınmadı.
+
 ## 1 Ekim 2026 — PR #97 bağımlılık taraması ve imza testi güncellemesi
 
 - Kullanıcı PR güncellemesini onayladı. Dal: `fix/admin-exact-email`;
