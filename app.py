@@ -535,6 +535,33 @@ async def web_landing_js(request: Request):
     return FileResponse(WEB_DIR / "landing.js", media_type="text/javascript")
 
 
+# Tanıtım sayfasının görselleri ve betiği (web/landing/). Yalnızca izin listesindeki
+# ve klasörde gerçekten bulunan dosyalar sunulur; yol geçişi (../) mümkün değildir.
+LANDING_ASSET_DIR = WEB_DIR / "landing"
+LANDING_ASSET_TYPES = {".jpg": "image/jpeg", ".js": "application/javascript"}
+LANDING_ASSET_FILES = frozenset(
+    {"6e4e57a0d5.jpg", "ab72811a35.jpg", "c3f5b4fc6d.jpg", "df67eb43f1.jpg", "landing.js"}
+)
+
+
+@mcp.custom_route("/landing/{filename}", methods=["GET"])
+async def web_landing_asset(request: Request):
+    filename = str(request.path_params.get("filename", ""))
+    if filename not in LANDING_ASSET_FILES:
+        return Response(status_code=404)
+    base = LANDING_ASSET_DIR.resolve()
+    path = (base / filename).resolve()
+    if path.parent != base or not path.is_file():
+        return Response(status_code=404)
+    suffix = path.suffix.lower()
+    max_age = 86400 if suffix == ".jpg" else 3600
+    return FileResponse(
+        path,
+        media_type=LANDING_ASSET_TYPES[suffix],
+        headers={"Cache-Control": f"public, max-age={max_age}"},
+    )
+
+
 @mcp.custom_route("/favicon.svg", methods=["GET"])
 async def web_favicon(request: Request):
     return FileResponse(WEB_DIR / "favicon.svg", media_type="image/svg+xml")
