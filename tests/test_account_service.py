@@ -281,11 +281,51 @@ class AccountServiceTests(unittest.TestCase):
         self.assertEqual(role, "user")
         self.assertEqual(service.role_of({"sub": "legacy", "email": "legacy@example.com"}), "user")
 
-    def test_default_admin_access(self):
-        self.assertTrue(self.accounts.is_admin(user("h1", "hikmet044@gmail.com")))
-        self.assertFalse(self.accounts.is_admin(user("h2", "hikmet044@gmail")))
-        self.assertTrue(self.accounts.is_admin(user("h3", "hiktan44@gmail.com")))
-        self.assertFalse(self.accounts.is_admin(user("other", "normaluser@example.com")))
+    def test_unlisted_former_default_emails_are_not_admins(self):
+        self.assertTrue(self.accounts.is_admin(user(email="admin@example.com")))
+        for email in ("hikmet044@gmail.com", "hikmet044@gmail", "hiktan44@gmail.com"):
+            with self.subTest(email=email):
+                self.assertFalse(self.accounts.is_admin(user(email=email)))
+
+    def test_absent_empty_and_whitespace_admin_lists_authorize_nobody(self):
+        for index, value in enumerate((None, "", " \t , , \n")):
+            with self.subTest(environment_value=value):
+                environment = {} if value is None else {"ADMIN_EMAILS": value}
+                with patch.dict(os.environ, environment, clear=True):
+                    accounts = AccountService(Path(self.temp.name) / f"empty-admins-{index}")
+                self.assertEqual(accounts.admin_emails, set())
+                for email in ("admin@example.com", "hikmet044@gmail.com", "hiktan44@gmail.com"):
+                    self.assertFalse(accounts.is_admin(user(email=email)))
+
+    def test_admin_list_is_read_from_environment(self):
+        with patch.dict(os.environ, {"ADMIN_EMAILS": " Maintainer@Company.Example , owner@identity.example "}):
+            accounts = AccountService(Path(self.temp.name) / "environment-admins")
+        self.assertEqual(accounts.admin_emails, {"maintainer@company.example", "owner@identity.example"})
+        for email in ("maintainer@company.example", " OWNER@IDENTITY.EXAMPLE "):
+            self.assertTrue(accounts.is_admin(user(email=email)))
+        for email in ("maintainer@other.example", "owner@other.example", "hikmet044@gmail.com", "hiktan44@gmail.com"):
+            self.assertFalse(accounts.is_admin(user(email=email)))
+
+    def test_explicit_admin_list_overrides_environment_without_supplements(self):
+        with patch.dict(os.environ, {"ADMIN_EMAILS": "environment@example.com"}):
+            accounts = AccountService(Path(self.temp.name) / "explicit-admins", admin_emails="explicit@example.com")
+            empty = AccountService(Path(self.temp.name) / "explicit-empty", admin_emails="")
+        self.assertEqual(accounts.admin_emails, {"explicit@example.com"})
+        self.assertTrue(accounts.is_admin(user(email="explicit@example.com")))
+        self.assertEqual(empty.admin_emails, set())
+        for email in ("environment@example.com", "hikmet044@gmail.com", "hiktan44@gmail.com"):
+            self.assertFalse(accounts.is_admin(user(email=email)))
+            self.assertFalse(empty.is_admin(user(email=email)))
+
+    def test_former_default_emails_authorize_only_when_explicitly_listed(self):
+        accounts = AccountService(
+            Path(self.temp.name) / "explicit-former-defaults",
+            admin_emails="hikmet044@gmail.com,hiktan44@gmail.com",
+        )
+        self.assertEqual(accounts.admin_emails, {"hikmet044@gmail.com", "hiktan44@gmail.com"})
+        self.assertTrue(accounts.is_admin(user(email="hikmet044@gmail.com")))
+        self.assertTrue(accounts.is_admin(user(email=" HIKTAN44@GMAIL.COM ")))
+        self.assertFalse(accounts.is_admin(user(email="admin@example.com")))
 
     def test_admin_matches_only_the_configured_full_email(self):
         accounts = AccountService(
@@ -354,7 +394,7 @@ class AccountServiceTests(unittest.TestCase):
             self.accounts.consume(impostor, "vision")
 
     def test_admin_grant_credit_and_quota_consumption(self):
-        admin_actor = user("admin", "hikmet044@gmail.com")
+        admin_actor = user("admin", "admin@example.com")
         # Base limit for starter vision is 5
         base_account = self.accounts.account(user())
         self.assertEqual(base_account["quotas"]["vision"]["limit"], 5)
@@ -405,7 +445,7 @@ class AccountServiceTests(unittest.TestCase):
         self.assertEqual(monthly["call_count"], 2)
 
     def test_admin_payments_and_user_logs(self):
-        admin_actor = user("admin", "hikmet044@gmail.com")
+        admin_actor = user("admin", "admin@example.com")
         self.accounts.admin_set_plan(admin_actor, "user-1", "expert", "active")
         self.accounts.consume(user(), "vision")
         
@@ -478,4 +518,3 @@ class BillingSecurityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
