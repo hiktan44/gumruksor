@@ -5111,6 +5111,21 @@ $("#assistantForm")?.addEventListener("submit", async (event) => {
   }
 });
 
+$("#assistantExamples")?.addEventListener("click", (event) => {
+  const example=event.target.closest("[data-assistant-example]");
+  if (!example || $("#assistantSend")?.disabled) return;
+  const gtip=($("#candidateGtip")?.value || $("#tariffGtip")?.value || "").replace(/\D/g, "");
+  const origin=($("#originCountry")?.value || $("#tariffOrigin")?.value || "").trim();
+  const subject=`${gtip || "[12 haneli GTİP]"} için ${origin || "[menşe ülke]"} menşeli ithalatta`;
+  const questions={
+    tariff:`${subject} kayıtlı gümrük vergisi ve İGV oranlarını kaynaklarıyla göster.`,
+    dates:`${subject} [ilk tarih: YYYY-AA-GG] ve [ikinci tarih: YYYY-AA-GG] tarifelerini karşılaştır. Eksik tarihsel kayıtları belirt.`,
+    controls:`${subject} kayıtlı ürün güvenliği kontrolleri ve belge koşullarını kaynaklarıyla göster.`,
+  };
+  const input=$("#assistantQuestion");
+  if(input && questions[example.dataset.assistantExample]) { input.value=questions[example.dataset.assistantExample];input.focus(); }
+});
+
 $("#assistantClear")?.addEventListener("click", () => {
   state.assistantHistory = [];
   const thread = $("#assistantThread");

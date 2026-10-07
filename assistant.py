@@ -114,6 +114,15 @@ class TariffTreeArgs(_Args):
     as_of: str | None = Field(None, pattern=_DATE_PATTERN)
 
 
+class TariffComparisonArgs(_Args):
+    gtip: str = Field(..., pattern=r"^\d{12}$", description="Doğrulanmış 12 haneli Türk GTİP.")
+    origin_country: str = Field(..., min_length=2, max_length=100)
+    from_date: str = Field(..., pattern=_DATE_PATTERN)
+    to_date: str = Field(..., pattern=_DATE_PATTERN)
+    dispatch_country: str | None = Field(None, max_length=100)
+    atr_certificate: bool | None = None
+
+
 class LandedCostArgs(_Args):
     gtip: str = Field(..., pattern=_GTIP_PATTERN)
     origin_country: str = Field(..., min_length=2, max_length=100)
@@ -337,6 +346,10 @@ def build_default_tools(
     async def resolve_turkish_tariff_tree(gtip: str, origin_country=None, as_of=None):
         return await tariff_engine.decision_tree(gtip, origin_country=origin_country, as_of=as_of)
 
+    async def compare_tariff_dates(**arguments):
+        from tariff_comparison import compare_tariff_dates as compare
+        return await compare(tariff_engine, **arguments)
+
     async def calculate_import_landed_cost(gtip: str, origin_country: str, dispatch_country=None, atr_certificate=None, as_of=None, **cost):
         return await tariff_engine.calculate(
             gtip, origin_country, LandedCostInput(**cost), dispatch_country=dispatch_country, atr_certificate=atr_certificate, as_of=as_of
@@ -394,6 +407,7 @@ def build_default_tools(
 
     tools = [
         AssistantTool("lookup_tariff_measures", "Resmî tarife satırları: gümrük vergisi ve İGV oranları, ülke sütunu, dipnot ve uyarılar (as_of destekli).", TariffMeasuresArgs, lookup_tariff_measures),
+        AssistantTool("compare_tariff_dates", "Aynı GTİP ve menşe için iki geçmiş tarihin kayıtlı oranlarını karşılaştırır. Yüzde puan farkını hesaplar; eksik arşiv oranını veya yasal yürürlük tarihini uydurmaz.", TariffComparisonArgs, compare_tariff_dates),
         AssistantTool("resolve_turkish_tariff_tree", "HS/CN dalından Türk GTİP12 karar ağacının alt dallarını açar; sıralama/seçim yapmaz.", TariffTreeArgs, resolve_turkish_tariff_tree),
         AssistantTool("calculate_import_landed_cost", "Doğrulanmış oranlarla yeniden üretilebilir ithalat maliyeti; eksik oran toplamı durdurur.", LandedCostArgs, calculate_import_landed_cost),
         AssistantTool("lookup_import_controls", "12 haneli GTİP için TAREKS/TSE/ürün güvenliği kontrol tebliği ek eşleşmeleri.", ImportControlsArgs, lookup_import_controls),
