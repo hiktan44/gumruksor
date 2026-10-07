@@ -327,7 +327,7 @@ class ToolSetTests(unittest.IsolatedAsyncioTestCase):
             {
                 "lookup_tariff_measures", "resolve_turkish_tariff_tree", "calculate_import_landed_cost",
                 "lookup_import_controls", "lookup_trade_measures", "lookup_excise_tax", "lookup_vat_rate",
-                "get_customs_exchange_rate", "search_classification_evidence", "origin_scenarios", "savings",
+                "get_customs_exchange_rate", "search_classification_evidence", "origin_scenarios", "savings", "compare_tariff_dates",
             },
         )
         for tool in tools:
