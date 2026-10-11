@@ -2584,13 +2584,16 @@ async def web_customs_assistant_stream(request: Request):
                 payload.question, gtip=payload.gtip, origin_country=payload.origin_country,
                 as_of=as_of, history=[item.model_dump() for item in payload.history],
             )
+            # Kullanım kaydı ve yanıt hazırlığı da korumalı bölümde: akış başladıktan
+            # sonra (ör. eşzamanlı istekte son kredinin tükenmesiyle) oluşan kota/işleme
+            # hatası, kesik akış yerine bir `error` olayı olarak iletilir.
+            _record_usage(quota_user, "classification")
+            data = redact_data(result.model_dump(mode="json"), contact_data=True)
         except Exception as exc:  # noqa: BLE001 — akış başladıktan sonra durum kodu değişemez; hata olayı olarak iletilir.
             logger.exception("Customs assistant stream failed")
-            detail = str(exc)[:200] if isinstance(exc, RuntimeError) else "Asistan yanıtı şu anda üretilemedi."
+            detail = str(exc)[:200] if isinstance(exc, (RuntimeError, QuotaExceeded)) else "Asistan yanıtı şu anda üretilemedi."
             yield "event: error\ndata: " + json.dumps({"error": detail}, ensure_ascii=False) + "\n\n"
             return
-        _record_usage(quota_user, "classification")
-        data = redact_data(result.model_dump(mode="json"), contact_data=True)
         yield "event: answer\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
         yield "event: done\ndata: {}\n\n"
 
@@ -2674,6 +2677,68 @@ async def web_customs_assistant_shared(request: Request):
         "response": record["response"],
         "notice": "Bu, hesabı doğrulanmış kullanıcının o tarihte ürettiği kayıtlı yanıttır; güncel mevzuatla yeniden teyit edilmelidir.",
     })
+
+
+@mcp.custom_route("/chat/shared/{token}", methods=["GET"])
+async def web_shared_chat_page(request: Request):
+    """Server-rendered, read-only page for a shared assistant answer.
+
+    The share link returned by ``/api/customs/assistant/share`` points here, so the
+    page must actually be served (no SPA fallback exists). All stored text is
+    HTML-escaped; the page runs no script and only presents the canonical record.
+    """
+    token = request.path_params.get("token", "")
+    record = account_service.get_shared_assistant_session(token)
+    if not record:
+        page = (
+            "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<title>Paylaşılan yanıt bulunamadı</title></head>"
+            "<body style=\"font-family:system-ui;max-width:680px;margin:48px auto;padding:0 16px\">"
+            "<h1>Paylaşılan yanıt bulunamadı</h1><p>Bağlantı geçersiz veya kayıt kaldırılmış olabilir.</p>"
+            "</body></html>"
+        )
+        return HTMLResponse(page, status_code=404, headers={"Cache-Control": "no-store"})
+    response = record["response"] if isinstance(record.get("response"), dict) else {}
+    esc = lambda value: html.escape(str(value), quote=True)  # noqa: E731
+    rows = "".join(
+        f"<tr><td style=\"padding:4px 12px 4px 0\">{esc(rate.get('name', ''))}</td>"
+        f"<td style=\"padding:4px 0\"><strong>{esc(rate.get('value', ''))}</strong></td></tr>"
+        for rate in response.get("rates", []) if isinstance(rate, dict)
+    )
+    sources = "".join(
+        f"<li>{esc(source.get('title', '') or source.get('tool', ''))}</li>"
+        for source in response.get("sources", []) if isinstance(source, dict)
+    )
+    steps = "".join(f"<li>{esc(step)}</li>" for step in response.get("next_steps", []) if isinstance(step, str))
+    warnings = "".join(f"<li>{esc(warning)}</li>" for warning in response.get("warnings", []) if isinstance(warning, str))
+    answer = esc(response.get("answer", "")).replace("\n", "<br>")
+    legal = esc(response.get("legal_notice", ""))
+    parts = [
+        "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<title>Paylaşılan gümrük yanıtı</title></head>",
+        "<body style=\"font-family:system-ui;line-height:1.6;max-width:760px;margin:40px auto;padding:0 16px;color:#0f172a\">",
+        "<p style=\"background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:10px;font-size:14px\">",
+        "Bu, hesabı doğrulanmış kullanıcının o tarihte ürettiği kayıtlı yanıttır; bağlayıcı tarife kararı veya hukuki görüş değildir ve güncel mevzuatla yeniden teyit edilmelidir.</p>",
+        f"<h1 style=\"font-size:20px\">Soru</h1><p>{esc(record['question'])}</p>",
+    ]
+    if record.get("gtip"):
+        parts.append(f"<p style=\"color:#475569;font-size:14px\">GTİP: {esc(record['gtip'])}"
+                     + (f" · Menşe: {esc(record['origin_country'])}" if record.get("origin_country") else "") + "</p>")
+    parts.append(f"<h2 style=\"font-size:18px\">Yanıt</h2><p>{answer}</p>")
+    if rows:
+        parts.append(f"<h3 style=\"font-size:16px\">Oranlar</h3><table>{rows}</table>")
+    if steps:
+        parts.append(f"<h3 style=\"font-size:16px\">Sonraki adımlar</h3><ul>{steps}</ul>")
+    if warnings:
+        parts.append(f"<h3 style=\"font-size:16px\">Uyarılar</h3><ul>{warnings}</ul>")
+    if sources:
+        parts.append(f"<h3 style=\"font-size:16px\">Kaynaklar</h3><ul>{sources}</ul>")
+    if legal:
+        parts.append(f"<p style=\"color:#475569;font-size:13px;margin-top:24px\">{legal}</p>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts), headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/customs/report.pdf", methods=["POST"])

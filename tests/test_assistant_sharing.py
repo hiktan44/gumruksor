@@ -112,6 +112,46 @@ class AssistantSharingRouteTests(unittest.TestCase):
         response = self.client.get("/api/customs/assistant/shared/does-not-exist", headers={"Origin": PUBLIC_ORIGIN})
         self.assertEqual(response.status_code, 404)
 
+    def test_share_link_points_at_a_served_html_page(self) -> None:
+        with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()):
+            created = self.client.post("/api/customs/assistant/share", json={"question": "Oran nedir?"}, headers=self._cookie())
+        url = created.json()["url"]
+        path = url.split(PUBLIC_ORIGIN, 1)[-1]
+        page = self.client.get(path, headers={"Origin": PUBLIC_ORIGIN})
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertTrue(page.headers["content-type"].startswith("text/html"))
+        self.assertIn("Gümrük vergisi %12.", page.text)
+        self.assertIn("teyit", page.text)
+
+    def test_shared_page_escapes_stored_text(self) -> None:
+        with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()):
+            created = self.client.post(
+                "/api/customs/assistant/share",
+                json={"question": "<script>alert(1)</script> oran nedir?"},
+                headers=self._cookie(),
+            )
+        token = created.json()["token"]
+        page = self.client.get(f"/chat/shared/{token}", headers={"Origin": PUBLIC_ORIGIN})
+        self.assertNotIn("<script>alert(1)</script>", page.text)
+        self.assertIn("&lt;script&gt;", page.text)
+
+    def test_shared_page_unknown_token_is_404(self) -> None:
+        page = self.client.get("/chat/shared/yok", headers={"Origin": PUBLIC_ORIGIN})
+        self.assertEqual(page.status_code, 404)
+        self.assertTrue(page.headers["content-type"].startswith("text/html"))
+
+    def test_stream_quota_failure_after_start_is_an_error_event(self) -> None:
+        # ask başarılı olsa da, akış içindeki _record_usage kota hatası verirse
+        # istemci kesik akış değil bir `error` olayı almalı.
+        with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()), \
+                patch.object(web_app, "_record_usage", side_effect=web_app.QuotaExceeded("Aylık sınır doldu.")):
+            response = self.client.post("/api/customs/assistant/stream", json={"question": "Oran nedir?"}, headers=self._cookie())
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: start", body)
+        self.assertIn("event: error", body)
+        self.assertNotIn("event: done", body)
+
     def test_browser_supplied_answer_is_not_trusted(self) -> None:
         # Paylaşım yanıtı sunucuda yeniden üretilir; gövdedeki sahte "answer" yok sayılır.
         with patch.object(web_app.customs_assistant, "ask", new=self._ask_mock()):
