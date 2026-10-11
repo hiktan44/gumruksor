@@ -289,6 +289,13 @@ class AccountService:
                     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS dossier_owner_created ON dossiers(google_sub, created_at DESC);
+                CREATE TABLE IF NOT EXISTS shared_assistant_sessions (
+                    token TEXT PRIMARY KEY,
+                    google_sub TEXT NOT NULL REFERENCES users(google_sub) ON DELETE CASCADE,
+                    question TEXT NOT NULL, gtip TEXT, origin_country TEXT,
+                    response_json TEXT NOT NULL, created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS shared_assistant_owner ON shared_assistant_sessions(google_sub, created_at DESC);
                 CREATE TABLE IF NOT EXISTS payment_sessions (
                     id TEXT PRIMARY KEY,
                     google_sub TEXT NOT NULL REFERENCES users(google_sub) ON DELETE CASCADE,
@@ -892,6 +899,39 @@ class AccountService:
                     (str(user["sub"]), dossier_id),
                 )
         return cursor.rowcount > 0
+
+    def create_shared_assistant_session(
+        self, user: dict[str, Any], *, question: str, gtip: str | None,
+        origin_country: str | None, response: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a server-verified assistant answer under a share token.
+
+        The stored answer is the canonical, account-bound record the server produced;
+        a browser-supplied JSON is never shared as if it were verified.
+        """
+        token = secrets.token_urlsafe(18)
+        now = _now()
+        response_json = _json(response, max_bytes=750_000)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO shared_assistant_sessions(token,google_sub,question,gtip,origin_country,response_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (token, str(user["sub"]), question.strip()[:4000], (gtip or None), (origin_country or None), response_json, now),
+            )
+        return {"token": token, "created_at": now}
+
+    def get_shared_assistant_session(self, token: str) -> dict[str, Any] | None:
+        """Read-only fetch of a shared answer by token; None when it does not exist."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT question,gtip,origin_country,response_json,created_at FROM shared_assistant_sessions WHERE token=?",
+                (str(token),),
+            ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["response"] = json.loads(result.pop("response_json"))
+        return result
 
     def create_payment_session(self, user: dict[str, Any], plan_code: str, billing_cycle: str) -> dict[str, str]:
         if plan_code not in {"expert", "team"} or billing_cycle not in {"monthly", "yearly"}:
