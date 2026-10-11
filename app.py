@@ -24,7 +24,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import ValidationError
 from starlette.requests import Request
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 
 from auth_service import AuthError, GoogleAuthService
 from account_service import PLANS, AccountError, AccountService, QuotaExceeded
@@ -2532,6 +2532,213 @@ async def web_customs_assistant(request: Request):
             {"error": "Asistan yanıtı şu anda üretilemedi. Lütfen biraz sonra yeniden deneyin."},
             status_code=502,
         )
+
+
+async def _assistant_prepare(request: Request):
+    """Shared gating/parse for the assistant routes; raises the same errors the
+    plain POST route maps (origin/identity/auth/quota/validation)."""
+    _trusted_request_origin(request)
+    _agent_or_browser_identity(request)
+    user = _required_user(request)
+    quota_user = _enforce_quota(request, "classification")
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise ValueError("Asistan isteği bir nesne olmalıdır.")
+    guard_data(body, path="asistan sorusu")
+    payload = AssistantRequest.model_validate(body)
+    as_of = _as_of_param(request, {"as_of": payload.as_of})
+    return payload, quota_user, user, as_of
+
+
+@mcp.custom_route("/api/customs/assistant/stream", methods=["POST"])
+async def web_customs_assistant_stream(request: Request):
+    """Streaming (SSE) variant of the assistant: same verified result as the POST
+    route, delivered as Server-Sent Events so the UI can render progressively.
+
+    The model's citation discipline is unchanged — only the already-verified
+    result is streamed, never an unverified token-level narrative.
+    """
+    limited = _rate_limit_response(request, "customs-assistant", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        payload, quota_user, _user, as_of = await _assistant_prepare(request)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return _quota_error(exc)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Soruyu kontrol edin.")
+        return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    async def event_stream():
+        yield "event: start\ndata: {}\n\n"
+        try:
+            result = await customs_assistant.ask(
+                payload.question, gtip=payload.gtip, origin_country=payload.origin_country,
+                as_of=as_of, history=[item.model_dump() for item in payload.history],
+            )
+            # Kullanım kaydı ve yanıt hazırlığı da korumalı bölümde: akış başladıktan
+            # sonra (ör. eşzamanlı istekte son kredinin tükenmesiyle) oluşan kota/işleme
+            # hatası, kesik akış yerine bir `error` olayı olarak iletilir.
+            _record_usage(quota_user, "classification")
+            data = redact_data(result.model_dump(mode="json"), contact_data=True)
+        except Exception as exc:  # noqa: BLE001 — akış başladıktan sonra durum kodu değişemez; hata olayı olarak iletilir.
+            logger.exception("Customs assistant stream failed")
+            detail = str(exc)[:200] if isinstance(exc, (RuntimeError, QuotaExceeded)) else "Asistan yanıtı şu anda üretilemedi."
+            yield "event: error\ndata: " + json.dumps({"error": detail}, ensure_ascii=False) + "\n\n"
+            return
+        yield "event: answer\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(
+        event_stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@mcp.custom_route("/api/customs/assistant/share", methods=["POST"])
+async def web_customs_assistant_share(request: Request):
+    """Produce a verified assistant answer and persist it under a share token.
+
+    The answer is computed server-side (not trusted from the browser) and stored
+    as the account-bound canonical record; the returned token backs a read-only link.
+    """
+    limited = _rate_limit_response(request, "customs-assistant", limit=10, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        payload, quota_user, user, as_of = await _assistant_prepare(request)
+        result = await customs_assistant.ask(
+            payload.question, gtip=payload.gtip, origin_country=payload.origin_country,
+            as_of=as_of, history=[item.model_dump() for item in payload.history],
+        )
+        _record_usage(quota_user, "classification")
+        data = redact_data(result.model_dump(mode="json"), contact_data=True)
+        shared = account_service.create_shared_assistant_session(
+            user, question=payload.question, gtip=payload.gtip,
+            origin_country=payload.origin_country, response=data,
+        )
+        base = str(request.base_url).rstrip("/")
+        return JSONResponse({
+            "token": shared["token"],
+            "url": f"{base}/chat/shared/{shared['token']}",
+            "created_at": shared["created_at"],
+            "answer": data,
+        })
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except QuotaExceeded as exc:
+        return _quota_error(exc)
+    except ValidationError as exc:
+        message = exc.errors(include_url=False)[0].get("msg", "Soruyu kontrol edin.")
+        return JSONResponse({"error": f"İstek doğrulanamadı: {message}"}, status_code=422)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception:
+        logger.exception("Customs assistant share failed")
+        return JSONResponse(
+            {"error": "Paylaşılabilir yanıt şu anda üretilemedi. Lütfen biraz sonra yeniden deneyin."},
+            status_code=502,
+        )
+
+
+@mcp.custom_route("/api/customs/assistant/shared/{token}", methods=["GET"])
+async def web_customs_assistant_shared(request: Request):
+    """Read-only fetch of a shared assistant answer by token (no login required)."""
+    limited = _rate_limit_response(request, "customs-assistant-shared", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    token = request.path_params.get("token", "")
+    record = account_service.get_shared_assistant_session(token)
+    if not record:
+        return JSONResponse({"error": "Paylaşılan yanıt bulunamadı."}, status_code=404)
+    return JSONResponse({
+        "question": record["question"],
+        "gtip": record.get("gtip"),
+        "origin_country": record.get("origin_country"),
+        "created_at": record["created_at"],
+        "response": record["response"],
+        "notice": "Bu, hesabı doğrulanmış kullanıcının o tarihte ürettiği kayıtlı yanıttır; güncel mevzuatla yeniden teyit edilmelidir.",
+    })
+
+
+@mcp.custom_route("/chat/shared/{token}", methods=["GET"])
+async def web_shared_chat_page(request: Request):
+    """Server-rendered, read-only page for a shared assistant answer.
+
+    The share link returned by ``/api/customs/assistant/share`` points here, so the
+    page must actually be served (no SPA fallback exists). All stored text is
+    HTML-escaped; the page runs no script and only presents the canonical record.
+    """
+    token = request.path_params.get("token", "")
+    record = account_service.get_shared_assistant_session(token)
+    if not record:
+        page = (
+            "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<title>Paylaşılan yanıt bulunamadı</title></head>"
+            "<body style=\"font-family:system-ui;max-width:680px;margin:48px auto;padding:0 16px\">"
+            "<h1>Paylaşılan yanıt bulunamadı</h1><p>Bağlantı geçersiz veya kayıt kaldırılmış olabilir.</p>"
+            "</body></html>"
+        )
+        return HTMLResponse(page, status_code=404, headers={"Cache-Control": "no-store"})
+    response = record["response"] if isinstance(record.get("response"), dict) else {}
+    esc = lambda value: html.escape(str(value), quote=True)  # noqa: E731
+    rows = "".join(
+        f"<tr><td style=\"padding:4px 12px 4px 0\">{esc(rate.get('name', ''))}</td>"
+        f"<td style=\"padding:4px 0\"><strong>{esc(rate.get('value', ''))}</strong></td></tr>"
+        for rate in response.get("rates", []) if isinstance(rate, dict)
+    )
+    sources = "".join(
+        f"<li>{esc(source.get('title', '') or source.get('tool', ''))}</li>"
+        for source in response.get("sources", []) if isinstance(source, dict)
+    )
+    steps = "".join(f"<li>{esc(step)}</li>" for step in response.get("next_steps", []) if isinstance(step, str))
+    warnings = "".join(f"<li>{esc(warning)}</li>" for warning in response.get("warnings", []) if isinstance(warning, str))
+    answer = esc(response.get("answer", "")).replace("\n", "<br>")
+    legal = esc(response.get("legal_notice", ""))
+    parts = [
+        "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<title>Paylaşılan gümrük yanıtı</title></head>",
+        "<body style=\"font-family:system-ui;line-height:1.6;max-width:760px;margin:40px auto;padding:0 16px;color:#0f172a\">",
+        "<p style=\"background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:10px;font-size:14px\">",
+        "Bu, hesabı doğrulanmış kullanıcının o tarihte ürettiği kayıtlı yanıttır; bağlayıcı tarife kararı veya hukuki görüş değildir ve güncel mevzuatla yeniden teyit edilmelidir.</p>",
+        f"<h1 style=\"font-size:20px\">Soru</h1><p>{esc(record['question'])}</p>",
+    ]
+    if record.get("gtip"):
+        parts.append(f"<p style=\"color:#475569;font-size:14px\">GTİP: {esc(record['gtip'])}"
+                     + (f" · Menşe: {esc(record['origin_country'])}" if record.get("origin_country") else "") + "</p>")
+    parts.append(f"<h2 style=\"font-size:18px\">Yanıt</h2><p>{answer}</p>")
+    if rows:
+        parts.append(f"<h3 style=\"font-size:16px\">Oranlar</h3><table>{rows}</table>")
+    if steps:
+        parts.append(f"<h3 style=\"font-size:16px\">Sonraki adımlar</h3><ul>{steps}</ul>")
+    if warnings:
+        parts.append(f"<h3 style=\"font-size:16px\">Uyarılar</h3><ul>{warnings}</ul>")
+    if sources:
+        parts.append(f"<h3 style=\"font-size:16px\">Kaynaklar</h3><ul>{sources}</ul>")
+    if legal:
+        parts.append(f"<p style=\"color:#475569;font-size:13px;margin-top:24px\">{legal}</p>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts), headers={"Cache-Control": "no-store"})
 
 
 @mcp.custom_route("/api/customs/report.pdf", methods=["POST"])
