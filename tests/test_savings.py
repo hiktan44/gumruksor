@@ -228,7 +228,7 @@ class BuildOriginScenariosTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             set(rows[0]),
             {"origin_country", "dispatch_country", "status", "origin_recognised", "resolved_country_group", "matched_gtip_count",
-             "unambiguous_rates", "ambiguous_measure_types", "atr_free_circulation", "atr_available", "origin_proof_required",
+             "unambiguous_rates", "ambiguous_measure_types", "not_applicable_measures", "atr_free_circulation", "atr_available", "origin_proof_required",
              "fallback_rates", "origin_documents", "warnings"},
         )
 

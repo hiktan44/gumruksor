@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 BASES = ("config", "document", "gazette", "observed", "admin")
@@ -60,8 +60,21 @@ def parse_iso_date(value: Any) -> date | None:
         return None
 
 
+# Türkiye 2016'dan beri sabit UTC+3 kullanır; tzdata'ya bağımlı olmamak için sabit ofset.
+ISTANBUL = timezone(timedelta(hours=3), "Europe/Istanbul")
+
+
+def today_local() -> date:
+    """Mevzuat açısından "bugün": Türkiye saatine göre takvim günü (UTC'ye göre değil).
+
+    Resmî Gazete ve tescil tarihleri Türkiye saatine göredir; UTC kullanıldığında
+    00:00-03:00 arasında bir önceki gün "bugün" sayılıyordu.
+    """
+    return datetime.now(ISTANBUL).date()
+
+
 def today_iso() -> str:
-    return datetime.now(UTC).date().isoformat()
+    return today_local().isoformat()
 
 
 @dataclass(frozen=True)

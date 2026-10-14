@@ -1,6 +1,36 @@
 # Proje Devir Notu — Ticaret Bilgi Masası / mevzuat-mcp
 
-Son güncelleme: 1 Ekim 2026 (Europe/Istanbul)
+Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
+
+## 15 Ekim 2026 — Faz 0: vergi hesabı düzeltmeleri (dal `fix/faz0-vergi-motoru`)
+
+- Kaynak: "GümrükSor Üzerine Külliyat + Mevzuat.Net Yapısı ve Sağlam Vergi Motoru"
+  çalışmasındaki Faz 0 listesi. Taban `aed1b07`. Merge/deploy yapılmadı.
+- `calculate_import_landed_cost` MCP aracı tanımsız `as_of` ile her çağrıda NameError
+  veriyordu; `as_of` parametresi eklendi ve motora iletiliyor.
+- KKDF: yeni `payment_terms.classify_payment_method` kelime sınırı ve beyanname ödeme
+  kodlarıyla çalışır. "akreditif" artık %6 almaz (vadeli akreditif alır); belirsiz
+  metinde (akreditif, vesaik mukabili) oran kullanıcıya sorulur.
+- İleri tarihli tarife snapshot'ı `valid_from` gelmeden bugünkü hesaba girmez; o güne
+  kadar önceki onaylı sürüm kullanılır. "Bugün" artık Türkiye saatiyle
+  (`temporal.today_local`, sabit UTC+3); TCMB kur varsayılan tarihi de buna bağlandı.
+- EMY: motor resmî listede EMY bulamayıp "uygulanmaz (%0)" dediğinde hesap %0 alır
+  (İGV ile aynı kural). `TariffLookupResult.not_applicable_measures` yapısal alanı
+  eklendi; tasarruf modülü uyarı metni yerine bu alanı okur.
+- Kullanıcı/resmî oran çakışması tek yardımcıda (`rate_override_conflicts`); ön kontrol
+  yolu artık sessiz değil. Tasarruf karşılaştırması bilinçli olarak resmî oranı kullanır.
+- Gözetim: eşik dövizi (`surveillance_currency`, varsayılan USD) fatura dövizinden
+  farklıysa çapraz kur ister; `surveillance_unit` / `quantity_unit` ile kg↔ton çevrilir,
+  uyumsuz birimde kıymet sessizce yükseltilmez.
+- Toplu hesap ve tasarruf rotaları `as_of` iletir; toplu hesapta istek ve satır düzeyinde
+  A.TR beyanı desteklenir. Oran/kur alanlarında "41.250" ondalık okunur; tutar
+  alanlarında Türkçe binlik kuralı korunur ve satıra açıklama notu düşer. FOB sütununda
+  navlun/sigorta boşsa uyarı verilir.
+- Testler: `tests/test_faz0_tax_fixes.py` (18 yeni test). İki mevcut test beklenen davranış
+  değişikliğine göre güncellendi (toplu hesapta EMY %0, senaryo satır alanları).
+  Toplu paket TZ=UTC: **1571 test, 10 atlandı, hata yok**. Not: TZ=Europe/Istanbul ile
+  gece yarısı civarında `test_eu_vat.test_a_stale_confirmation_brings_the_warning_back`
+  main dalında da başarısız; bu değişiklikle ilgisiz, önceden var olan tarih sınırı sorunu.
 
 ## 1 Ekim 2026 — PR #97 bağımlılık taraması ve imza testi güncellemesi
 

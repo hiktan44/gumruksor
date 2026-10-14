@@ -41,6 +41,7 @@ async def build_origin_scenarios(
                 "matched_gtip_count": lookup.matched_gtip_count,
                 "unambiguous_rates": lookup.unambiguous_rates or {},
                 "ambiguous_measure_types": lookup.ambiguous_measure_types,
+                "not_applicable_measures": list(getattr(lookup, "not_applicable_measures", []) or []),
                 "atr_free_circulation": lookup.atr_free_circulation,
                 "atr_available": lookup.atr_available,
                 "origin_proof_required": lookup.origin_proof_required,

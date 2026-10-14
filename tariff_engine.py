@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from countries import PENDING_AGREEMENTS, by_regime, column_1_keys, explicit_labels, find_country
 from origin_documents import atr_eligible
+from payment_terms import classify_payment_method
 from change_ledger import batch_id_for, diff_rows
 from review_policy import DiffSummary, ReviewPolicy, decide, ensure_review_columns, review_metadata, row_review_fields
 from temporal import (
@@ -186,6 +187,8 @@ class TariffLookupResult(BaseModel):
     rate_variants: dict[str, list[float]] = Field(default_factory=dict)
     unambiguous_rates: dict[str, float] = Field(default_factory=dict)
     ambiguous_measure_types: list[str] = Field(default_factory=list)
+    # Motorun resmî listeye bakarak "uygulanmaz (%0)" dediği kalemler; hesapta 0 kabul edilir.
+    not_applicable_measures: list[str] = Field(default_factory=list)
     measures: list[TariffMeasure] = Field(default_factory=list)
     conditional_measures: list[TariffMeasure] = Field(default_factory=list)
     alternatives: list[TariffMeasure] = Field(default_factory=list)
@@ -289,6 +292,13 @@ class LandedCostInput(BaseModel):
     sct_amount: float | None = Field(None, ge=0, le=1_000_000_000)
     surveillance_unit_value: float | None = Field(None, ge=0, le=1_000_000_000)
     has_surveillance_certificate: bool | None = None
+    # Gözetim eşiği tebliğde çoğunlukla ABD Doları / kg-ton-adet olarak verilir. Fatura dövizi
+    # farklıysa çapraz kur (1 birim eşik dövizi = kaç birim fatura dövizi) gerekir; birimler
+    # verilirse kg↔ton dönüşümü yapılır, uyuşmazsa kıymet sessizce yükseltilmez.
+    surveillance_currency: str = Field("USD", min_length=3, max_length=3)
+    surveillance_cross_rate: float | None = Field(None, gt=0, le=1_000_000)
+    surveillance_unit: str | None = Field(None, max_length=20)
+    quantity_unit: str | None = Field(None, max_length=20)
     payment_method: str | None = Field(None, max_length=100)
     # TRT bandrol ücreti (3093 s. Kanun): oran ürün grubuna göre; matrah gümrük kıymeti + ithalat vergileri (ÖTV/KDV hariç).
     trt_bandrol_rate: float | None = Field(None, ge=0, le=100)
@@ -300,13 +310,58 @@ class LandedCostInput(BaseModel):
     port_storage_try: float | None = Field(None, ge=0, le=1_000_000_000)    # tescile kadar liman/ardiye/tahmil-tahliye (KDV matrahına dahil)
     gekap_try: float | None = Field(None, ge=0, le=1_000_000_000)           # GEKAP; gümrükte değil beyanla ödenir (KDV matrahı dışı)
 
-    @field_validator("currency")
+    @field_validator("currency", "surveillance_currency")
     @classmethod
     def _currency(cls, value: str) -> str:
         value = value.upper()
         if not value.isalpha():
             raise ValueError("Para birimi üç harfli olmalıdır.")
         return value
+
+
+_UNIT_ALIASES = {
+    "kg": "kg", "kilogram": "kg", "kilo": "kg",
+    "ton": "ton", "t": "ton", "tonne": "ton", "mt": "ton",
+    "adet": "adet", "ad": "adet", "piece": "adet", "pcs": "adet", "pc": "adet", "unit": "adet",
+    "cift": "cift", "çift": "cift", "pair": "cift",
+}
+# 1 birim (sağdaki) kaç birim (soldaki) eder: _UNIT_FACTORS[(miktar_birimi, eşik_birimi)]
+_UNIT_FACTORS = {("kg", "ton"): 0.001, ("ton", "kg"): 1000.0}
+
+
+def _unit(value: str | None) -> str | None:
+    if not value:
+        return None
+    key = _key(value).strip().rstrip(".")
+    return _UNIT_ALIASES.get(key, key)
+
+
+def _surveillance_floor(data: "LandedCostInput", missing: list[str], warnings: list[str]) -> float | None:
+    """Gözetim eşiğini fatura dövizi cinsinden toplam kıymete çevirir; çevrilemiyorsa None."""
+
+    assert data.surveillance_unit_value is not None and data.quantity is not None
+    if data.surveillance_currency == data.currency:
+        fx = 1.0
+    elif data.surveillance_cross_rate is not None:
+        fx = float(data.surveillance_cross_rate)
+    else:
+        missing.append(
+            f"Gözetim eşiği {data.surveillance_currency}, fatura {data.currency}: çapraz kur "
+            f"(1 {data.surveillance_currency} = ? {data.currency})"
+        )
+        return None
+    quantity_unit, threshold_unit = _unit(data.quantity_unit), _unit(data.surveillance_unit)
+    if quantity_unit and threshold_unit and quantity_unit != threshold_unit:
+        factor = _UNIT_FACTORS.get((quantity_unit, threshold_unit))
+        if factor is None:
+            missing.append(f"Gözetim eşiği birimi ({threshold_unit}) ile miktar birimi ({quantity_unit}) uyumsuz")
+            return None
+        quantity = data.quantity * factor
+    else:
+        quantity = data.quantity
+        if not (quantity_unit and threshold_unit):
+            warnings.append("Gözetim eşiği ile miktarın aynı birimde (kg/ton/adet) olduğu varsayıldı; birimleri doğrulayın.")
+    return data.surveillance_unit_value * fx * quantity
 
 
 class LandedCostResult(BaseModel):
@@ -809,9 +864,30 @@ class TariffEngine:
         db.execute("UPDATE tariff_snapshots SET active=1, valid_to=NULL, valid_to_basis=NULL WHERE id=?", (snapshot_id,))
 
     def _select_snapshots(self, db: sqlite3.Connection, as_of: str | None) -> list[sqlite3.Row]:
-        """Active snapshots for today; for an as-of date the approved version covering that day."""
-        if not as_of or as_of >= today_iso():
-            return db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
+        """Active snapshots for today; for an as-of date the approved version covering that day.
+
+        A snapshot downloaded before its legal start date (``valid_from`` in the future, e.g. a
+        decree published today that applies from the 1st of next month) becomes ``active`` at
+        once. For a query day before that start the previous approved version still governs,
+        so it is answered from the archive instead of applying the new rates early.
+        """
+        query_day = as_of if as_of and as_of >= today_iso() else (None if as_of else today_iso())
+        if query_day is not None:
+            active = db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
+            selected: list[sqlite3.Row] = []
+            for row in active:
+                valid_from = str(row["valid_from"] or "")[:10]
+                if not valid_from or valid_from <= query_day:
+                    selected.append(row)
+                    continue
+                previous = db.execute(
+                    "SELECT * FROM tariff_snapshots WHERE source_id=? AND status='approved' AND id<>? "
+                    "ORDER BY retrieved_at DESC",
+                    (row["source_id"], row["id"]),
+                ).fetchall()
+                fallback = next((old for old in previous if covers(old, query_day)), None)
+                selected.append(fallback if fallback is not None else row)
+            return selected
         rows = db.execute(
             "SELECT * FROM tariff_snapshots WHERE status='approved' ORDER BY source_id, retrieved_at DESC"
         ).fetchall()
@@ -1574,6 +1650,7 @@ class TariffEngine:
                 )
         coverage = self._measure_coverage(snapshots)
         lookup_status = "matched" if primary and not ambiguous_measure_types else "partial"
+        not_applicable: list[str] = []
         if origin_country and selected and lookup_status:
             if (
                 "additional_duty" not in rate_variants
@@ -1582,6 +1659,7 @@ class TariffEngine:
                 and coverage["additional_duty"].status == "verified_snapshot"
             ):
                 warnings.append("Bu GTİP İlave Gümrük Vergisi (İGV) ekli listelerinde yer almamaktadır; İGV uygulanmaz (%0).")
+                not_applicable.append("additional_duty")
             safeguards = []
             if self.trade_measures:
                 try:
@@ -1602,6 +1680,7 @@ class TariffEngine:
                 and not has_live_safeguard
             ):
                 warnings.append("Bu GTİP için ek mali yükümlülük (EMY) tespit edilmemiştir; EMY uygulanmaz (%0).")
+                not_applicable.append("additional_financial_liability")
         unresolved = [key for key, item in coverage.items() if item.status != "verified_snapshot"]
         if unresolved:
             warnings.append(
@@ -1617,6 +1696,7 @@ class TariffEngine:
             origin_proof_required=origin_proof_required, fallback_rates=fallback_rates,
             resolved_country_group=selected, rate_variants=rate_variants,
             unambiguous_rates=unambiguous_rates, ambiguous_measure_types=ambiguous_measure_types,
+            not_applicable_measures=not_applicable,
             measures=primary[:500], conditional_measures=conditional[:240],
             alternatives=alternatives[:120], snapshots=[self._snapshot(row) for row in snapshots],
             measure_coverage=coverage, unresolved_measure_types=unresolved, warnings=warnings, as_of=_now(),
@@ -1814,20 +1894,11 @@ class TariffEngine:
             for measure_type in lookup.ambiguous_measure_types
         ]
         # A user-supplied rate never silently replaces a different official rate.
-        overrides: list[dict[str, Any]] = []
-        for measure_type, field_name in (
-            ("customs_duty", "customs_duty_rate"),
-            ("additional_duty", "additional_duty_rate"),
-            ("additional_financial_liability", "additional_financial_liability_rate"),
-        ):
-            user_rate = getattr(data, field_name)
-            official = safe_rates.get(measure_type)
-            if user_rate is not None and official is not None and abs(float(user_rate) - float(official)) > 1e-9:
-                overrides.append({"measure_type": measure_type, "user_rate": float(user_rate), "official_rate": float(official)})
-                conflicts.append(
-                    f"{_MEASURE_LABELS.get(measure_type, measure_type)}: girdiğiniz %{float(user_rate):g} resmî satırdaki "
-                    f"%{float(official):g} oranından farklı; hesapta girdiğiniz oran kullanıldı, beyan öncesi doğrulayın."
-                )
+        overrides, override_warnings = rate_override_conflicts(
+            {field: getattr(data, field) for field in _RATE_FIELDS.values()},
+            {_RATE_FIELDS[key]: value for key, value in safe_rates.items() if key in _RATE_FIELDS},
+        )
+        conflicts.extend(override_warnings)
         inferred_additional_duty = safe_rates.get("additional_duty")
         if (
             inferred_additional_duty is None
@@ -1838,6 +1909,15 @@ class TariffEngine:
             and lookup.status in {"matched", "partial"}
         ):
             inferred_additional_duty = 0.0
+        # EMY: motor resmî listeye bakıp "uygulanmaz (%0)" dediyse hesap da 0 alır (İGV ile aynı
+        # kural). Eskiden yalnız İGV için yapılıyordu; EMY satırı gereksiz yere "eksik" kalıyordu.
+        inferred_financial_liability = safe_rates.get("additional_financial_liability")
+        if (
+            inferred_financial_liability is None
+            and data.additional_financial_liability_rate is None
+            and "additional_financial_liability" in lookup.not_applicable_measures
+        ):
+            inferred_financial_liability = 0.0
 
         enriched = data.model_copy(
             update={
@@ -1846,10 +1926,12 @@ class TariffEngine:
                 "additional_financial_liability_rate": (
                     data.additional_financial_liability_rate
                     if data.additional_financial_liability_rate is not None
-                    else safe_rates.get("additional_financial_liability")
+                    else inferred_financial_liability
                 ),
             }
         )
+        if inferred_financial_liability == 0.0 and data.additional_financial_liability_rate is None and safe_rates.get("additional_financial_liability") is None:
+            conflicts.append("Ek mali yükümlülük: resmî listede bu GTİP için EMY tespit edilmedi; %0 alındı. Korunma önlemi kararı varsa oranı girin.")
         cost = calculate_landed_cost(enriched)
         cost.rate_overrides = overrides
         cost.warnings.extend(conflicts)
@@ -1940,6 +2022,41 @@ class TariffEngine:
         }
 
 
+_RATE_FIELDS = {
+    "customs_duty": "customs_duty_rate",
+    "additional_duty": "additional_duty_rate",
+    "additional_financial_liability": "additional_financial_liability_rate",
+}
+
+
+def rate_override_conflicts(
+    user_rates: dict[str, Any], official_rates: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Tek kural: kullanıcı oranı resmî orandan farklıysa kullanıcı oranı kullanılır ve bu
+    her yolda (web hesabı, MCP, ön kontrol) aynı uyarıyla raporlanır; sessiz geçiş yok.
+
+    Anahtarlar ``LandedCostInput`` alan adlarıdır (``customs_duty_rate`` ...).
+    Tasarruf karşılaştırması (savings) bilinçli olarak resmî oranı kullanır; menşeler
+    ancak aynı kaynaktan oranla karşılaştırılabilir.
+    """
+
+    overrides: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for measure_type, field_name in _RATE_FIELDS.items():
+        user_rate = user_rates.get(field_name)
+        official = official_rates.get(field_name)
+        if user_rate is None or official is None:
+            continue
+        if abs(float(user_rate) - float(official)) <= 1e-9:
+            continue
+        overrides.append({"measure_type": measure_type, "user_rate": float(user_rate), "official_rate": float(official)})
+        warnings.append(
+            f"{_MEASURE_LABELS.get(measure_type, measure_type)}: girdiğiniz %{float(user_rate):g} resmî satırdaki "
+            f"%{float(official):g} oranından farklı; hesapta girdiğiniz oran kullanıldı, beyan öncesi doğrulayın."
+        )
+    return overrides, warnings
+
+
 def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
     """Reproducible arithmetic; no tax rate is inferred inside this function."""
     warnings: list[str] = []
@@ -1951,8 +2068,12 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
         if data.quantity is None:
             missing.append("Gözetim kıymeti için miktar")
         elif data.has_surveillance_certificate is False:
-            customs_value = max(customs_value, data.surveillance_unit_value * data.quantity)
-            warnings.append("Gözetim belgesi olmadığı beyanına göre gümrük kıymeti birim gözetim kıymetine yükseltildi.")
+            floor = _surveillance_floor(data, missing, warnings)
+            if floor is not None and floor > customs_value:
+                customs_value = floor
+                warnings.append("Gözetim belgesi olmadığı beyanına göre gümrük kıymeti birim gözetim kıymetine yükseltildi.")
+            elif floor is not None:
+                warnings.append("Beyan edilen kıymet gözetim eşiğinin üzerinde; gözetim düzeltmesi gerekmedi.")
         elif data.has_surveillance_certificate is None:
             missing.append("Gözetim belgesi durumu")
 
@@ -1979,8 +2100,9 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
         lines.append({"code": "anti_dumping", "label": "Damping karşıtı vergi", "base": None, "rate": None, "amount": round(data.anti_dumping_amount, 2), "formula": "doğrulanmış sabit/toplam tutar"})
     kkdf = data.kkdf_rate
     payment_key = _key(data.payment_method)
-    deferred_payment = bool(payment_key) and any(token in payment_key for token in ("mal mukabili", "vadeli", "kredi"))
-    cash_payment = bool(payment_key) and "pesin" in payment_key and not deferred_payment
+    payment_class = classify_payment_method(data.payment_method)
+    deferred_payment = payment_class == "deferred"
+    cash_payment = payment_class == "cash"
     if kkdf is None and deferred_payment:
         kkdf = 6.0
         warnings.append("Kredili/vadeli ödemede KKDF %6 önerildi; finansman yapınıza göre doğrulayın. Peşin ödemeyi seçerseniz bu kalem %0 olur.")
@@ -1988,7 +2110,7 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
         kkdf = 0.0
         warnings.append("Peşin ödemede KKDF uygulanmaz; KKDF %0 olarak önerildi, onaylayın.")
     elif kkdf is None and payment_key:
-        warnings.append("Ödeme şekli anlaşılamadı; KKDF oranını kendiniz doğrulayıp girin (peşin %0, kredili/vadeli %6).")
+        warnings.append("Ödeme şekli KKDF açısından kesinleştirilemedi (ör. akreditif, vesaik mukabili); KKDF oranını kendiniz doğrulayıp girin (peşin %0, kabul kredili/vadeli akreditif/mal mukabili %6).")
     if kkdf is None and not payment_key:
         missing.append("Ödeme şekli (peşin ise KKDF %0, kredili/vadeli ise %6)")
     kkdf_amount = percentage("kkdf", "KKDF oranı", data.invoice_value, kkdf)

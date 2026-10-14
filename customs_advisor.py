@@ -52,6 +52,7 @@ from security_firewall import (
 )
 from tariff_engine import (
     LandedCostInput,
+    rate_override_conflicts,
     TariffEngine,
     TariffLookupResult,
     calculate_landed_cost,
@@ -2342,6 +2343,11 @@ def _deterministic_cost(
 ) -> dict[str, Any] | None:
     if inquiry.invoice_value is None:
         return None
+    official_rates = {
+        "customs_duty_rate": customs_duty_rate,
+        "additional_duty_rate": additional_duty_rate,
+        "additional_financial_liability_rate": additional_financial_liability_rate,
+    }
     duty_rate = inquiry.customs_duty_rate if inquiry.customs_duty_rate is not None else customs_duty_rate
     if additional_duty_rate is None and tariff_lookup and tariff_lookup.status in {"matched", "partial"}:
         if (
@@ -2351,10 +2357,24 @@ def _deterministic_cost(
         ):
             additional_duty_rate = 0.0
     additional_rate = inquiry.additional_duty_rate if inquiry.additional_duty_rate is not None else additional_duty_rate
+    if (
+        additional_financial_liability_rate is None
+        and tariff_lookup is not None
+        and "additional_financial_liability" in (getattr(tariff_lookup, "not_applicable_measures", None) or [])
+    ):
+        additional_financial_liability_rate = 0.0
     emy_rate = (
         inquiry.additional_financial_liability_rate
         if inquiry.additional_financial_liability_rate is not None
         else additional_financial_liability_rate
+    )
+    rate_overrides, override_warnings = rate_override_conflicts(
+        {
+            "customs_duty_rate": inquiry.customs_duty_rate,
+            "additional_duty_rate": inquiry.additional_duty_rate,
+            "additional_financial_liability_rate": inquiry.additional_financial_liability_rate,
+        },
+        official_rates,
     )
     cost_fields: dict[str, Any] = {
         "invoice_value": inquiry.invoice_value,
@@ -2404,7 +2424,8 @@ def _deterministic_cost(
         "lines": result.lines,
         "missing_rates": result.missing_rates,
         "try_summary": result.try_summary,
-        "warnings": result.warnings,
+        "warnings": [*override_warnings, *result.warnings],
+        "rate_overrides": rate_overrides,
         "formula_version": result.formula_version,
         "note": (
             "Hesap yalnızca resmî tarife snapshot'ından güvenle seçilen ve/veya kullanıcı tarafından doğrulanan "

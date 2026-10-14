@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from control_engine import ImportControlEngine
 from tariff_engine import TariffEngine, _ParsedArchive
-from temporal import close_previous, covers, derive_validity, extract_effective_date, normalise_as_of, validity_basis
+from temporal import close_previous, covers, derive_validity, extract_effective_date, normalise_as_of, today_iso, validity_basis
 
 
 def _measure(gtip: str, rate: float, *, group: str = "8") -> dict:
@@ -253,7 +253,7 @@ class TemporalRouteGateTests(unittest.TestCase):
             allowed = self._post("/api/tariff/lookup", {"gtip": "851712000000", "as_of": "2026-01-15"}, "team")
             self.assertEqual(allowed.status_code, 502)  # stub engine reached: gate passed
             self.assertEqual(lookup.await_args.kwargs["as_of"], "2026-01-15")
-            today = self._post("/api/tariff/lookup", {"gtip": "851712000000", "as_of": date.today().isoformat()}, "free")
+            today = self._post("/api/tariff/lookup", {"gtip": "851712000000", "as_of": today_iso()}, "free")
             self.assertEqual(today.status_code, 502)
         with patch.object(self.web_app.control_engine, "lookup", new=AsyncMock(side_effect=RuntimeError("stub"))) as control:
             self.assertEqual(self._post("/api/controls/lookup", {"gtip": "851712000000", "as_of": "2026-01-15"}, "free").status_code, 403)
