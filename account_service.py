@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from turkish_text import fold
 
 
 class AccountError(ValueError):
@@ -1410,6 +1411,14 @@ class AccountService:
             "official_source_urls": collect_official_sources(result, limit=50),
             "legal_notice": result.get("legal_notice"),
         }
+        # Yazılı mütalaa talebi: yalnız izinli alanlar; dosya eki taşınmaz, belge notu metindir.
+        request = result.get("mutalaa") if isinstance(result.get("mutalaa"), dict) else None
+        if request:
+            packet["mutalaa"] = {
+                "urgency": "acil" if fold(str(request.get("urgency", "")).strip()) == "acil" else "normal",
+                "gtip": re.sub(r"\D", "", str(request.get("gtip", "")))[:12],
+                "document_note": str(request.get("document_note", "")).strip()[:500],
+            }
         # Images, contact details, invoice values and deterministic cost fields are intentionally excluded.
         return packet
 

@@ -24,7 +24,7 @@ class KulliyatLayoutTests(unittest.TestCase):
         self.assertIn('<option value="false">Hayır</option>', FORM)
 
     def test_menu_strip_and_tree_present(self):
-        for marker in ("Vergi Hesap", 'id="infoStrip"', 'id="lawTree"', 'data-customs-view="risk"', 'id="riskForm"', "BTB / Fihrist", "Eğitim", "Mütalaa"):
+        for marker in ("Vergi Hesap", 'id="infoStrip"', 'id="lawTree"', 'data-customs-view="risk"', 'id="riskForm"', "BTB / Fihrist", 'data-customs-view="egitim"', 'data-customs-view="mutalaa"', 'id="eduForm"', 'id="mutForm"', "Eğitim", "Mütalaa"):
             self.assertIn(marker, HTML)
 
 

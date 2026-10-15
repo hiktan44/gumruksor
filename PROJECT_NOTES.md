@@ -2,6 +2,25 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — Külliyat PR4: Eğitim soru bankası + mütalaa talebi (dal `feat/kulliyat-egitim-mutalaa`, PR3 üstünde)
+
+- `education.py` + `data/official/question_bank.json`: her soru mevzuat dayanağı ve https kaynakla
+  yüklenir (yoksa reddedilir). Cevap anahtarı yalnız cevaptan/teslimden sonra döner. Süreli sınav
+  süresi sunucuda tutulur (20 sn tolerans, aşım "süre aşıldı" etiketlenir). "Yanlışlarım" = sorudaki
+  son deneme yanlışsa. API: `/api/education/{status,practice,answer,exams,exams/{id}/submit,wrong}`,
+  yönetici için `POST /api/education/questions`.
+- **Veri boşluğu:** tohum yalnız **9 tarife/BTB sorusu**; hepsi Bakanlığın BTB SSS sayfasından
+  doğrulandı. Kıymet, menşe, rejimler ve mevzuat branşları boş (uydurma soru eklenmedi). Editoryal
+  olarak kaynaklı soru eklenmeli (yönetici POST veya tohum dosyası).
+- Mütalaa: yeni uç yok; mevcut `/api/consultation-requests` akışı kullanılır. Konu `[Mütalaa] [ACİL]`
+  önekiyle gider, `_consultation_packet` yalnız izinli `mutalaa` alanlarını taşır (aciliyet, GTİP,
+  belge notu). Dosya eki bilinçli olarak yok (paket gizlilik kuralı). Durum takibi: Mütalaa sekmesi
+  gönderilen taleplerin durumunu listeler; mesajlaşma Gümrük Danışmanları sekmesinde.
+- Hata yakalandı: `"ACİL".lower() != "acil"` (noktalı İ); aciliyet artık `turkish_text.fold` ile okunur.
+- Testler: `tests/test_education.py` (14). Tam paket TZ=UTC: 1660 test, hata yok. Yerelde alıştırma
+  akışı elle doğrulandı; sınav ve talep gönderimi Google girişi gerektirdiği için API testleriyle kapsandı.
+- Sıradaki: PR5 GTİP örnek görselleri (TR BTB fotoğrafı `grdpht.ashx` + AB EBTI).
+
 ## 15 Ekim 2026 — Külliyat PR3: BTB (TR) arama + eşya fihristi (dal `feat/kulliyat-btb-fihrist`, PR2 üstünde)
 
 - Kaynak: Ticaret Bakanlığı BTB Başvuru Sistemi, halka açık ekranlar (`uygulama.gtb.gov.tr/BTBBasvuru`:

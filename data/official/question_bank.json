@@ -1,0 +1,149 @@
+{
+  "_note": "Kaynaklı soru bankası. Her soru mevzuat dayanağı ve https kaynak bağlantısı taşımalıdır; kaynaksız soru yüklenmez. Bu tohum yalnız Bakanlığın BTB SSS sayfasından doğrulanan bilgileri içerir.",
+  "questions": [
+    {
+      "id": "tarife-btb-01",
+      "branch": "tarife",
+      "text": "Bağlayıcı Tarife Bilgisi (BTB) veriliş tarihinden itibaren kaç yıl geçerlidir?",
+      "options": [
+        "1 yıl",
+        "3 yıl",
+        "5 yıl",
+        "6 yıl"
+      ],
+      "answer_index": 3,
+      "explanation": "BTB, veriliş tarihinden itibaren 6 yıl geçerlidir.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-02",
+      "branch": "tarife",
+      "text": "BTB talebi için aşağıdakilerden hangisi doğrudur?",
+      "options": [
+        "BTB her zaman ücretlidir",
+        "BTB talep edene ücretsiz verilir; kimyevi tahlil, ekspertiz veya iade gibi masraflar başvurana aittir",
+        "BTB yalnızca ihracatçılara verilir",
+        "BTB için yıllık abonelik ücreti alınır"
+      ],
+      "answer_index": 1,
+      "explanation": "BTB ücretsizdir; ancak eşyanın kimyevi tahlili, ekspertizi veya talep edene geri gönderilmesi nedeniyle yapılan masrafları talepte bulunan karşılar.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-03",
+      "branch": "tarife",
+      "text": "BTB'yi aşağıdakilerden hangisi verebilir?",
+      "options": [
+        "Yalnızca Gümrük Müşavirleri",
+        "Bakanlık (Gümrükler Genel Müdürlüğü) veya Bakanlıkça yetkilendirilmiş Gümrük ve Dış Ticaret Bölge Müdürlükleri",
+        "Yalnızca Türk Standartları Enstitüsü",
+        "Her gümrük müşavirliği firması"
+      ],
+      "answer_index": 1,
+      "explanation": "BTB, kişinin yazılı veya elektronik talebi üzerine Bakanlık (Gümrükler Genel Müdürlüğü) veya yetkilendirilmiş Gümrük ve Dış Ticaret Bölge Müdürlüklerince verilen idari karardır.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-04",
+      "branch": "tarife",
+      "text": "BTB gümrük idarelerini hangi konuda ve hangi eşya için bağlar?",
+      "options": [
+        "Eşyanın gümrük vergisi oranı konusunda, geçmiş işlemler için de",
+        "Yalnızca eşyanın tarife pozisyonu konusunda ve yalnızca bilginin verildiği tarihten sonra tamamlanacak gümrük işlemlerine konu eşya için",
+        "Eşyanın menşei konusunda, tüm ülkeler için",
+        "Eşyanın kıymeti konusunda, tüm ithalatçılar için"
+      ],
+      "answer_index": 1,
+      "explanation": "BTB, gümrük idarelerini sadece eşyanın tarife pozisyonu konusunda ve yalnızca bilginin verildiği tarihten sonra tamamlanacak gümrük işlemlerine konu olan eşya için bağlar.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-05",
+      "branch": "tarife",
+      "text": "Armonize Sistem sözleşmesini kullanan ülkelerde tarife pozisyonlarının ilk kaç hanesi aynı olmalıdır?",
+      "options": [
+        "2",
+        "4",
+        "6",
+        "8"
+      ],
+      "answer_index": 2,
+      "explanation": "Armonize Mal Tanımı ve Kodlama Sistemini kullanan tüm ülkelerde pozisyonların ilk 6 hanesi aynıdır; AB üyesi ülkelerde ilk 8 hane aynı olmalıdır.",
+      "legal_basis": "Armonize Mal Tanımı ve Kodlama Sistemi Uluslararası Sözleşmesi; Bakanlık SSS: Tarife",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-06",
+      "branch": "tarife",
+      "text": "Aşağıdakilerden hangisi BTB'nin geçerliliğini yitirmesine yol açar?",
+      "options": [
+        "Eşyanın ithal edilmesi",
+        "Aradan 1 yıl geçmesi",
+        "BTB'nin iptal edildiğinin veya değiştirildiğinin bilgi verilen kişiye tebliğ edilmesi",
+        "Döviz kurunun değişmesi"
+      ],
+      "answer_index": 2,
+      "explanation": "BTB, iptal veya değişikliğin bilgi verilen kişiye tebliğ edilmesi ile (ve nomanklatür, izahname veya tarife pozisyonu kararlarındaki değişikliğe uymaması halinde) geçerliliğini yitirir.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-07",
+      "branch": "tarife",
+      "text": "BTB başvurusu nasıl yapılabilir?",
+      "options": [
+        "Yalnızca telefonla",
+        "Elektronik olarak (BTB e-Başvuru Sistemi) veya Gümrük Yönetmeliği 1 numaralı ekindeki forma uygun yazılı olarak yetkili Gümrük ve Dış Ticaret Bölge Müdürlüklerine",
+        "Yalnızca noter aracılığıyla",
+        "Yalnızca AB Komisyonu aracılığıyla"
+      ],
+      "answer_index": 1,
+      "explanation": "BTB başvuruları elektronik olarak veya Gümrük Yönetmeliği ekindeki başvuru formuyla yazılı olarak yapılabilir.",
+      "legal_basis": "Gümrük Yönetmeliği Ek-1; Gümrük Genel Tebliği (Tarife) (Seri No: 14)",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-08",
+      "branch": "tarife",
+      "text": "BTB'ye ilişkin hükümler hangi düzenlemede yer almaktadır?",
+      "options": [
+        "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+        "Dış Ticarette Standardizasyon Tebliği",
+        "Türk Ticaret Kanunu",
+        "Katma Değer Vergisi Kanunu"
+      ],
+      "answer_index": 0,
+      "explanation": "Bakanlık, BTB hükümlerine 03.06.2016 tarihli ve 29731 sayılı Resmî Gazete'de yayımlanan Gümrük Genel Tebliği (Tarife) (Seri No: 14) üzerinden ulaşılabileceğini belirtir.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 14), RG 03.06.2016 / 29731",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    },
+    {
+      "id": "tarife-btb-09",
+      "branch": "tarife",
+      "text": "Bakanlık, kişilerin GTİP tespit taleplerini karşılar mı?",
+      "options": [
+        "Evet, her talep için ücretsiz tespit yapar",
+        "Hayır; GTİP tespit talepleri Bakanlıkça karşılanmaz, yetkili Gümrük ve Ticaret Bölge Müdürlüklerinden BTB veya Tarife Bilgisi başvurusu yapılabilir",
+        "Evet, ancak yalnızca ihracatta",
+        "Evet, e-posta ile"
+      ],
+      "answer_index": 1,
+      "explanation": "Bakanlık GTİP tespit taleplerini karşılamamaktadır; ilgili tebliğler uyarınca yetkili bölge müdürlüklerinden BTB veya Tarife Bilgisi başvurusu yapılabilir.",
+      "legal_basis": "Gümrük Genel Tebliği (Tarife) (Seri No: 11) ve (Seri No: 14); Bakanlık SSS: Tarife",
+      "source_label": "T.C. Ticaret Bakanlığı, Gümrük İşlemleri, Sıkça Sorulan Sorular: Tarife",
+      "source_url": "https://ticaret.gov.tr/gumruk-islemleri/sikca-sorulan-sorular/ticari/tarife"
+    }
+  ]
+}

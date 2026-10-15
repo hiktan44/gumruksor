@@ -1612,3 +1612,15 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .fihrist-letter { min-width: 28px; padding: 3px 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
 .fihrist-letter.active { background: var(--teal); color: #fff; border-color: var(--teal); }
 @media (max-width: 900px) { .btb-grid { grid-template-columns: 1fr; } }
+
+.edu-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.edu-mode { padding: 6px 14px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; font-weight: 600; }
+.edu-mode.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+.edu-choices { display: grid; gap: 6px; margin: 10px 0; }
+.edu-choice { text-align: left; padding: 8px 12px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.edu-choice:hover:not(:disabled) { background: var(--teal-soft); }
+.edu-options { margin: 4px 0; padding-left: 18px; }
+.edu-right { color: var(--mint); font-weight: 600; }
+.edu-wrong { color: var(--danger); font-weight: 600; }
+.edu-opt { display: block; padding: 3px 0; }
+#mutMessage { width: 100%; font: inherit; }

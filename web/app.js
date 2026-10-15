@@ -2931,6 +2931,7 @@ function requestCard(item) {
   return `<details class="consultation-request" data-request-id="${escapeHtml(item.id)}">
     <summary><div><span>${item.direction === "incoming" ? "GELEN" : "GÖNDERİLEN"}</span><b>${escapeHtml(item.subject)}</b><small>${escapeHtml(party || "Kullanıcı")} · ${escapeHtml(formatUnixDate(item.created_at))}</small></div><em data-status="${escapeHtml(item.status)}">${escapeHtml(consultationStatusLabels[item.status] || item.status)}</em></summary>
     <div class="consultation-request-body"><p class="initial-message">${escapeHtml(item.message)}</p>
+      ${packet.mutalaa ? `<div class="shared-packet mutalaa-packet"><b>Mütalaa talebi</b><p>Aciliyet: <span class="why-source${packet.mutalaa.urgency === "acil" ? " why-source-unverified" : ""}">${packet.mutalaa.urgency === "acil" ? "ACİL" : "Normal"}</span>${packet.mutalaa.gtip ? ` · GTİP <code>${escapeHtml(packet.mutalaa.gtip)}</code>` : ""}</p><p><b>Belge notu:</b> ${escapeHtml(packet.mutalaa.document_note || "Belirtilmedi")}</p><small>Dosya eki gönderilmez; belgeler yalnızca adıyla anılır.</small></div>` : ""}
       <div class="shared-packet"><b>Paylaşılan analiz özeti</b><p>${escapeHtml(packet.summary || "Özet bulunmuyor.")}</p><code>${escapeHtml(packet.inquiry?.candidate_gtip || "GTİP belirsiz")}</code><span>${escapeHtml(packet.inquiry?.origin_country || "Menşe belirtilmedi")}</span><nav>${sourceLinks || "Resmî kaynak URL’si bulunmuyor."}</nav></div>
       <div class="consultation-thread">${messages || "<p>Henüz ek mesaj yok.</p>"}</div>
       ${mayReply ? `<form class="consultation-reply"><label class="field"><span>Görüşme mesajı</span><textarea required minlength="2" maxlength="2000" placeholder="Yanıtınızı veya ek sorunuzu yazın."></textarea></label><button type="submit">Mesajı gönder</button></form>` : item.status === "sent" ? '<p class="reply-lock">Mesajlaşma, danışman talebi kabul ettikten sonra açılır.</p>' : ""}
@@ -3021,6 +3022,8 @@ function switchCustomsView(view) {
     loadChanges();
   }
   if (view === "consultants") loadConsultants();
+  if (view === "egitim") initEducation();
+  if (view === "mutalaa") initMutalaa();
 }
 
 $$('[data-customs-view]').forEach((button) => button.addEventListener("click", () => switchCustomsView(button.dataset.customsView)));
@@ -5377,4 +5380,165 @@ $("#fihristBox")?.addEventListener("toggle", (event) => { if (event.target.open 
 $("#fihristLetters")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-fihrist-letter]");
   if (button) loadFihrist(button.dataset.fihristLetter);
+});
+
+
+// ---- Eğitim: alıştırma, süreli deneme sınavı, yanlışlarım (cevap anahtarı yalnız cevaptan sonra gelir)
+const edu = { mode: "practice", questions: [], index: 0, exam: null, timer: null, ready: false };
+const jsonPost = (url, body) => fetchJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+function renderEduStatus(data) {
+  $("#eduStatus").textContent = data.stats ? `Toplam ${data.stats.attempts} cevap, ${data.stats.correct} doğru, ${data.stats.exams} sınav.` : "Sonuçlarınızın kaydedilmesi ve sınav için Google hesabınızla giriş yapın.";
+}
+
+// Kayıtlı cevap veya sınav sonrası toplamlar yeniden okunur; sekmeye dönüşte eski sayı kalmaz.
+async function refreshEduStatus() {
+  try { renderEduStatus(await fetchJson("/api/education/status")); } catch (error) { /* sayaç yenilenemezse mevcut değer kalır */ }
+}
+
+async function initEducation() {
+  if (edu.ready) { refreshEduStatus(); return; }
+  edu.ready = true;
+  try {
+    const data = await fetchJson("/api/education/status");
+    $("#eduBranch").innerHTML = `<option value="">Tüm branşlar</option>` + Object.entries(data.branches).map(([key, b]) => `<option value="${escapeHtml(key)}">${escapeHtml(b.label)} (${b.questions} soru)</option>`).join("");
+    renderEduStatus(data);
+  } catch (error) { $("#eduStatus").textContent = error.message || "Eğitim verisi alınamadı."; edu.ready = false; }
+}
+
+function eduSetMode(mode) {
+  edu.mode = mode;
+  $$(".edu-mode").forEach((button) => button.classList.toggle("active", button.dataset.eduMode === mode));
+  $("#eduMinutesField").hidden = mode !== "exam";
+  $("#eduStartLabel").textContent = mode === "exam" ? "Sınavı başlat" : mode === "wrong" ? "Yanlışlarımı göster" : "Alıştırmaya başla";
+  window.clearInterval(edu.timer);
+  $("#eduOutput").innerHTML = "";
+}
+$$(".edu-mode").forEach((button) => button.addEventListener("click", () => eduSetMode(button.dataset.eduMode)));
+
+function reviewCard(item, chosen) {
+  const q = item.question || item;
+  const rows = q.options.map((option, i) => `<li class="${i === q.answer_index ? "edu-right" : i === chosen ? "edu-wrong" : ""}">${escapeHtml(option)}${i === q.answer_index ? " ✔" : i === chosen ? " ✖ (seçiminiz)" : ""}</li>`).join("");
+  return `<div class="btb-item"><b>${escapeHtml(q.text)}</b><ul class="edu-options">${rows}</ul>
+    ${q.explanation ? `<small>${escapeHtml(q.explanation)}</small>` : ""}
+    <small><b>Dayanak:</b> ${escapeHtml(q.legal_basis)} · <a href="${safeUrl(q.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(q.source_label)}</a></small></div>`;
+}
+
+function showPracticeQuestion() {
+  const q = edu.questions[edu.index];
+  if (!q) { $("#eduOutput").innerHTML = '<p class="missing-list">Alıştırma bitti. Yeni bir tur başlatabilirsiniz.</p>'; return; }
+  $("#eduOutput").innerHTML = `<div class="formula-ledger"><h3>Soru ${edu.index + 1} / ${edu.questions.length} · ${escapeHtml(q.branch_label)}</h3><p>${escapeHtml(q.text)}</p>
+    <div class="edu-choices">${q.options.map((option, i) => `<button type="button" class="edu-choice" data-edu-choice="${i}">${escapeHtml(option)}</button>`).join("")}</div><div id="eduFeedback"></div></div>`;
+}
+
+async function startEducation() {
+  const branch = $("#eduBranch").value, count = Number($("#eduCount").value) || 5;
+  const out = $("#eduOutput");
+  window.clearInterval(edu.timer);
+  try {
+    if (edu.mode === "wrong") {
+      const data = await fetchJson("/api/education/wrong");
+      out.innerHTML = data.questions.length ? data.questions.map((q) => reviewCard(q, q.chosen)).join("") : '<p class="missing-list">Yanlış cevabınız yok.</p>';
+    } else if (edu.mode === "practice") {
+      const data = await fetchJson(`/api/education/practice?branch=${encodeURIComponent(branch)}&count=${count}`);
+      edu.questions = data.questions; edu.index = 0;
+      if (!edu.questions.length) { out.innerHTML = '<p class="missing-list">Bu branşta henüz soru yok.</p>'; return; }
+      showPracticeQuestion();
+    } else {
+      const exam = await jsonPost("/api/education/exams", { branch, count, minutes: Number($("#eduMinutes").value) || 10 });
+      edu.exam = exam;
+      out.innerHTML = `<form id="eduExamForm" class="formula-ledger"><h3>Deneme sınavı · <span id="eduClock"></span></h3>
+        ${exam.questions.map((q, n) => `<fieldset class="btb-item"><legend>${n + 1}. ${escapeHtml(q.text)}</legend>${q.options.map((option, i) => `<label class="edu-opt"><input type="radio" name="q_${escapeHtml(q.id)}" value="${i}"> ${escapeHtml(option)}</label>`).join("")}</fieldset>`).join("")}
+        <button class="analyse-button" type="submit"><span>Sınavı teslim et</span></button></form>`;
+      const tick = () => {
+        const left = Math.max(0, Math.round(exam.deadline - Date.now() / 1000));
+        $("#eduClock").textContent = `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")} kaldı`;
+        if (left === 0) { window.clearInterval(edu.timer); $("#eduExamForm")?.requestSubmit(); }
+      };
+      tick(); edu.timer = window.setInterval(tick, 1000);
+    }
+  } catch (error) { out.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "İşlem yapılamadı.")}</p>`; }
+}
+$("#eduForm")?.addEventListener("submit", (event) => { event.preventDefault(); startEducation(); });
+
+$("#eduOutput")?.addEventListener("click", async (event) => {
+  const choice = event.target.closest("[data-edu-choice]");
+  if (choice) {
+    const q = edu.questions[edu.index];
+    $$(".edu-choice").forEach((b) => { b.disabled = true; });
+    try {
+      const result = await jsonPost("/api/education/answer", { question_id: q.id, chosen: Number(choice.dataset.eduChoice) });
+      $("#eduFeedback").innerHTML = `<p class="${result.correct ? "edu-right" : "edu-wrong"}"><b>${result.correct ? "Doğru" : "Yanlış"}</b></p>${reviewCard(result, result.chosen)}
+        <button type="button" class="analyse-button" data-edu-next><span>Sonraki soru</span></button>${result.recorded ? "" : '<small class="fx-note">Sonuç kaydedilmedi; kaydetmek için giriş yapın.</small>'}`;
+      if (result.recorded) refreshEduStatus();
+    } catch (error) { showToast(error.message || "Cevap gönderilemedi."); }
+    return;
+  }
+  if (event.target.closest("[data-edu-next]")) { edu.index += 1; showPracticeQuestion(); }
+});
+
+$("#eduOutput")?.addEventListener("submit", async (event) => {
+  if (event.target.id !== "eduExamForm") return;
+  event.preventDefault();
+  window.clearInterval(edu.timer);
+  const answers = {};
+  edu.exam.questions.forEach((q) => { const picked = event.target.querySelector(`input[name="q_${q.id}"]:checked`); if (picked) answers[q.id] = Number(picked.value); });
+  try {
+    const result = await jsonPost(`/api/education/exams/${encodeURIComponent(edu.exam.exam_id)}/submit`, { answers });
+    $("#eduOutput").innerHTML = `<div class="formula-ledger"><h3>Sonuç: ${result.score} / ${result.total}</h3>
+      ${result.overtime ? '<p class="rate-warning">Süre aşıldı; sonuç "süre aşıldı" olarak işaretlendi.</p>' : ""}
+      ${result.results.map((r) => reviewCard(r, r.chosen)).join("")}</div>`;
+    refreshEduStatus();
+  } catch (error) { showToast(error.message || "Sınav teslim edilemedi."); }
+});
+
+// ---- Mütalaa: mevcut danışmanlık talebi akışı
+const MUT_STATUS = { sent: "Gönderildi", accepted: "Kabul edildi", declined: "Reddedildi", closed: "Kapandı" };
+let mutReady = false;
+
+async function loadMutRequests() {
+  const box = $("#mutRequests");
+  if (!state.auth?.authenticated) { box.innerHTML = '<p class="missing-list">Taleplerinizi görmek için Google hesabınızla giriş yapın.</p>'; return; }
+  try {
+    const data = await fetchJson("/api/consultation-requests");
+    const items = (data.outgoing || []).filter((item) => String(item.subject || "").startsWith("[Mütalaa]"));
+    box.innerHTML = items.length ? `<ul class="risk-list">${items.map((item) => `<li class="btb-item"><b>${escapeHtml(item.subject)}</b>
+      <small>Durum: <span class="why-source">${escapeHtml(MUT_STATUS[item.status] || item.status)}</span> · danışman ${escapeHtml(item.consultant_name || "")} · ${escapeHtml(new Date((item.updated_at || item.created_at) * 1000).toLocaleDateString("tr-TR"))} · ${(item.messages || []).length} mesaj</small></li>`).join("")}</ul>
+      <p class="rate-warning">Mesajlaşma ve durum değişiklikleri için Gümrük Danışmanları sekmesindeki talep kutusunu kullanın.</p>` : '<p class="missing-list">Henüz mütalaa talebiniz yok.</p>';
+  } catch (error) { box.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "Talepler alınamadı.")}</p>`; }
+}
+
+async function initMutalaa() {
+  const select = $("#mutConsultant");
+  if (!mutReady) {
+    try {
+      const data = await fetchJson("/api/consultants");
+      select.innerHTML = (data.items || []).length ? data.items.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)} · ${escapeHtml(c.title || "")}</option>`).join("") : '<option value="">Yayında danışman yok</option>';
+      mutReady = true;
+    } catch (error) { select.innerHTML = '<option value="">Danışmanlar alınamadı</option>'; }
+  }
+  loadMutRequests();
+}
+
+$("#mutForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = $("#mutStatus");
+  if (!state.auth?.authenticated) { status.textContent = "Talep göndermek için Google hesabınızla giriş yapın."; return; }
+  const urgent = $("#mutUrgency").value === "acil";
+  const message = $("#mutMessage").value.trim();
+  try {
+    await jsonPost("/api/consultation-requests", {
+      consultant_id: $("#mutConsultant").value,
+      subject: `[Mütalaa]${urgent ? " [ACİL]" : ""} ${$("#mutSubject").value.trim()}`,
+      message, share_consent: $("#mutConsent").checked,
+      result: {
+        status: "mutalaa_request", summary: $("#mutSubject").value.trim(),
+        inquiry: { question: message, candidate_gtip: $("#mutGtip").value.replace(/\D/g, "") },
+        mutalaa: { urgency: $("#mutUrgency").value, gtip: $("#mutGtip").value, document_note: $("#mutDocuments").value },
+      },
+    });
+    status.textContent = "Talep danışmana gönderildi.";
+    event.target.reset();
+    loadMutRequests();
+  } catch (error) { status.textContent = error.message || "Talep gönderilemedi."; }
 });
