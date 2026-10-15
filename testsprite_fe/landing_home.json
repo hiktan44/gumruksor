@@ -1,0 +1,10 @@
+{
+  "projectId": "497b5c81-c4ee-4439-94eb-34dbcfaf2f3c",
+  "type": "frontend",
+  "name": "Ana sayfa yüklenir ve GTİP değer önerisi görünür",
+  "planSteps": [
+    {"type":"action","description":"https://gumruksor.com/ adresine git"},
+    {"type":"assertion","description":"Sayfa başlığı 'Gümrükçe' ifadesini içerir ve sayfada 'GTİP' metni görünür"},
+    {"type":"assertion","description":"Sayfada giriş/başla çağrısı (Google ile giriş veya 'Ücretsiz dene' benzeri bir buton) görünür"}
+  ]
+}
