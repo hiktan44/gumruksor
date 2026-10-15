@@ -101,6 +101,11 @@ JOB_CATALOGUE: dict[str, dict[str, str]] = {
         "purpose": "Komisyonun günlük yayımladığı bağlayıcı tarife bilgisi kararlarını arşive alır.",
         "cost": "free",
     },
+    "btb-sync": {
+        "label": "Türkiye BTB kararları",
+        "purpose": "Ticaret Bakanlığı'nın halka açık geçerli BTB listesini haftalık okur; ayrıntı talep üzerinde alınır.",
+        "cost": "free",
+    },
     "eu-taric-fill": {
         "label": "AB TARIC toplu dolumu",
         "purpose": "Ücretli dış aktörle kod × ülke çiftlerini arşive çeker. Her sorgu ücretlidir; aylık tavan ve yaş tabanlı tazeleme uygulanır.",

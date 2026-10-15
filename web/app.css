@@ -1604,3 +1604,11 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .risk-item.risk-info { border-left-color: var(--blue); }
 .risk-item small { color: var(--ink-2); }
 .risk-delete { justify-self: start; border: 0; background: transparent; color: var(--danger); font-size: .62rem; cursor: pointer; }
+
+.btb-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.btb-item { display: grid; gap: 3px; padding: 8px 12px; border-left: 3px solid var(--teal); background: var(--surface-soft); font-size: .64rem; overflow-wrap: anywhere; }
+.btb-item small { color: var(--ink-2); }
+.fihrist-letters { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.fihrist-letter { min-width: 28px; padding: 3px 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.fihrist-letter.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+@media (max-width: 900px) { .btb-grid { grid-template-columns: 1fr; } }

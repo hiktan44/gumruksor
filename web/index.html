@@ -213,11 +213,11 @@
           <button type="button" class="active" data-customs-view="assistant">Ürüne Sor</button>
           <button type="button" data-customs-view="tariff">Vergi Hesap</button>
           <button type="button" data-customs-view="risk">Risk Kontrol</button>
+          <button type="button" data-customs-view="btb">BTB / Fihrist</button>
           <button type="button" data-customs-view="controls">Kontroller &amp; Belgeler</button>
           <button type="button" data-customs-view="changes">Değişiklikler</button>
           <button type="button" data-customs-view="consultants">Gümrük Danışmanları</button>
           <button type="button" data-customs-view="guide">İşlem Rehberi</button>
-                    <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">BTB / Fihrist <small>yakında</small></button>
           <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Eğitim <small>yakında</small></button>
           <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Mütalaa <small>yakında</small></button>
         </nav>
@@ -650,6 +650,23 @@
               <button class="analyse-button" type="submit"><span>Notu kaydet</span></button>
               <small id="riskNoteStatus" class="fx-note"></small>
             </form>
+          </details>
+        </section>
+
+        <section class="customs-tool-panel" data-customs-panel="btb" hidden aria-labelledby="btbPanelTitle">
+          <header class="tool-panel-head"><span>04 / SINIFLANDIRMA KANITI</span><h2 id="btbPanelTitle">BTB kararları ve eşya fihristi</h2><p>Türkiye Bağlayıcı Tarife Bilgisi kararlarını, AB EBTI kararlarını ve resmî eşya tanımlarını yan yana arar. Bu ekran oran vermez; sınıflandırma kanıtıdır ve bağlayıcı görüş değildir.</p></header>
+          <form class="tool-form" id="btbForm">
+            <fieldset class="tariff-group"><legend>Arama</legend><div class="tariff-group-grid">
+              <label class="field req"><span>Eşya adı veya anahtar sözcük</span><input id="btbQuery" maxlength="200" autocomplete="off" placeholder="Örn. klima kompresörü"></label>
+              <label class="field opt"><span>GTİP öneki</span><input id="btbGtip" inputmode="numeric" maxlength="14" autocomplete="off" placeholder="En az 4 hane"></label>
+            </div></fieldset>
+            <button class="analyse-button" type="submit"><span>Kararlarda ve tanımlarda ara</span></button>
+          </form>
+          <div class="tool-output" id="btbOutput" aria-live="polite"></div>
+          <details class="scenario-box advanced-fields" id="fihristBox">
+            <summary><span>Eşya fihristi (A-Z)</span><small>Eşya adından 6 haneli GTİP pozisyonu bulun</small></summary>
+            <div class="fihrist-letters" id="fihristLetters" role="group" aria-label="Harf seçin"></div>
+            <div id="fihristOutput" aria-live="polite"></div>
           </details>
         </section>
 

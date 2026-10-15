@@ -351,6 +351,14 @@ def load_sources(path: str | Path | None = None) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ depo
+_TR_ALPHABET = "abcçdefgğhıijklmnoöprsştuüvyz"
+
+
+def _turkish_order(text: str) -> tuple[int, ...]:
+    """Türkçe alfabe sırası (ç, ğ, ı, ö, ş, ü kendi yerinde); alfabe dışı karakterler sona gider."""
+    return tuple(_TR_ALPHABET.index(ch) if ch in _TR_ALPHABET else len(_TR_ALPHABET) + ord(ch) for ch in text)
+
+
 class NomenclatureStore:
     """Cetvelin kalıcı kopyası. Eski anlık görüntü **silinmez**; ``active`` taşınır."""
 
@@ -1132,6 +1140,43 @@ class NomenclatureEngine:
             "source_url": str(snapshot["source_url"]),
             "sha256": str(snapshot["sha256"]),
             "retrieved_at": str(snapshot["retrieved_at"]),
+        }
+
+    def alphabetical_index(self, letter: str = "", *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """Eşya fihristi: 6 haneli alt pozisyonlar, eşya adına göre alfabetik (kod döndürür, oran döndürmez).
+
+        Etiket, tanımın kendisidir; "Diğerleri" gibi tek başına anlamsız tanımlarda bağlamı veren üst
+        satır birleştirilir. Harf süzgeci Türkçe duyarlıdır (``fold``): İ/I ve ı/i ayrı harflerdir.
+        """
+        from turkish_text import fold
+
+        snapshot = self.store.active_snapshot()
+        if not snapshot:
+            return {"status": "unavailable", "count": 0, "items": [], "letters": []}
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                "SELECT code, description, full_path FROM codes WHERE snapshot_id=? AND level=6", (snapshot["id"],)
+            ).fetchall()
+        entries = []
+        for row in rows:
+            description = str(row["description"]).strip(" -–:")
+            if not description:
+                continue
+            path = [part.strip() for part in str(row["full_path"]).split(">") if part.strip()]
+            vague = fold(description).startswith("diğer") or len(description) < 6
+            label = f"{path[-2]} > {description}" if vague and len(path) >= 2 else description
+            entries.append({"label": label, "code": row["code"], "full_path": row["full_path"], "key": fold(label)})
+        letters = sorted({entry["key"][0] for entry in entries if entry["key"] and entry["key"][0].isalpha()}, key=_turkish_order)
+        wanted = fold(letter)[:1] if letter else ""
+        if wanted:
+            entries = [entry for entry in entries if entry["key"].startswith(wanted)]
+        entries.sort(key=lambda entry: (_turkish_order(entry["key"]), entry["code"]))
+        limit = max(1, min(int(limit), 300))
+        window = entries[max(0, int(offset)): max(0, int(offset)) + limit]
+        return {
+            "status": "ok", "count": len(entries), "letter": wanted, "letters": letters,
+            "items": [{"label": e["label"], "code": e["code"], "full_path": e["full_path"]} for e in window],
+            "source_url": str(snapshot["source_url"]), "retrieved_at": str(snapshot["retrieved_at"]),
         }
 
     def describe_many(self, codes: Iterable[str]) -> dict[str, dict[str, Any]]:

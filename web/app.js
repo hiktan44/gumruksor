@@ -5290,3 +5290,91 @@ $("#riskOutput")?.addEventListener("click", async (event) => {
     runRiskCheck();
   } catch (error) { showToast(error.message || "Not silinemedi."); }
 });
+
+
+// BTB / Fihrist: Türkiye BTB, AB EBTI ve resmî eşya tanımı sonuçları yan yana; oran gösterilmez.
+function btbCard(item) {
+  return `<li class="btb-item"><b>${escapeHtml(item.btb_no)}</b> · <code>${escapeHtml(item.gtip)}</code> · geçerlilik ${escapeHtml(item.valid_from)}
+    <span>${escapeHtml(item.description)}${item.description_is_excerpt ? " <small>(kısaltılmış)</small>" : ""}</span>
+    ${item.reasoning ? `<small><b>Gerekçe:</b> ${escapeHtml(item.reasoning)}</small>` : `<button type="button" class="risk-delete" data-btb-detail="${escapeHtml(item.btb_no)}">Gerekçeyi göster</button>`}
+    <small><a href="${safeUrl(item.photo_url)}" target="_blank" rel="noreferrer">Resmî fotoğraf</a> · <a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a></small></li>`;
+}
+
+function ebtiCard(hit) {
+  return `<li class="btb-item"><b>${escapeHtml(hit.reference)}</b> · ${escapeHtml(hit.issuing_country)} · <code>${escapeHtml(hit.code)}</code>
+    <span>${escapeHtml(String(hit.description || "").slice(0, 280))}</span>
+    ${hit.justification ? `<small><b>Gerekçe:</b> ${escapeHtml(String(hit.justification).slice(0, 280))}</small>` : ""}
+    <small>${hit.url ? `<a href="${safeUrl(hit.url)}" target="_blank" rel="noreferrer">Resmî kayıt</a> · ` : ""}${escapeHtml(hit.status)} · ${escapeHtml(hit.valid_from || "")}</small></li>`;
+}
+
+function nomenclatureCard(hit) {
+  return `<li class="btb-item"><code>${escapeHtml(hit.code)}</code> <span>${escapeHtml(hit.description)}</span>
+    <small>${escapeHtml(hit.full_path || "")}</small>
+    <button type="button" class="risk-delete" data-use-gtip="${escapeHtml(hit.code)}">Vergi hesabında kullan</button></li>`;
+}
+
+function renderBtb(data) {
+  const column = (title, items, empty) => `<section><h4>${title}</h4>${items ? `<ul class="risk-list">${items}</ul>` : `<p class="missing-list">${empty}</p>`}</section>`;
+  const turkey = (data.turkey_btb || []).map(btbCard).join("");
+  const status = data.turkey_btb_status || {};
+  const eu = data.eu_ebti || {};
+  const euNote = eu.status === "locked" ? `AB EBTI sonuçları için: ${escapeHtml(eu.message || "giriş gerekli")}` : "AB kararı bulunamadı.";
+  const nomen = ((data.nomenclature || {}).hits || []).map(nomenclatureCard).join("");
+  return `<div class="formula-ledger btb-grid">
+    ${column(`Türkiye BTB (${numberFormat.format(status.active || 0)} geçerli kayıt)`, turkey, status.ready ? "Eşleşen Türkiye BTB kararı yok." : "Türkiye BTB listesi henüz yüklenmedi.")}
+    ${column("AB EBTI kararları", (eu.hits || []).map(ebtiCard).join(""), euNote)}
+    ${column("Resmî eşya tanımı", nomen, "Eşleşen eşya tanımı yok.")}
+  </div><p class="rate-warning">${escapeHtml(data.notice || "")}</p>`;
+}
+
+async function runBtbSearch() {
+  const output = $("#btbOutput");
+  output.innerHTML = '<p class="missing-list">Aranıyor…</p>';
+  try {
+    const params = new URLSearchParams({ q: $("#btbQuery").value, gtip: $("#btbGtip").value });
+    output.innerHTML = renderBtb(await fetchJson(`/api/btb/search?${params}`));
+  } catch (error) {
+    output.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "Arama yapılamadı.")}</p>`;
+  }
+}
+
+$("#btbForm")?.addEventListener("submit", (event) => { event.preventDefault(); runBtbSearch(); });
+
+document.addEventListener("click", async (event) => {
+  const detail = event.target.closest("[data-btb-detail]");
+  if (detail) {
+    detail.disabled = true;
+    try {
+      const record = await fetchJson(`/api/btb/${encodeURIComponent(detail.dataset.btbDetail)}`);
+      const holder = detail.closest(".btb-item");
+      holder.outerHTML = btbCard(record);
+    } catch (error) { detail.disabled = false; showToast(error.message || "Ayrıntı alınamadı."); }
+    return;
+  }
+  const use = event.target.closest("[data-use-gtip]");
+  if (use) {
+    switchCustomsView("tariff");
+    const input = $("#tariffGtip");
+    input.value = use.dataset.useGtip;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.scrollIntoView({ block: "center" });
+  }
+});
+
+async function loadFihrist(letter = "") {
+  const output = $("#fihristOutput");
+  output.innerHTML = '<p class="missing-list">Yükleniyor…</p>';
+  try {
+    const data = await fetchJson(`/api/fihrist?letter=${encodeURIComponent(letter)}&limit=150`);
+    if (data.status !== "ok") { output.innerHTML = '<p class="missing-list">Eşya tanım cetveli henüz yüklenmedi.</p>'; return; }
+    $("#fihristLetters").innerHTML = (data.letters || []).map((l) => `<button type="button" class="fihrist-letter${l === data.letter ? " active" : ""}" data-fihrist-letter="${escapeHtml(l)}">${escapeHtml(l.toLocaleUpperCase("tr-TR"))}</button>`).join("");
+    output.innerHTML = `<p class="rate-warning">${numberFormat.format(data.count)} kayıt${data.count > data.items.length ? `; ilk ${data.items.length} gösteriliyor, aramayı daraltmak için yukarıdaki arama kutusunu kullanın` : ""}.</p>
+      <ul class="risk-list">${data.items.map((item) => `<li class="btb-item"><code>${escapeHtml(item.code)}</code> <span>${escapeHtml(item.label)}</span><button type="button" class="risk-delete" data-use-gtip="${escapeHtml(item.code)}">Vergi hesabında kullan</button></li>`).join("")}</ul>`;
+  } catch (error) { output.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "Fihrist yüklenemedi.")}</p>`; }
+}
+
+$("#fihristBox")?.addEventListener("toggle", (event) => { if (event.target.open && !$("#fihristLetters").children.length) loadFihrist("a"); });
+$("#fihristLetters")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-fihrist-letter]");
+  if (button) loadFihrist(button.dataset.fihristLetter);
+});
