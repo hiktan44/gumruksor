@@ -2,6 +2,24 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — Külliyat PR1: düzen ve vergi hesap ekranı (dal `feat/kulliyat-duzeni-vergi-ekrani`)
+
+- Kaynak görev: `KULLIYAT_GOREV.md` (5 PR'lık plan; bu PR1). Taban `a3958c9`. Merge/deploy yok.
+- Motor: `calculate_landed_cost` her satıra `explanation` ekler (`source`, `source_detail`,
+  `legal_basis`, `base_components`); aritmetik değişmedi. `TariffEngine.calculate` resmî
+  tarifeden gelen GV/İGV/EMY satırlarını `official_tariff` (veya doğrulanmış uygulanmazlık
+  için `official_not_applicable`) diye işaretler ve snapshot başlık/sürüm/SHA bilgisini ekler.
+- Arayüz (vanilla SPA korundu): Vergi formu 4 gruba ayrıldı (Eşya, Kıymet, Belge soruları,
+  Ek yükler); zorunlu alanlar yeşil, isteğe bağlılar mavi sol çerçeve. A.TR ve gözetim belgesi
+  Evet/Hayır/Bilmiyorum. Her maliyet satırında "Neden?" paneli. Üstte bilgi şeridi
+  (TCMB USD kuru, tarife sürümü, değişiklik kaydı; okunamazsa "—"). Solda mevzuat ağacı
+  (yalnız mevcut hızlı arama sorguları). Menüde Risk Kontrol, BTB / Fihrist, Eğitim, Mütalaa
+  "yakında" olarak devre dışı; PR2-PR4'te açılacak.
+- Testler: `tests/test_cost_explanations.py` (4), `tests/test_kulliyat_layout.py` (4).
+  Tam paket TZ=UTC: 1606 test, 10 atlama, hata yok. Yerelde 8765 portunda elle kontrol
+  edildi (masaüstü ve 360 px, yatay taşma yok).
+- Sıradaki: PR2 Risk ön kontrolü (`KULLIYAT_GOREV.md`).
+
 ## 15 Ekim 2026 — PR #104 gözetim giriş yolları entegrasyonu
 
 - İnceleme P1/P2 bulguları `d38108c` üzerinde doğrulandı. Tarife ve danışman web
