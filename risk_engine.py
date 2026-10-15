@@ -258,12 +258,16 @@ class RiskStore:
         if kind in ("criterion", "precedent"):
             query += " AND kind=?"
             params.append(kind)
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(max(1, min(int(limit), 500)))
+        limit = max(1, min(int(limit), 500))
+        query += " ORDER BY created_at DESC"
+        if not stale_only:
+            query += " LIMIT ?"
+            params.append(limit)
         with self._connect() as db:
             rows = db.execute(query, params).fetchall()
         items = [self._public(row) for row in rows]
-        return [item for item in items if item["stale"]] if stale_only else items
+        # "Eskimiş" süzgeci sayfalamadan ÖNCE uygulanır; yoksa eski kayıtlar son 200'ün dışında kalıp görünmez olurdu.
+        return [item for item in items if item["stale"]][:limit] if stale_only else items
 
     def review(
         self, identifier: str, *, approve: bool, reviewer_sub: str, note: str = "", verified_at: Any = None,
@@ -298,7 +302,9 @@ class RiskStore:
             rows = db.execute("SELECT status, COUNT(*) n FROM risk_criteria WHERE owner_sub IS NULL GROUP BY status").fetchall()
         counts = {key: 0 for key in STATUSES}
         counts.update({row["status"]: row["n"] for row in rows})
-        counts["stale"] = len([item for item in self.list_for_review("approved", limit=500) if item["stale"]])
+        with self._connect() as db:
+            approved = db.execute("SELECT * FROM risk_criteria WHERE status='approved' AND owner_sub IS NULL").fetchall()
+        counts["stale"] = len([row for row in approved if self._public(row)["stale"]])
         return counts
 
     def get(self, identifier: str) -> dict[str, Any] | None:

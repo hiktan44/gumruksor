@@ -79,7 +79,10 @@ def parse_csv(text: str) -> list[tuple[int, dict[str, Any]]]:
 
 def row_identifier(clean: dict[str, Any]) -> str:
     """Aynı kayıt tekrar yüklenirse çoğalmasın diye içerikten türetilen kimlik."""
-    seed = "|".join((clean["gtip_prefix"], clean["direction"], clean["category"], clean["title"], clean["source_url"]))
+    seed = "|".join((
+        clean["gtip_prefix"], clean["direction"], clean["category"], clean["title"], clean["source_url"],
+        str(clean.get("year_from") or ""), str(clean.get("year_to") or ""),
+    ))
     return uuid.uuid5(uuid.NAMESPACE_URL, "risk-import:" + seed).hex
 
 

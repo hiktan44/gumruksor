@@ -5467,7 +5467,7 @@ async function startEducation() {
 }
 
 // Soru onayı: yalnız yönetici ve aktif danışman; taslaklar öğrencilere hiçbir yerde gösterilmez.
-function reviewCard(item) {
+function draftReviewCard(item) {
   const options = item.options.map((option, i) => `<li class="${i === item.answer_index ? "edu-right" : ""}">${escapeHtml(option)}${i === item.answer_index ? " ✔ (doğru cevap)" : ""}</li>`).join("");
   return `<div class="btb-item" data-review-id="${escapeHtml(item.id)}"><b>${escapeHtml(item.text)}</b>
     <small>${escapeHtml(item.branch_label)} · ${escapeHtml(item.status_label)} · ${item.source_kind === "karar" ? "yargı kararı" : item.source_kind === "mevzuat" ? "mevzuat" : "kaynak"}</small>
@@ -5487,7 +5487,7 @@ async function loadEduReview(branch) {
   const c = data.counts || {};
   $("#eduOutput").innerHTML = `<div class="formula-ledger"><h3>Onay bekleyen taslaklar (${data.items.length})</h3>
     <p class="fx-note">Taslak ${c.draft || 0} · onaylı ${c.approved || 0} · reddedilen ${c.rejected || 0}. Cevabı, alıntıyı ve kaynağı kaynak bağlantısından kontrol edip onaylayın.</p>
-    ${data.items.length ? data.items.map(reviewCard).join("") : '<p class="missing-list">Onay bekleyen taslak yok.</p>'}</div>`;
+    ${data.items.length ? data.items.map(draftReviewCard).join("") : '<p class="missing-list">Onay bekleyen taslak yok.</p>'}</div>`;
 }
 
 $("#eduOutput")?.addEventListener("click", async (event) => {

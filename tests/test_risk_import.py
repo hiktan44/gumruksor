@@ -257,3 +257,34 @@ class RiskReviewHttpTests(ReviewHttpCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = RiskStore(self.tmp.name)
+
+    def test_same_criterion_for_different_years_is_not_a_duplicate(self):
+        first = "8517;ithalat;2022;2023;Kıymet;Aynı başlık;Açıklama;Test kaynağı;https://example.gov.tr/k;" + TODAY
+        second = "8517;ithalat;2024;2025;Kıymet;Aynı başlık;Açıklama;Test kaynağı;https://example.gov.tr/k;" + TODAY
+        result = import_csv(self.store, csv_of(first, second), created_by="a1")
+        self.assertTrue(result["committed"], result)
+        self.assertEqual(result["imported"], 2)
+        # Aynı dosya tekrar yüklenirse yine çoğalmaz.
+        again = import_csv(self.store, csv_of(first, second), created_by="a1")
+        self.assertEqual(len(self.store.list_for_review("draft")), 2, again)
+
+    def test_stale_filter_runs_before_the_limit(self):
+        old = (date.today() - timedelta(days=800)).isoformat()
+        base = {"gtip_prefix": "8517", "category": "kiymet", "source_label": "K", "source_url": "https://example.gov.tr/k", "direction": "import"}
+        for index in range(205):
+            record = self.store.add({**base, "title": f"Güncel kriter {index:03d}"}, official=True, owner_sub=None, status="draft", created_by="a1")
+            self.store.review(record["id"], approve=True, reviewer_sub="a1", verified_at=TODAY)
+        stale = self.store.add({**base, "title": "Eski kriter"}, official=True, owner_sub=None, status="draft", created_by="a1")
+        self.store.review(stale["id"], approve=True, reviewer_sub="a1", verified_at=old)
+        with sqlite3.connect(self.store.path) as db:  # eski kayıt en eski oluşturulmuş sayılsın
+            db.execute("UPDATE risk_criteria SET created_at=1 WHERE id=?", (stale["id"],))
+        listed = self.store.list_for_review("approved", stale_only=True, limit=200)
+        self.assertEqual([item["title"] for item in listed], ["Eski kriter"])
+        self.assertEqual(self.store.summary()["stale"], 1)
