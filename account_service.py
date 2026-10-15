@@ -1086,6 +1086,11 @@ class AccountService:
             )
         return True
 
+    def admin_subscriber_summary(self, start: str, end: str) -> dict[str, Any]:
+        from subscriber_reporting import account_summary
+        with self._connect() as connection:
+            return account_summary(connection, start, end)
+
     def admin_overview(self) -> dict[str, Any]:
         with self._connect() as connection:
             users = connection.execute(

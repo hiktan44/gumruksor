@@ -1286,6 +1286,19 @@ async def web_add_consultation_message(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=422)
 
 
+@mcp.custom_route("/api/admin/subscriber-summary", methods=["GET"])
+async def web_admin_subscriber_summary(request: Request):
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    try:
+        data = account_service.admin_subscriber_summary(request.query_params.get("start"), request.query_params.get("end"))
+        return JSONResponse(data, headers={"Cache-Control": "private, no-store"})
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "INVALID_REPORT_PERIOD"}, status_code=400, headers={"Cache-Control": "no-store"})
+
+
 @mcp.custom_route("/api/admin/overview", methods=["GET"])
 async def web_admin_overview(request: Request):
     try:
