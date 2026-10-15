@@ -43,3 +43,18 @@ class CostExplanationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SurveillanceUpliftExplanationTests(unittest.TestCase):
+    def test_uplift_is_listed_and_components_sum_to_customs_value(self):
+        result = calculate_landed_cost(LandedCostInput(
+            invoice_value=1000, quantity=100, quantity_unit="kg", surveillance_unit_value=20,
+            surveillance_unit="kg", has_surveillance_certificate=False, customs_duty_rate=0,
+            additional_duty_rate=0, additional_financial_liability_rate=0, anti_dumping_amount=0,
+            kkdf_rate=0, vat_rate=20, sct_amount=0,
+        ))
+        line = result.lines[0]
+        parts = line["explanation"]["base_components"]
+        self.assertEqual(line["amount"], 2000.0)
+        self.assertAlmostEqual(sum(p["amount"] for p in parts), 2000.0, places=2)
+        self.assertTrue(any("Gözetim" in p["label"] for p in parts))

@@ -2238,8 +2238,12 @@ def _attach_explanations(lines: list[dict[str, Any]], data: "LandedCostInput", *
     def part(label: str, value: float | None) -> dict[str, Any]:
         return {"label": label, "amount": round(value, 2) if value is not None else None}
 
+    declared = data.invoice_value + data.freight + data.insurance
+    uplift = float(amount("customs_value") or declared) - declared
+
     components: dict[str, list[dict[str, Any]]] = {
-        "customs_value": [part("Fatura bedeli", data.invoice_value), part("Navlun", data.freight), part("Sigorta", data.insurance)],
+        "customs_value": [part("Fatura bedeli", data.invoice_value), part("Navlun", data.freight), part("Sigorta", data.insurance)]
+        + ([part("Gözetim düzeltmesi (birim kıymet eşiği)", uplift)] if uplift > 0.005 else []),
         "customs_duty": [part("Gümrük kıymeti", amount("customs_value"))],
         "additional_duty": [part("Gümrük kıymeti", amount("customs_value"))],
         "financial_liability": [part("Gümrük kıymeti", amount("customs_value"))],

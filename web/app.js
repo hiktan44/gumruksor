@@ -3529,7 +3529,7 @@ function renderWhy(line, currency) {
   const partRows = parts.map((part) => `<li><span>${escapeHtml(part.label)}</span><code>${numberFormat.format(part.amount)} ${escapeHtml(currency)}</code></li>`).join("");
   const sourceLabel = COST_SOURCE_LABELS[why.source] || COST_SOURCE_LABELS.unverified;
   return `<details class="why-line"><summary>Neden?</summary><div class="why-body">
-    <p><b>Matrah:</b> ${line.base == null ? "hesaplanamadı" : `${numberFormat.format(line.base)} ${escapeHtml(currency)}`}${line.formula ? ` · <code>${escapeHtml(line.formula)}</code>` : ""}</p>
+    <p><b>Matrah:</b> ${line.base != null ? `${numberFormat.format(line.base)} ${escapeHtml(currency)}` : line.code === "customs_value" && line.amount != null ? `${numberFormat.format(line.amount)} ${escapeHtml(currency)} (gümrük kıymetinin kendisi)` : line.amount != null ? "Yüzde matrahı yok; sabit tutar" : "hesaplanamadı"}${line.formula ? ` · <code>${escapeHtml(line.formula)}</code>` : ""}</p>
     ${partRows ? `<ul class="why-parts">${partRows}</ul>` : ""}
     <p><b>Oran kaynağı:</b> <span class="why-source why-source-${escapeHtml(why.source)}">${escapeHtml(sourceLabel)}</span>${why.source_detail ? `<br><small>${escapeHtml(why.source_detail)}</small>` : ""}</p>
     <p><b>Yasal dayanak:</b> ${escapeHtml(why.legal_basis || "Dayanak kaydı yok")}</p>
