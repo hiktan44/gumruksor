@@ -3249,7 +3249,11 @@ async def calculate_import_landed_cost(
     sct_amount: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Doğrulanmış ÖTV toplamı; uygulanmadığı doğrulandıysa 0."),
     surveillance_unit_value: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Gözetim birim kıymeti; uygulanmadığı doğrulandıysa 0."),
     has_surveillance_certificate: Optional[bool] = Field(None),
-    payment_method: Optional[str] = Field(None, max_length=100, description="Ödeme şekli (peşin, mal mukabili, vadeli akreditif, kredili...); KKDF önerisi için."),
+    surveillance_currency: str = Field("USD", min_length=3, max_length=3, description="Gözetim eşiğinin para birimi (tebliğde çoğunlukla USD)."),
+    surveillance_cross_rate: Optional[float] = Field(None, gt=0, le=1_000_000, description="Eşik dövizi fatura dövizinden farklıysa: 1 birim eşik dövizi = kaç birim fatura dövizi."),
+    surveillance_unit: Optional[str] = Field(None, max_length=20, description="Gözetim eşiğinin birimi (kg, ton, adet)."),
+    quantity_unit: Optional[str] = Field(None, max_length=20, description="Miktarın birimi (kg, ton, adet)."),
+    payment_method: Optional[str] = Field(None, max_length=100, description="Ödeme şekli veya beyanname ödeme kodu (2 peşin, 1 mal mukabili, 6 vadeli akreditif, 14-16 kabul kredili...); KKDF önerisi için."),
     dispatch_country: Optional[str] = Field(None, max_length=100, description="Sevk/çıkış ülkesi menşeden farklıysa (A.TR/serbest dolaşım değerlendirmesi)."),
     atr_certificate: Optional[bool] = Field(None, description="Sevk AB'den ise A.TR dolaşım belgesi ibraz edilecek mi? Teyit edilmeden serbest dolaşım sütunu uygulanmaz."),
     customs_duty_rate: Optional[float] = Field(None, ge=0, le=1000, description="Yalnızca kullanıcıca doğrulanmış gümrük vergisi oranı; resmî orandan farklıysa uyarı döner."),
@@ -3261,6 +3265,7 @@ async def calculate_import_landed_cost(
     stamp_duty_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Beyanname damga vergisi (TL, maktu)."),
     port_storage_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="Tescile kadar liman/ardiye/tahmil-tahliye giderleri (TL)."),
     gekap_try: Optional[float] = Field(None, ge=0, le=1_000_000_000, description="GEKAP tutarı (TL, beyanla ödenir)."),
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Beyanname tescil/yükümlülük tarihi (YYYY-AA-GG); o gün geçerli resmî tarife sürümü kullanılır. Boşsa bugün."),
 ) -> dict:
     """Calculate a reproducible landed cost with official safe-to-use tariff rates.
 
@@ -3286,6 +3291,10 @@ async def calculate_import_landed_cost(
             sct_amount=sct_amount,
             surveillance_unit_value=surveillance_unit_value,
             has_surveillance_certificate=has_surveillance_certificate,
+            surveillance_currency=surveillance_currency,
+            surveillance_cross_rate=surveillance_cross_rate,
+            surveillance_unit=surveillance_unit,
+            quantity_unit=quantity_unit,
             payment_method=payment_method,
             customs_duty_rate=customs_duty_rate,
             additional_duty_rate=additional_duty_rate,

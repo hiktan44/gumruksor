@@ -20,6 +20,8 @@ from xml.etree import ElementTree
 
 import httpx
 
+from temporal import today_local
+
 TCMB_TODAY_URL = "https://www.tcmb.gov.tr/kurlar/today.xml"
 TCMB_ARCHIVE_URL = "https://www.tcmb.gov.tr/kurlar/{yyyymm}/{ddmmyyyy}.xml"
 LEGAL_BASIS = "4458 sayılı Gümrük Kanunu md. 30 – tescil tarihinde yürürlükte olan TCMB döviz satış kuru"
@@ -205,7 +207,7 @@ class ExchangeRateService:
     async def customs_quote(self, currency: str, registration_date: date | None = None) -> dict:
         """Gümrük kıymeti için kullanılacak kur ve dayanağı."""
         code = normalise_currency(currency)
-        target = registration_date or date.today()
+        target = registration_date or today_local()
         bulletin = await self.bulletin_in_force(target)
         quote = bulletin.quote(code)
         rate = quote.customs_rate

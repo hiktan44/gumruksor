@@ -94,6 +94,8 @@ class ScenarioOutcome:
 
 
 def _engine_says_not_applicable(row: dict[str, Any], measure_type: str) -> bool:
+    if measure_type in (row.get("not_applicable_measures") or []):
+        return True
     markers = _NOT_APPLICABLE_MARKERS.get(measure_type, ())
     return any(marker in str(warning) for warning in row.get("warnings") or [] for marker in markers)
 

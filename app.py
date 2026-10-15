@@ -3982,8 +3982,17 @@ async def web_tariff_bulk(request: Request):
             rows = body.get("rows")
             if not isinstance(rows, list) or not rows or not all(isinstance(item, dict) for item in rows):
                 raise ValueError("En az bir satır gönderin (rows) veya bir CSV/XLSX dosyası yükleyin.")
-        result = await bulk_calculate_rows(tariff_engine, rows)
+        as_of = _as_of_param(request, body)
+        atr_certificate = body.get("atr_certificate")
+        if atr_certificate is not None and not isinstance(atr_certificate, bool):
+            raise ValueError("atr_certificate true/false olmalıdır.")
+        result = await bulk_calculate_rows(tariff_engine, rows, as_of=as_of, atr_certificate=atr_certificate)
+        result["as_of"] = as_of
         return JSONResponse(result)
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except (ValueError, ValidationError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
@@ -4058,14 +4067,15 @@ async def web_tariff_savings(request: Request):
         if not isinstance(cost_body, dict):
             raise ValueError("Tasarruf önerisi için maliyet girdileri (cost) gereklidir; en az fatura bedelini girin.")
         cost_input = LandedCostInput.model_validate(cost_body)
+        as_of = _as_of_param(request, body)
         rows = await build_origin_scenarios(
-            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate
+            tariff_engine, gtip, origins, dispatch_country=dispatch, atr_certificate=atr_certificate, as_of=as_of
         )
         atr_rows = None
         atr_origins = [row["origin_country"] for row in rows if row.get("atr_available") and not row.get("atr_free_circulation")]
         if atr_origins and atr_certificate is not True:
             atr_rows = await build_origin_scenarios(
-                tariff_engine, gtip, atr_origins, dispatch_country=dispatch, atr_certificate=True
+                tariff_engine, gtip, atr_origins, dispatch_country=dispatch, atr_certificate=True, as_of=as_of
             )
         outcomes = evaluate_scenarios(rows, cost_input, atr_rows=atr_rows, atr_certificate=atr_certificate)
         ranking = rank_savings(outcomes, baseline_origin)
@@ -4079,12 +4089,17 @@ async def web_tariff_savings(request: Request):
                 "atr_certificate": atr_certificate,
                 "baseline_origin": baseline_origin,
                 "baseline_note": baseline_note,
+                "as_of": as_of,
                 "currency": cost_input.currency,
                 "rows_evaluated": len(outcomes),
                 **ranking,
                 "generated_at": time.time(),
             }
         )
+    except FeatureNotAvailable as exc:
+        return _feature_error(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
     except ValidationError as exc:
         message = exc.errors(include_url=False)[0].get("msg", "Alanları kontrol edin.")
         return JSONResponse({"error": f"Maliyet girdileri doğrulanamadı: {message}"}, status_code=422)

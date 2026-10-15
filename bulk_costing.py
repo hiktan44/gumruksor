@@ -42,6 +42,7 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "sct_amount": ("otv", "otv tutari", "sct"),
     "surveillance_unit_value": ("gozetim", "gozetim kiymeti", "gozetim birim kiymeti", "surveillance"),
     "has_surveillance_certificate": ("gozetim belgesi", "surveillance certificate"),
+    "atr_certificate": ("atr", "a tr", "atr belgesi", "a tr belgesi", "atr certificate"),
     "additional_financial_liability_rate": ("emy", "ek mali yukumluluk", "ek mali yukumluluk orani"),
     "customs_duty_rate": ("gv", "gumruk vergisi", "gumruk vergisi orani", "customs duty"),
     "additional_duty_rate": ("igv", "ilave gumruk vergisi", "additional duty"),
@@ -78,20 +79,43 @@ def normalise_header(value: Any) -> str:
     return " ".join(text.split())
 
 
-def parse_number(value: Any) -> float | None:
-    """Accept 1.234,56 / 1234.56 / 12.500 / 12,5; empty → None."""
+# Oran ve kur alanlarında "41.250" binlik değil ondalık okunur (KDV %41.250 veya kur 41250 TL
+# anlamsızdır); tutar alanlarında Türkçe binlik ayırıcı kuralı korunur ve uyarı üretilir.
+_DECIMAL_DOT_FIELDS = frozenset({
+    "exchange_rate", "vat_rate", "kkdf_rate", "customs_duty_rate", "additional_duty_rate",
+    "additional_financial_liability_rate", "trt_bandrol_rate",
+})
+_DOT_THOUSANDS_RE = re.compile(r"-?\d{1,3}(\.\d{3})+")
+
+
+def _clean_number_text(value: Any) -> str:
+    return re.sub(r"[\s₺$€£%]|TL|USD|EUR|GBP", "", str(value), flags=re.IGNORECASE)
+
+
+def is_ambiguous_number(value: Any) -> bool:
+    """"12.500" gibi yalnız noktalı ve noktadan sonra tam üç hane: binlik mi ondalık mı belirsiz."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return False
+    return bool(_DOT_THOUSANDS_RE.fullmatch(_clean_number_text(value)))
+
+
+def parse_number(value: Any, *, dot_is_decimal: bool = False) -> float | None:
+    """Accept 1.234,56 / 1234.56 / 12.500 / 12,5; empty → None.
+
+    ``dot_is_decimal`` oran/kur alanları içindir: "41.250" → 41.25.
+    """
     if value is None:
         return None
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return float(value)
-    text = re.sub(r"[\s₺$€£%]|TL|USD|EUR|GBP", "", str(value), flags=re.IGNORECASE)
+    text = _clean_number_text(value)
     if not text:
         return None
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
-    elif re.fullmatch(r"-?\d{1,3}(\.\d{3})+", text):
+    elif not dot_is_decimal and _DOT_THOUSANDS_RE.fullmatch(text):
         text = text.replace(".", "")
     try:
         return float(text)
@@ -160,18 +184,28 @@ def rows_from_table(table: list[list[Any]]) -> list[dict[str, Any]]:
     mapping = _map_headers(cleaned[0])
     if "gtip" not in mapping.values():
         raise ValueError("Başlık satırında GTİP sütunu bulunamadı (kabul edilen adlar: GTİP, HS, tarife kodu).")
+    invoice_is_fob = any(
+        field == "invoice_value" and normalise_header(cleaned[0][index]).startswith("fob")
+        for index, field in mapping.items()
+    )
     rows: list[dict[str, Any]] = []
     for line_number, raw in enumerate(cleaned[1:], start=2):
         row: dict[str, Any] = {"line": line_number}
         for index, field in mapping.items():
             value = raw[index] if index < len(raw) else None
             if field in _NUMERIC_FIELDS:
-                row[field] = parse_number(value)
-            elif field == "has_surveillance_certificate":
+                row[field] = parse_number(value, dot_is_decimal=field in _DECIMAL_DOT_FIELDS)
+                if field not in _DECIMAL_DOT_FIELDS and is_ambiguous_number(value):
+                    row.setdefault("_notes", []).append(_ambiguity_note(field, value, row[field]))
+            elif field in {"has_surveillance_certificate", "atr_certificate"}:
                 row[field] = parse_bool(value)
             else:
                 text = str(value or "").strip()
                 row[field] = text or None
+        if invoice_is_fob and not row.get("freight") and not row.get("insurance"):
+            row.setdefault("_notes", []).append(
+                "Bedel sütunu FOB; navlun ve sigorta boş olduğu için gümrük kıymeti (CIF) eksik hesaplanmış olabilir."
+            )
         rows.append(row)
         if len(rows) > MAX_ROWS:
             raise ValueError(f"En fazla {MAX_ROWS} satır hesaplanabilir.")
@@ -190,19 +224,34 @@ def template_csv() -> str:
     return "﻿" + output.getvalue()
 
 
+def _ambiguity_note(field: str, raw: Any, parsed: float | None) -> str:
+    shown = f"{parsed:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if parsed is not None else "?"
+    return (
+        f"'{field}' alanındaki '{str(raw).strip()}' Türkçe binlik biçimle {shown} okundu; "
+        "ondalık kastedildiyse virgül kullanın (ör. 12,5)."
+    )
+
+
 def _clean_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Split a request row into (context, LandedCostInput kwargs)."""
+    notes: list[str] = [str(note) for note in row.get("_notes") or []]
     context = {
         "line": int(row.get("line") or 0) or None,
         "gtip": str(row.get("gtip") or "").strip(),
         "origin_country": str(row.get("origin_country") or "").strip()[:100],
         "dispatch_country": (str(row.get("dispatch_country") or "").strip()[:100] or None),
         "description": (str(row.get("description") or "").strip()[:200] or None),
+        "notes": notes,
     }
     payload: dict[str, Any] = {}
     for field in _NUMERIC_FIELDS:
-        value = row.get(field)
-        value = parse_number(value) if not isinstance(value, (int, float)) or isinstance(value, bool) else float(value)
+        raw = row.get(field)
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            value = parse_number(raw, dot_is_decimal=field in _DECIMAL_DOT_FIELDS)
+            if field not in _DECIMAL_DOT_FIELDS and is_ambiguous_number(raw):
+                notes.append(_ambiguity_note(field, raw, value))
+        else:
+            value = float(raw)
         if value is None and field in _DEFAULT_ZERO:
             value = 0.0
         if value is not None:
@@ -222,13 +271,26 @@ def _clean_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     return context, payload
 
 
-async def calculate_rows(engine: TariffEngine, rows: list[dict[str, Any]]) -> dict[str, Any]:
+async def calculate_rows(
+    engine: TariffEngine,
+    rows: list[dict[str, Any]],
+    *,
+    as_of: str | None = None,
+    atr_certificate: bool | None = None,
+) -> dict[str, Any]:
+    """``as_of`` (tescil tarihi) ve ``atr_certificate`` tek satır hesabındaki gibi motora iletilir.
+
+    Satırda "A.TR" sütunu varsa o satır için istek düzeyindeki değeri ezer.
+    """
     if len(rows) > MAX_ROWS:
         raise ValueError(f"En fazla {MAX_ROWS} satır hesaplanabilir.")
     results: list[dict[str, Any]] = []
     totals: dict[str, dict[str, Any]] = {}
     for position, row in enumerate(rows, start=1):
         context, payload = _clean_row(row)
+        notes = context.pop("notes", [])
+        row_atr = row.get("atr_certificate")
+        row_atr = parse_bool(row_atr) if row_atr is not None and not isinstance(row_atr, bool) else row_atr
         item: dict[str, Any] = {"index": position, **context, "status": "error", "currency": payload.get("currency")}
         try:
             if not context["gtip"]:
@@ -237,7 +299,12 @@ async def calculate_rows(engine: TariffEngine, rows: list[dict[str, Any]]) -> di
                 raise ValueError("Menşe ülke boş.")
             inputs = LandedCostInput.model_validate(payload)
             result = await engine.calculate(
-                context["gtip"], context["origin_country"], inputs, dispatch_country=context["dispatch_country"]
+                context["gtip"],
+                context["origin_country"],
+                inputs,
+                dispatch_country=context["dispatch_country"],
+                atr_certificate=row_atr if row_atr is not None else atr_certificate,
+                as_of=as_of,
             )
         except ValidationError as exc:
             item["error"] = "Girdi doğrulanamadı: " + exc.errors(include_url=False)[0].get("msg", "alanları kontrol edin")
@@ -268,7 +335,10 @@ async def calculate_rows(engine: TariffEngine, rows: list[dict[str, Any]]) -> di
                 "total_taxes_try": (cost.get("try_summary") or {}).get("total_taxes_try"),
                 "missing_rates": cost.get("missing_rates", []),
                 "rate_overrides": cost.get("rate_overrides", []),
-                "warnings": [w for w in [*tariff.get("warnings", []), *cost.get("warnings", [])] if "kapsam matrisi" not in w][:4],
+                "warnings": [
+                    *notes,
+                    *[w for w in [*tariff.get("warnings", []), *cost.get("warnings", [])] if "kapsam matrisi" not in w][:4],
+                ],
             }
         )
         bucket = totals.setdefault(

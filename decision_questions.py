@@ -22,6 +22,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from payment_terms import classify_payment_method
+
 QUESTION_SET_VERSION = "tr-import-decisions-v1"
 
 # Answer values shared by the yes/no questions.
@@ -106,12 +108,7 @@ def _live_hits(report: dict[str, Any], kind: str) -> list[dict[str, Any]]:
 
 def _payment_known(value: Any) -> bool:
     """True when the payment method text already decides the KKDF rate."""
-    key = _text(value).casefold().replace("ı", "i")
-    if not key:
-        return False
-    if any(token in key for token in ("mal mukabili", "vadeli", "kredi")):
-        return True
-    return "pesin" in key or "peşin" in key
+    return classify_payment_method(_text(value)) is not None
 
 
 # --------------------------------------------------------------------------- questions
