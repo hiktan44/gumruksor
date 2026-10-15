@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -173,3 +174,35 @@ class TurkishOrderTests(unittest.TestCase):
 
         words = ["zeytin", "çay", "ısı", "ipek", "şeker", "ceviz", "ütü", "oda", "öğrenci"]
         self.assertEqual(sorted(words, key=_turkish_order), ["ceviz", "çay", "ısı", "ipek", "oda", "öğrenci", "şeker", "ütü", "zeytin"])
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_turkish_uppercase_descriptions_are_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = btb.BtbStore(tmp)
+            rows = btb.parse_list(list_page([
+                {"no": "TR160000260001", "gtip": "170199100000", "desc": "ŞEKER pancarı", "date": "01/10/2026"},
+                {"no": "TR160000260002", "gtip": "500400000000", "desc": "İPEK iplik", "date": "02/10/2026"},
+            ]))
+            store.apply_full_sync(rows)
+            self.assertEqual([r["btb_no"] for r in store.search("şeker")], ["TR160000260001"])
+            self.assertEqual([r["btb_no"] for r in store.search("ipek")], ["TR160000260002"])
+            self.assertEqual([r["btb_no"] for r in store.search("İPEK")], ["TR160000260002"])
+
+    def test_all_upstream_requests_share_one_pacing_lock(self):
+        stamps = []
+
+        class Http:
+            async def get(self, url, **kwargs):
+                stamps.append(time.monotonic())
+                return type("R", (), {"text": ""})()
+
+        async def run(engine):
+            await asyncio.gather(*(engine._request("get", "https://x") for _ in range(3)))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = btb.BtbEngine(tmp, http=Http(), delay=0.2)
+            asyncio.run(run(engine))
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        self.assertEqual(len(stamps), 3)
+        self.assertTrue(all(gap >= 0.18 for gap in gaps), gaps)

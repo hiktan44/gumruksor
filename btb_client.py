@@ -31,6 +31,8 @@ from typing import Any
 
 import httpx
 
+from turkish_text import fold
+
 logger = logging.getLogger(__name__)
 
 BASE = "https://uygulama.gtb.gov.tr/BTBBasvuru/"
@@ -182,23 +184,31 @@ class BtbStore:
         return self._public(row) if row else None
 
     def search(self, query: str = "", gtip_prefix: str = "", *, limit: int = 20) -> list[dict[str, Any]]:
+        """GTİP öneki SQL'de, sözcük eşleşmesi Türkçe duyarlı ``fold`` ile bellekte yapılır.
+
+        SQLite ``LOWER()`` yalnız ASCII'yi küçültür; "Şeker"/"İPEK" gibi büyük harfli resmî tanımlar
+        bu yüzden kaçardı. Geçerli kayıt sayısı birkaç bin olduğundan bellek içi süzme yeterlidir.
+        """
         limit = max(1, min(int(limit), 50))
         digits = re.sub(r"\D", "", gtip_prefix or "")
-        terms = [t for t in re.findall(r"\w{3,}", (query or "").casefold()) if not t.isdigit()][:8]
-        clauses, params = ["missed_syncs < 2"], []  # type: list[str], list[Any]
-        if digits:
-            clauses.append("gtip LIKE ?")
-            params.append(digits + "%")
-        for term in terms:
-            clauses.append("(LOWER(description_excerpt) LIKE ? OR LOWER(description_full) LIKE ? OR LOWER(reasoning) LIKE ?)")
-            params.extend([f"%{term}%"] * 3)
+        terms = [t for t in re.findall(r"\w{3,}", fold(query or "")) if not t.isdigit()][:8]
         if not digits and not terms:
             return []
+        sql, params = "SELECT * FROM btb_rulings WHERE missed_syncs < 2", []  # type: str, list[Any]
+        if digits:
+            sql += " AND gtip LIKE ?"
+            params.append(digits + "%")
+        sql += " ORDER BY valid_from DESC"
         with self._connect() as db:
-            rows = db.execute(
-                f"SELECT * FROM btb_rulings WHERE {' AND '.join(clauses)} ORDER BY valid_from DESC LIMIT ?", (*params, limit)
-            ).fetchall()
-        return [self._public(row) for row in rows]
+            rows = db.execute(sql, params).fetchall()
+        matches = []
+        for row in rows:
+            haystack = fold(f"{row['description_excerpt']} {row['description_full']} {row['reasoning']}")
+            if all(term in haystack for term in terms):
+                matches.append(self._public(row))
+                if len(matches) >= limit:
+                    break
+        return matches
 
     def status(self) -> dict[str, Any]:
         with self._connect() as db:
@@ -219,6 +229,19 @@ class BtbEngine:
         self.delay = delay
         self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), headers={"User-Agent": USER_AGENT})
         self._sync_lock = asyncio.Lock()
+        # Bakanlık sitesine giden TÜM istekler (eşitleme + ayrıntı) tek kilitte ve en az ``delay`` aralıkla gider.
+        self._pace_lock = asyncio.Lock()
+        self._last_request = 0.0
+
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        async with self._pace_lock:
+            wait = self._last_request + self.delay - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                return await getattr(self._http, method)(url, **kwargs)
+            finally:
+                self._last_request = time.monotonic()
 
     async def sync(self) -> dict[str, Any]:
         """Tüm geçerli kayıt listesini okur. Eksik/bozuk okumada hiçbir şey yazılmaz."""
@@ -247,7 +270,7 @@ class BtbEngine:
         Bitiş koşulu, mevcut sayfanın pager'ında bir sonraki sayfa bağlantısının bulunmamasıdır;
         hata kodlarına dayanılmaz, böylece geçici bir 5xx listeyi sessizce kısaltmaz.
         """
-        response = await self._http.get(LIST_URL)
+        response = await self._request("get", LIST_URL)
         response.raise_for_status()
         page, collected = response.text, []
         for number in range(1, MAX_PAGES + 1):
@@ -259,8 +282,7 @@ class BtbEngine:
                 break
             form = hidden_fields(page)
             form.update({"__EVENTTARGET": GRID, "__EVENTARGUMENT": f"Page${number + 1}"})
-            await asyncio.sleep(self.delay)
-            response = await self._http.post(LIST_URL, data=form)
+            response = await self._request("post", LIST_URL, data=form)
             response.raise_for_status()
             page = response.text
         else:
@@ -276,19 +298,19 @@ class BtbEngine:
             return None
         if not record["description_is_excerpt"] and record["reasoning"]:
             return record
-        page = (await self._http.get(SEARCH_URL)).text
+        page = (await self._request("get", SEARCH_URL)).text
         form = hidden_fields(page)
         fields = {k: "" for k in ("txtGbastar", "txtGtip", "txtSinger", "txtEsya")}
         form.update({f"ctl00$ContentPlaceHolder1${k}": v for k, v in fields.items()})
         form.update({"ctl00$ContentPlaceHolder1$txtBtbno": btb_no, "ctl00$ContentPlaceHolder1$btnBul": "BUL"})
-        listed = await self._http.post(SEARCH_URL, data=form)
+        listed = await self._request("post", SEARCH_URL, data=form)
         listed.raise_for_status()
         if btb_no not in listed.text:
             return record
         form = hidden_fields(listed.text)
         form.update({f"ctl00$ContentPlaceHolder1${k}": v for k, v in fields.items()})
         form.update({"__EVENTTARGET": f"{GRID}$ctl02$btn", "__EVENTARGUMENT": "", "ctl00$ContentPlaceHolder1$txtBtbno": btb_no})
-        detail_page = await self._http.post(SEARCH_URL, data=form)
+        detail_page = await self._request("post", SEARCH_URL, data=form)
         detail_page.raise_for_status()
         detail = parse_detail(detail_page.text)
         if detail is None:
