@@ -1,0 +1,9 @@
+{
+  "projectId": "497b5c81-c4ee-4439-94eb-34dbcfaf2f3c",
+  "type": "frontend",
+  "name": "Kullanım koşulları sayfası açılır",
+  "planSteps": [
+    {"type":"action","description":"https://gumruksor.com/kullanim-kosullari adresine git"},
+    {"type":"assertion","description":"Sayfada 'Kullanım Koşulları' başlığı veya koşullarla ilgili metin görünür"}
+  ]
+}

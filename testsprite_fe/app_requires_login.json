@@ -1,0 +1,9 @@
+{
+  "projectId": "497b5c81-c4ee-4439-94eb-34dbcfaf2f3c",
+  "type": "frontend",
+  "name": "Uygulama girişsiz açıldığında Google ile giriş istenir",
+  "planSteps": [
+    {"type":"action","description":"https://gumruksor.com/app adresine git"},
+    {"type":"assertion","description":"Giriş yapılmadığı için sayfa bir giriş ekranı veya 'Google ile giriş' seçeneği gösterir; korumalı uygulama içeriği (hesap/panel) görünmez"}
+  ]
+}
