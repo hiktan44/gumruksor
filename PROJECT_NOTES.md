@@ -2,6 +2,29 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — Külliyat PR3: BTB (TR) arama + eşya fihristi (dal `feat/kulliyat-btb-fihrist`, PR2 üstünde)
+
+- Kaynak: Ticaret Bakanlığı BTB Başvuru Sistemi, halka açık ekranlar (`uygulama.gtb.gov.tr/BTBBasvuru`:
+  `Btbler` geçerli kayıt listesi, `BtbWebArama` ayrıntı). robots.txt yok (404). ASP.NET WebForms:
+  sayfalama `__doPostBack` ile, olay doğrulaması yalnız o anki sayfanın pager bağlantılarını kabul eder;
+  bu yüzden sayfalar zincirleme gezilir, bitiş = pager'da sonraki sayfa bağlantısı yok.
+  Canlı tam eşitleme: **2.445 geçerli BTB**, ~2 dk, 1 istek/sn.
+- **Düzeltme (KULLIYAT_GOREV.md PR5 notu yanlış):** TR BTB'de görsel VAR. "Fotoğraf Görünümü" ve
+  `grdpht.ashx?ImID=<BTB no>` JPEG döndürür (ölçüldü: image/jpeg, ~2,3 MB). Bu PR yalnız adresi üretir
+  ve "Resmî fotoğraf" bağlantısı verir; dosya indirilmez/saklanmaz. PR5 bunu kullanmalı (lisans/kullanım
+  koşulu kontrolü hâlâ gerekli).
+- `btb_client.py`: `BtbStore` (SQLite `btb_rulings`), `BtbEngine.sync` (haftalık döngü `btb-sync`,
+  `BTB_SYNC_ENABLED=0` ile kapanır), `fetch_detail` (tam tanım + sınıflandırma gerekçesi, talep üzerine
+  bir kez alınıp saklanır). Liste tanımı ~25 karakterde kesik gelir ("kısaltılmış" etiketi). Liste %80'in
+  altına düşerse eşitleme uygulanmaz; iki eşitlemede görünmeyen kayıt pasif olur, silinmez.
+- API: `GET /api/btb/search` (TR BTB + AB EBTI + resmî eşya tanımı yan yana; EBTI `foreign_tariff` kilidine
+  tabi), `GET /api/btb/{no}`, `GET /api/btb/status`, `GET /api/fihrist` (6 haneli alt pozisyonlar, Türkçe
+  alfabe sırası, oran vermez).
+- Ekran: "BTB / Fihrist" sekmesi (üç sütun, "Gerekçeyi göster", "Resmî fotoğraf", A-Z fihrist, "Vergi
+  hesabında kullan").
+- Testler: `tests/test_btb_client.py` (15, ağsız). Tam paket TZ=UTC hatasız.
+- Sıradaki: PR4 Eğitim + Mütalaa, PR5 görseller (TR BTB fotoğrafı dahil).
+
 ## 15 Ekim 2026 — Külliyat PR2: Risk ön kontrolü (dal `feat/kulliyat-risk-kontrol`, PR1 dalının üstünde)
 
 - Rapor: "Gümrük Külliyatı REA İncelemesi" (14 Ekim); eksik özellik listesi `KULLIYAT_GOREV.md` ile aynı.

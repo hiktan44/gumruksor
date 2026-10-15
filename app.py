@@ -55,6 +55,7 @@ from mevzuat_mcp_server import (
     excise_tax_index,
     exchange_rate_service,
     eylemio_client,
+    btb_engine,
     ebti_engine,
     eu_taric_engine,
     foreign_tariff_engine,
@@ -3319,6 +3320,83 @@ async def web_risk_criteria_delete(request: Request):
     if not removed:
         return JSONResponse({"error": "Not bulunamadı veya size ait değil."}, status_code=404)
     return JSONResponse({"deleted": True})
+
+
+@mcp.custom_route("/api/btb/search", methods=["GET"])
+async def web_btb_search(request: Request):
+    """TR BTB, AB EBTI ve resmî eşya tanımı sonuçları yan yana (oran döndürmez)."""
+    limited = _rate_limit_response(request, "btb-search", limit=40, window_seconds=60)
+    if limited:
+        return limited
+    query = str(request.query_params.get("q", "")).strip()[:200]
+    gtip = re.sub(r"\D", "", request.query_params.get("gtip", ""))[:12]
+    try:
+        limit = max(1, min(int(request.query_params.get("limit") or 12), 30))
+    except ValueError:
+        return JSONResponse({"error": "Geçersiz sınır."}, status_code=422)
+    if not query and len(gtip) < 4:
+        return JSONResponse({"error": "Eşya adı veya en az 4 haneli GTİP girin."}, status_code=422)
+    turkey = btb_engine.store.search(query, gtip, limit=limit)
+    nomenclature = nomenclature_engine.search(query, limit=limit, code_prefix=gtip) if (query or gtip) else {"hits": []}
+    eu: dict[str, Any]
+    try:
+        require_feature(request, "foreign_tariff")
+        eu = ebti_engine.search(query, code_prefix=gtip or None, limit=limit).as_dict()
+    except (FeatureNotAvailable, AuthError) as exc:
+        eu = {"status": "locked", "message": str(exc), "hits": []}
+    except ValueError as exc:
+        eu = {"status": "invalid", "message": str(exc), "hits": []}
+    return JSONResponse(
+        {
+            "query": query, "gtip": gtip, "turkey_btb": turkey, "turkey_btb_status": btb_engine.store.status(),
+            "eu_ebti": eu, "nomenclature": nomenclature,
+            "notice": "AB BTB kararları Türkiye'de bağlayıcı değildir; karşılaştırmalı sınıflandırma kanıtıdır. Türkiye BTB'si yalnız kendi başvuru sahibini ve bildirilen eşyayı bağlar.",
+        },
+        headers={"Cache-Control": "private, max-age=120"},
+    )
+
+
+@mcp.custom_route("/api/btb/status", methods=["GET"])
+async def web_btb_status(request: Request):
+    limited = _rate_limit_response(request, "btb-status", limit=30, window_seconds=60)
+    if limited:
+        return limited
+    return JSONResponse(btb_engine.store.status())
+
+
+@mcp.custom_route("/api/fihrist", methods=["GET"])
+async def web_fihrist(request: Request):
+    """Eşya fihristi: eşya adına göre alfabetik 6 haneli pozisyonlar."""
+    limited = _rate_limit_response(request, "fihrist", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        result = nomenclature_engine.alphabetical_index(
+            str(request.query_params.get("letter", ""))[:1],
+            limit=int(request.query_params.get("limit") or 100),
+            offset=int(request.query_params.get("offset") or 0),
+        )
+    except ValueError:
+        return JSONResponse({"error": "Geçersiz sayfalama değeri."}, status_code=422)
+    return JSONResponse(result, headers={"Cache-Control": "public, max-age=600"})
+
+
+@mcp.custom_route("/api/btb/{btb_no}", methods=["GET"])
+async def web_btb_detail(request: Request):
+    """Tek BTB kaydı; tam tanım ve gerekçe ilk istekte Bakanlık ekranından alınıp saklanır."""
+    limited = _rate_limit_response(request, "btb-detail", limit=20, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        record = await btb_engine.fetch_detail(str(request.path_params.get("btb_no", "")).upper())
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("BTB detail failed")
+        return JSONResponse({"error": "Bakanlık BTB ekranı şu anda okunamadı."}, status_code=502)
+    if record is None:
+        return JSONResponse({"error": "Kayıt bulunamadı."}, status_code=404)
+    return JSONResponse(record, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @mcp.custom_route("/api/foreign/tariff", methods=["GET"])

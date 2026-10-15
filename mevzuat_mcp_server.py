@@ -4,6 +4,7 @@ FastMCP server for mevzuat.gov.tr (direct API).
 Supports searching and PDF content extraction for Kanun (laws).
 """
 import asyncio
+import os
 import logging
 import numpy as np
 from contextlib import asynccontextmanager
@@ -57,6 +58,7 @@ from foreign_tariff import (
     UK_MEASURES_ARCHIVE_ENABLED,
     ForeignTariffEngine,
 )
+from btb_client import BtbEngine
 from ebti_decisions import SYNC_ENABLED as EBTI_SYNC_ENABLED, EbtiDecisionEngine
 from access2markets import A2M_FILL_ENABLED, Access2MarketsEngine
 from ictihat import (
@@ -120,6 +122,9 @@ classification_engine = ClassificationEvidenceEngine()
 foreign_tariff_engine = ForeignTariffEngine()
 # AB Bağlayıcı Tarife Bilgisi kararları (resmî günlük yayın akışı).
 ebti_engine = EbtiDecisionEngine()
+# Türkiye BTB kararları: Bakanlığın halka açık geçerli kayıt listesi (haftalık, düşük hızlı okuma).
+btb_engine = BtbEngine()
+BTB_SYNC_ENABLED = os.environ.get("BTB_SYNC_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 # AB TARIC oranları: sorgu başına ücretli dış kaynak; talep üzerine ve tavanlı toplu dolumla.
 eu_taric_engine = EuTaricEngine(
     # Aday AB kodları Türk tarife cetvelinden türetilir: GTİP'in ilk 10 hanesi AB TARIC kodudur.
@@ -242,6 +247,12 @@ _register_loop(
     ebti_engine.periodic_sync_loop,
     enabled=EBTI_SYNC_ENABLED,
     reason="EBTI_SYNC_ENABLED kapalı.",
+)
+_register_loop(
+    "btb-sync",
+    btb_engine.periodic_sync_loop,
+    enabled=BTB_SYNC_ENABLED,
+    reason="BTB_SYNC_ENABLED kapalı.",
 )
 # BK oranları yalnız emtia başına yayımlanıyor; arşiv kaynağı yormadan kademeli dolar.
 _register_loop(
