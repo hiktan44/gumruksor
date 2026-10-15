@@ -3513,13 +3513,37 @@ function validityBadgeHtml(result) {
   return ` <span class="validity-badge validity-${escapeHtml(result.validity_basis)}" title="${escapeHtml(title)}">${escapeHtml(label)}${when}</span>`;
 }
 
+const COST_SOURCE_LABELS = {
+  user_input: "Kullanıcı girişi",
+  official_tariff: "Resmî tarife satırı",
+  official_not_applicable: "Resmî listede doğrulanmış uygulanmazlık (%0)",
+  payment_method_suggestion: "Ödeme şekline göre öneri; doğrulayın",
+  declared_values: "Beyan edilen fatura, navlun ve sigorta",
+  unverified: "Doğrulanmadı",
+};
+
+function renderWhy(line, currency) {
+  const why = line.explanation;
+  if (!why) return "";
+  const parts = (why.base_components || []).filter((part) => part.amount != null && part.amount !== 0);
+  const partRows = parts.map((part) => `<li><span>${escapeHtml(part.label)}</span><code>${numberFormat.format(part.amount)} ${escapeHtml(currency)}</code></li>`).join("");
+  const sourceLabel = COST_SOURCE_LABELS[why.source] || COST_SOURCE_LABELS.unverified;
+  return `<details class="why-line"><summary>Neden?</summary><div class="why-body">
+    <p><b>Matrah:</b> ${line.base != null ? `${numberFormat.format(line.base)} ${escapeHtml(currency)}` : line.code === "customs_value" && line.amount != null ? `${numberFormat.format(line.amount)} ${escapeHtml(currency)} (gümrük kıymetinin kendisi)` : line.amount != null ? "Yüzde matrahı yok; sabit tutar" : "hesaplanamadı"}${line.formula ? ` · <code>${escapeHtml(line.formula)}</code>` : ""}</p>
+    ${partRows ? `<ul class="why-parts">${partRows}</ul>` : ""}
+    <p><b>Oran kaynağı:</b> <span class="why-source why-source-${escapeHtml(why.source)}">${escapeHtml(sourceLabel)}</span>${why.source_detail ? `<br><small>${escapeHtml(why.source_detail)}</small>` : ""}</p>
+    <p><b>Yasal dayanak:</b> ${escapeHtml(why.legal_basis || "Dayanak kaydı yok")}</p>
+    ${why.source === "unverified" ? '<p class="rate-warning">Bu kalem doğrulanmadı; ekranda gösterilen hiçbir oran bağlayıcı değildir.</p>' : ""}
+  </div></details>`;
+}
+
 function renderTariffTool(data) {
   exportStore.tool = data;
   const tariff = data.tariff || data;
   const cost = data.cost;
   const warnings = [...(tariff.warnings || []), ...(cost?.warnings || [])];
   const costLedger = cost ? `<div class="formula-ledger"><h3>Maliyet formülü · ${escapeHtml(costStatusLabels[cost.status] || cost.status)}</h3>
-    ${(cost.lines || []).map((line) => `<div class="formula-line"><span>${escapeHtml(line.label)} <small>${escapeHtml(line.formula)}</small></span><code>${line.amount == null ? "—" : `${numberFormat.format(line.amount)} ${escapeHtml(cost.currency)}`}</code></div>`).join("")}
+    ${(cost.lines || []).map((line) => `<div class="formula-line"><span>${escapeHtml(line.label)} <small>${escapeHtml(line.formula)}</small></span><code>${line.amount == null ? "—" : `${numberFormat.format(line.amount)} ${escapeHtml(cost.currency)}`}</code></div>${renderWhy(line, cost.currency)}`).join("")}
     <div class="formula-line"><strong>Toplam vergi</strong><code>${cost.total_taxes == null ? "Oran eksik" : `${numberFormat.format(cost.total_taxes)} ${escapeHtml(cost.currency)}`}</code></div>
     <div class="formula-line"><strong>Genel toplam (vergiler dahil)</strong><code>${cost.landed_total == null ? "Oran eksik" : `${numberFormat.format(cost.landed_total)} ${escapeHtml(cost.currency)}`}</code></div>
     ${cost.unit_landed_cost != null ? `<div class="formula-line"><strong>Birim maliyet</strong><code>${numberFormat.format(cost.unit_landed_cost)} ${escapeHtml(cost.currency)}</code></div>` : ""}
@@ -5169,3 +5193,37 @@ $("#assistantClear")?.addEventListener("click", () => {
   const thread = $("#assistantThread");
   if (thread) thread.innerHTML = "";
 });
+
+
+// Külliyat bilgi şeridi: yalnız canlı API'lerden okunur, okunamazsa "—" kalır.
+async function loadInfoStrip() {
+  const set = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+  const getJson = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(String(r.status)); return r.json(); };
+  const [fx, tariff, changes] = await Promise.allSettled([
+    getJson("/api/tariff/exchange-rate?currency=USD"), getJson("/api/tariff/status"), getJson("/api/changes?limit=1"),
+  ]);
+  if (fx.status === "fulfilled" && fx.value.rate != null) {
+    set("#stripFx", `${new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 4 }).format(fx.value.rate)} TL · ${fx.value.bulletin_date || ""}`);
+  }
+  if (tariff.status === "fulfilled") {
+    const dates = (tariff.value.active_snapshots || []).map((item) => item.valid_from).filter(Boolean).sort();
+    const checked = String(tariff.value.last_checked_at || "").slice(0, 10);
+    if (dates.length) set("#stripTariff", `${dates[dates.length - 1]}${checked ? ` · kontrol ${checked}` : ""}`);
+  }
+  if (changes.status === "fulfilled") {
+    const kinds = Object.values(changes.value.ledger_summary?.kinds || {});
+    const total = kinds.reduce((sum, item) => sum + (item.added || 0) + (item.removed || 0) + (item.modified || 0), 0);
+    const last = kinds.map((item) => String(item.last || "").slice(0, 10)).filter(Boolean).sort().pop();
+    set("#stripChanges", kinds.length ? `${numberFormat.format(total)} kayıt${last ? ` · son ${last}` : ""}` : "Kayıt yok");
+  }
+}
+
+$$(".tree-leaf").forEach((button) => {
+  button.addEventListener("click", () => {
+    switchScope("ticaret");
+    queryInput.value = button.dataset.query || "";
+    form.requestSubmit();
+  });
+});
+
+loadInfoStrip().catch(() => {});

@@ -1881,6 +1881,37 @@ class TariffEngine:
             node.description_source = str(row.get("source") or "exact")
             node.description_code = str(row.get("matched_code") or node.code)
 
+    @staticmethod
+    def _mark_official_sources(
+        cost: "LandedCostResult",
+        data: "LandedCostInput",
+        lookup: "TariffLookupResult",
+        inferred_additional_duty: float | None,
+        inferred_financial_liability: float | None,
+    ) -> None:
+        """Resmî tarifeden gelen oranları satır açıklamasında 'kullanıcı girişi' diye bırakmaz."""
+        detail = "; ".join(
+            f"{snapshot.source_title} (sürüm {snapshot.valid_from}, SHA-256 {snapshot.archive_sha256[:12]})"
+            for snapshot in lookup.snapshots
+        ) or None
+        from_official = {
+            "customs_duty": data.customs_duty_rate is None,
+            "additional_duty": data.additional_duty_rate is None,
+            "financial_liability": data.additional_financial_liability_rate is None,
+        }
+        zero_inferred = {
+            "additional_duty": inferred_additional_duty == 0.0 and lookup.unambiguous_rates.get("additional_duty") is None,
+            "financial_liability": inferred_financial_liability == 0.0
+            and lookup.unambiguous_rates.get("additional_financial_liability") is None,
+        }
+        for line in cost.lines:
+            code = line["code"]
+            explanation = line.get("explanation")
+            if explanation is None or not from_official.get(code) or line.get("rate") is None:
+                continue
+            explanation["source"] = "official_not_applicable" if zero_inferred.get(code) else "official_tariff"
+            explanation["source_detail"] = detail
+
     async def calculate(
         self,
         gtip: str,
@@ -1939,6 +1970,7 @@ class TariffEngine:
         if inferred_financial_liability == 0.0 and data.additional_financial_liability_rate is None and safe_rates.get("additional_financial_liability") is None:
             conflicts.append("Ek mali yükümlülük: doğrulanmış uygulanmazlık kararı nedeniyle %0 alındı.")
         cost = calculate_landed_cost(enriched)
+        self._mark_official_sources(cost, data, lookup, inferred_additional_duty, inferred_financial_liability)
         cost.rate_overrides = overrides
         cost.warnings.extend(conflicts)
         trade = lookup.trade_measures or {}
@@ -2161,6 +2193,7 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
     total_taxes = sum(component for component in tax_components if component is not None) if all(
         component is not None for component in tax_components
     ) else None
+    _attach_explanations(lines, data, kkdf_suggested=data.kkdf_rate is None and kkdf is not None)
     try_summary = _try_summary(data, customs_value, vat_base, total_taxes, vat, lines, warnings)
     if data.stamp_duty_try is None and data.exchange_rate is None:
         warnings.append(
@@ -2176,6 +2209,93 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
         unit_landed_cost=round(unit, 4) if unit is not None else None,
         missing_rates=list(dict.fromkeys(missing)), try_summary=try_summary, warnings=warnings,
     )
+
+
+# Yasal dayanak metinleri sabittir; oran kaynağı ise satır bazında (kullanıcı/resmî/öneri) belirlenir.
+_LEGAL_BASIS = {
+    "customs_value": "4458 sayılı Gümrük Kanunu md.23-30 (kıymet); gözetim düzeltmesi için md.30 ve ilgili gözetim tebliği.",
+    "customs_duty": "İthalat Rejimi Kararı ve ekleri (Gümrük Vergisi oranı); matrah gümrük kıymeti.",
+    "additional_duty": "İthalat Rejimi Kararı ve ekleri (İlave Gümrük Vergisi); matrah gümrük kıymeti.",
+    "financial_liability": "İthalat Rejimi Kararı ve ekleri (Ek Mali Yükümlülük); matrah gümrük kıymeti.",
+    "anti_dumping": "İlgili damping/sübvansiyon önlemi tebliği (Ticaret Bakanlığı); tutar doğrulanmış kayıttan alınır.",
+    "kkdf": "88/12944 sayılı Bakanlar Kurulu Kararı (KKDF); matrah fatura bedeli, oran ödeme şekline bağlıdır.",
+    "sct": "4760 sayılı Özel Tüketim Vergisi Kanunu ve ekli listeler; tutar doğrulanmış hesaptan alınır.",
+    "trt_bandrol": "3093 sayılı Kanun ve güncel bandrol tebliği; oran ürün grubuna göre doğrulanmalıdır.",
+    "vat": "3065 sayılı KDV Kanunu md.21 (ithalatta matrah: gümrük kıymeti + gümrük vergileri + diğer vergi, fon ve masraflar).",
+}
+_RATE_LINE_CODES = {"customs_duty", "additional_duty", "financial_liability", "kkdf", "vat", "trt_bandrol"}
+
+
+def _attach_explanations(lines: list[dict[str, Any]], data: "LandedCostInput", *, kkdf_suggested: bool) -> None:
+    """Her satıra ``explanation`` (source, legal_basis, base_components) ekler; aritmetiğe dokunmaz."""
+
+    by_code = {line["code"]: line for line in lines}
+
+    def amount(code: str) -> float | None:
+        line = by_code.get(code)
+        return line.get("amount") if line else None
+
+    def part(label: str, value: float | None) -> dict[str, Any]:
+        return {"label": label, "amount": round(value, 2) if value is not None else None}
+
+    declared = data.invoice_value + data.freight + data.insurance
+    uplift = float(amount("customs_value") or declared) - declared
+
+    components: dict[str, list[dict[str, Any]]] = {
+        "customs_value": [part("Fatura bedeli", data.invoice_value), part("Navlun", data.freight), part("Sigorta", data.insurance)]
+        + ([part("Gözetim düzeltmesi (birim kıymet eşiği)", uplift)] if uplift > 0.005 else []),
+        "customs_duty": [part("Gümrük kıymeti", amount("customs_value"))],
+        "additional_duty": [part("Gümrük kıymeti", amount("customs_value"))],
+        "financial_liability": [part("Gümrük kıymeti", amount("customs_value"))],
+        "kkdf": [part("Fatura bedeli", data.invoice_value)],
+        "trt_bandrol": [
+            part("Gümrük kıymeti", amount("customs_value")), part("Gümrük vergisi", amount("customs_duty")),
+            part("İlave gümrük vergisi", amount("additional_duty")), part("Ek mali yükümlülük", amount("financial_liability")),
+            part("Damping karşıtı vergi", amount("anti_dumping")),
+        ],
+        "vat": [
+            part("Gümrük kıymeti", amount("customs_value")), part("Gümrük vergisi", amount("customs_duty")),
+            part("İlave gümrük vergisi", amount("additional_duty")), part("Ek mali yükümlülük", amount("financial_liability")),
+            part("Damping karşıtı vergi", amount("anti_dumping")), part("KKDF", amount("kkdf")), part("ÖTV", amount("sct")),
+            part("TRT bandrol", amount("trt_bandrol")), part("Diğer masraflar", data.other_costs),
+        ],
+    }
+    user_rate = {
+        "customs_duty": data.customs_duty_rate, "additional_duty": data.additional_duty_rate,
+        "financial_liability": data.additional_financial_liability_rate, "kkdf": data.kkdf_rate,
+        "vat": data.vat_rate, "trt_bandrol": data.trt_bandrol_rate,
+    }
+    for line in lines:
+        code = line["code"]
+        if code in _RATE_LINE_CODES:
+            if line.get("rate") is None:
+                source = "unverified"
+            elif user_rate.get(code) is not None:
+                source = "user_input"
+            elif code == "kkdf" and kkdf_suggested:
+                source = "payment_method_suggestion"
+            else:
+                source = "unverified"
+        elif code == "customs_value":
+            source = "declared_values"
+        else:
+            source = "user_input" if line.get("amount") is not None else "unverified"
+        line["explanation"] = {
+            "source": source,
+            "source_detail": None,
+            "legal_basis": _LEGAL_BASIS.get(code, ""),
+            "base_components": components.get(code, []),
+        }
+
+
+_SOURCE_LABELS = {
+    "user_input": "Kullanıcı girişi",
+    "official_tariff": "Resmî tarife satırı",
+    "official_not_applicable": "Resmî listede doğrulanmış uygulanmazlık (%0)",
+    "payment_method_suggestion": "Ödeme şekline göre öneri; doğrulayın",
+    "declared_values": "Beyan edilen fatura, navlun ve sigorta",
+    "unverified": "Doğrulanmadı",
+}
 
 
 def _try_summary(
