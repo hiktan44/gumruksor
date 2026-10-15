@@ -1,9 +1,21 @@
 import re
 import unittest
+from collections import Counter
 from pathlib import Path
 
 HTML = (Path(__file__).resolve().parent.parent / "web" / "index.html").read_text(encoding="utf-8")
 FORM = HTML[HTML.index('id="tariffForm"'): HTML.index('id="tariffOutput"')]
+
+
+APP_JS = (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text(encoding="utf-8")
+
+
+class AppJsGuardTests(unittest.TestCase):
+    def test_no_top_level_function_is_declared_twice(self):
+        """İkinci bildirim ilkini sessizce gölgeler (PR6'da reviewCard ile yaşandı); sınav/alıştırma sonucu bozulurdu."""
+        names = re.findall(r"^(?:async )?function ([A-Za-z0-9_$]+)\(", APP_JS, re.M)
+        duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
+        self.assertEqual(duplicates, [])
 
 
 class KulliyatLayoutTests(unittest.TestCase):

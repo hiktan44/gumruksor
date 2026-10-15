@@ -1,0 +1,6 @@
+{
+  "_note": "Soru taslağı üretiminin mevzuat kaynakları. Madde numarası yazılmaz; betik metni mevzuat.gov.tr'den indirip MADDE başlıklarından ayrıştırır. 'articles' yalnız uzman doğruladıktan sonra daraltmak için eklenir. Yeni kaynak eklerken mevzuat_no, mevzuat_tur ve mevzuat_tertip mevzuat.gov.tr adresinden doğrulanmalıdır.",
+  "laws": [
+    {"name": "Gümrük Kanunu", "mevzuat_no": "4458", "mevzuat_tur": 1, "mevzuat_tertip": "5", "branch": "mevzuat"}
+  ]
+}

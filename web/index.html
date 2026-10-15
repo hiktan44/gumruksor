@@ -640,6 +640,22 @@
             <button class="analyse-button" type="submit"><span>Risk ön kontrolünü çalıştır</span></button>
           </form>
           <div class="tool-output" id="riskOutput" aria-live="polite"></div>
+          <details class="scenario-box advanced-fields" id="riskReviewBox" hidden>
+            <summary><span>Kriter onayı ve toplu yükleme (yönetici / uzman)</span><small>Yalnız yetkililere görünür; taslaklar onaylanana kadar risk kontrolüne girmez</small></summary>
+            <div class="tool-form" id="riskReviewTools">
+              <div id="riskImportTools" hidden>
+                <p class="fx-note">Şablonu indirip her satıra resmî kaynak adı, https kaynak bağlantısı ve son doğrulama tarihini yazın. Dosyada tek hata varsa hiçbir satır yazılmaz.</p>
+                <a class="analyse-button" id="riskTemplateLink" href="/api/risk/review/template" download><span>CSV şablonunu indir</span></a>
+                <label class="field"><span>CSV dosyası</span><input type="file" id="riskCsvFile" accept=".csv,text/csv"></label>
+                <button class="analyse-button" type="button" id="riskCsvCheck"><span>Doğrula (deneme)</span></button>
+                <button class="analyse-button" type="button" id="riskCsvImport"><span>Taslak olarak yükle</span></button>
+                <div id="riskCsvReport" class="tool-output" aria-live="polite"></div>
+              </div>
+              <label class="field"><span>Liste</span><select id="riskReviewFilter"><option value="draft">Onay bekleyen taslaklar</option><option value="approved">Onaylı kayıtlar</option><option value="stale">12 aydan eski (eskime uyarısı)</option><option value="rejected">Reddedilenler</option></select></label>
+              <button class="analyse-button" type="button" id="riskReviewLoad"><span>Listele</span></button>
+              <div id="riskReviewList" class="tool-output" aria-live="polite"></div>
+            </div>
+          </details>
           <details class="scenario-box advanced-fields" id="riskNoteBox">
             <summary><span>Kendi risk notum</span><small>Yalnız size görünür; resmî kriter değildir</small></summary>
             <form class="tool-form" id="riskNoteForm">
@@ -676,6 +692,7 @@
             <button type="button" class="edu-mode active" data-edu-mode="practice">Alıştırma</button>
             <button type="button" class="edu-mode" data-edu-mode="exam">Deneme sınavı (süreli)</button>
             <button type="button" class="edu-mode" data-edu-mode="wrong">Yanlışlarım</button>
+            <button type="button" class="edu-mode" data-edu-mode="review" id="eduReviewMode" hidden>Soru onayı (uzman)</button>
           </div>
           <form class="tool-form" id="eduForm">
             <fieldset class="tariff-group"><legend>Ayarlar</legend><div class="tariff-group-grid">

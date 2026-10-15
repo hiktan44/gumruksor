@@ -29,6 +29,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from auth_service import AuthError, GoogleAuthService
 from education import BRANCHES as EDUCATION_BRANCHES, EducationError, EducationStore
 from risk_engine import RiskError, RiskStore, check as risk_check
+from risk_import import import_csv as risk_import_csv, template_csv as risk_template_csv
 from account_service import PLANS, AccountError, AccountService, QuotaExceeded
 from billing_service import BillingError, StripeBilling
 from customs_advisor import (
@@ -283,6 +284,19 @@ def _require_admin(request: Request) -> dict[str, Any]:
     if not account_service.is_admin(user):
         raise AuthError("Bu alan yalnızca yöneticilere açıktır.")
     return user
+
+
+def _require_reviewer(request: Request) -> dict[str, Any]:
+    """Yönetici ya da aktif danışman (uzman onay akışı)."""
+    return _require_role(request, "consultant")
+
+
+def _admin_auth_error(exc: Exception) -> JSONResponse:
+    return _auth_error(exc, status_code=403 if "yöneticilere" in str(exc) else 401)
+
+
+def _review_auth_error(exc: Exception) -> JSONResponse:
+    return _auth_error(exc, status_code=403 if "yetkiniz" in str(exc) else 401)
 
 
 class FeatureNotAvailable(AccountError):
@@ -671,6 +685,8 @@ async def web_auth_me(request: Request):
                     "name": session.get("name", ""),
                     "picture": session.get("picture", ""),
                     "is_admin": bool(account and account["is_admin"]),
+                    # Onay ekranları (soru bankası, risk kriterleri) yalnız yönetici ve aktif danışmana açılır.
+                    "can_review": account_service.role_of(session) in ("admin", "consultant"),
                 }
                 if session
                 else None
@@ -3305,7 +3321,11 @@ async def web_risk_criteria_add(request: Request):
         official = bool(body.get("official"))
         if official and not account_service.is_admin(user):
             raise AuthError("Resmî kriteri yalnızca yöneticiler ekleyebilir.")
-        record = risk_store.add(body, official=official, owner_sub=str(user.get("sub")))
+        # Resmî kayıt taslak açılır; yönetici/danışman onaylayana kadar risk kontrolüne girmez.
+        record = risk_store.add(
+            body, official=official, owner_sub=str(user.get("sub")), status="draft" if official else "approved",
+            created_by=str(user.get("sub")),
+        )
         return JSONResponse(record, status_code=201)
     except SecurityViolation as exc:
         return _security_response(exc)
@@ -3329,6 +3349,89 @@ async def web_risk_criteria_delete(request: Request):
     if not removed:
         return JSONResponse({"error": "Not bulunamadı veya size ait değil."}, status_code=404)
     return JSONResponse({"deleted": True})
+
+
+@mcp.custom_route("/api/risk/review", methods=["GET"])
+async def web_risk_review_list(request: Request):
+    """Onay bekleyen / onaylı / eskimiş resmî kriter ve emsal kayıtları (yönetici ya da aktif danışman)."""
+    try:
+        _require_reviewer(request)
+        status = str(request.query_params.get("status") or "draft")
+        items = risk_store.list_for_review(
+            status, kind=str(request.query_params.get("kind") or ""), stale_only=request.query_params.get("stale") == "1",
+        )
+        return JSONResponse({"items": items, "summary": risk_store.summary()}, headers={"Cache-Control": "private, no-store"})
+    except AuthError as exc:
+        return _review_auth_error(exc)
+    except RiskError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+
+@mcp.custom_route("/api/risk/review/template", methods=["GET"])
+async def web_risk_review_template(request: Request):
+    try:
+        _require_admin(request)
+    except AuthError as exc:
+        return _admin_auth_error(exc)
+    return Response(
+        risk_template_csv(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="risk-kriterleri-sablon.csv"', "Cache-Control": "no-store"},
+    )
+
+
+@mcp.custom_route("/api/risk/review/import", methods=["POST"])
+async def web_risk_review_import(request: Request):
+    """Yönetici toplu CSV: satır satır doğrulanır; hatasız dosya taslak olarak yazılır."""
+    limited = _rate_limit_response(request, "risk-import", limit=20, window_seconds=3600)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _require_admin(request)
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("csv"), str):
+            raise RiskError("İstek {\"csv\": \"...\"} biçiminde olmalıdır.")
+        result = risk_import_csv(risk_store, body["csv"], created_by=str(user.get("sub")), dry_run=bool(body.get("dry_run")))
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _admin_auth_error(exc)
+    except RiskError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse(result, status_code=200 if not result["errors"] else 422, headers={"Cache-Control": "no-store"})
+
+
+async def _risk_review_decision(request: Request, approve: bool):
+    try:
+        _trusted_request_origin(request)
+        user = _require_reviewer(request)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        record = risk_store.review(
+            str(request.path_params.get("criterion_id", "")), approve=approve, reviewer_sub=str(user.get("sub")),
+            note=str(body.get("note") or ""), verified_at=body.get("verified_at"),
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _review_auth_error(exc)
+    except RiskError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404 if "bulunamadı" in str(exc) else 422)
+    return JSONResponse(record, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/risk/review/{criterion_id}/approve", methods=["POST"])
+async def web_risk_review_approve(request: Request):
+    """Taslağı yayımlar ya da onaylı kaydın 'son doğrulama tarihi'ni yeniler."""
+    return await _risk_review_decision(request, True)
+
+
+@mcp.custom_route("/api/risk/review/{criterion_id}/reject", methods=["POST"])
+async def web_risk_review_reject(request: Request):
+    return await _risk_review_decision(request, False)
 
 
 @mcp.custom_route("/api/btb/search", methods=["GET"])
@@ -3421,6 +3524,9 @@ async def web_education_status(request: Request):
     }
     if user:
         payload["stats"] = education_store.stats(str(user["sub"]))
+        if account_service.role_of(user) in ("admin", "consultant"):
+            payload["can_review"] = True
+            payload["review_counts"] = education_store.pending_counts()
     return JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
 
 
@@ -3529,6 +3635,85 @@ async def web_education_question_add(request: Request):
     except EducationError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     return JSONResponse({"id": identifier}, status_code=201)
+
+
+@mcp.custom_route("/api/education/review", methods=["GET"])
+async def web_education_review_list(request: Request):
+    """Onay ekranı: taslak soruları cevap anahtarı ve kaynakla listeler (yönetici ya da aktif danışman)."""
+    try:
+        _require_reviewer(request)
+        items = education_store.list_for_review(
+            str(request.query_params.get("status") or "draft"), str(request.query_params.get("branch") or ""),
+        )
+        return JSONResponse({"items": items, "counts": education_store.pending_counts()}, headers={"Cache-Control": "private, no-store"})
+    except AuthError as exc:
+        return _review_auth_error(exc)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+
+async def _education_review_decision(request: Request, status: str):
+    try:
+        _trusted_request_origin(request)
+        user = _require_reviewer(request)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        record = education_store.set_status(
+            str(request.path_params.get("question_id", "")), status, str(user.get("sub")), str(body.get("note") or ""),
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _review_auth_error(exc)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404 if "bulunamadı" in str(exc) else 422)
+    return JSONResponse(record, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/education/review/{question_id}/approve", methods=["POST"])
+async def web_education_review_approve(request: Request):
+    return await _education_review_decision(request, "approved")
+
+
+@mcp.custom_route("/api/education/review/{question_id}/reject", methods=["POST"])
+async def web_education_review_reject(request: Request):
+    return await _education_review_decision(request, "rejected")
+
+
+@mcp.custom_route("/api/education/drafts/import", methods=["POST"])
+async def web_education_drafts_import(request: Request):
+    """Yönetici: üretim betiğinin JSON çıktısını **taslak** olarak yükler (asla doğrudan onaylı yazmaz)."""
+    limited = _rate_limit_response(request, "education-drafts", limit=20, window_seconds=3600)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        _require_admin(request)
+        body = await request.json()
+        items = body.get("questions") if isinstance(body, dict) else None
+        if not isinstance(items, list) or not items or len(items) > 500:
+            raise EducationError("İstek {\"questions\": [...]} biçiminde olmalı (en çok 500 soru).")
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _admin_auth_error(exc)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    imported, duplicates, errors = 0, 0, []
+    for index, item in enumerate(items):
+        try:
+            identifier = str(item.get("id") or "").strip() or None
+            if identifier and education_store.exists(identifier):
+                duplicates += 1
+                continue
+            education_store.add_question(item, identifier=identifier, status="draft", origin="script")
+            imported += 1
+        except (EducationError, AttributeError) as exc:
+            errors.append({"index": index, "error": str(exc)})
+    return JSONResponse({"imported": imported, "duplicates": duplicates, "errors": errors}, status_code=201 if imported else 200)
 
 
 @mcp.custom_route("/api/gtip/images", methods=["GET"])

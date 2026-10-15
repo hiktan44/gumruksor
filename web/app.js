@@ -3024,6 +3024,7 @@ function switchCustomsView(view) {
   if (view === "consultants") loadConsultants();
   if (view === "egitim") initEducation();
   if (view === "mutalaa") initMutalaa();
+  if (view === "risk") initRiskReview();
 }
 
 $$('[data-customs-view]').forEach((button) => button.addEventListener("click", () => switchCustomsView(button.dataset.customsView)));
@@ -5245,7 +5246,9 @@ function renderRisk(data) {
     <small><span class="why-source ${item.official ? "why-source-official_tariff" : "why-source-unverified"}">${escapeHtml(item.origin_label)}</span> · ${escapeHtml(item.category_label)} · ön ek ${escapeHtml(item.gtip_prefix)}</small>
     ${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}
     ${item.source_url ? `<small>Kaynak: <a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label || "Kaynağı aç")}</a></small>` : ""}
-    ${item.official ? "" : `<button type="button" class="risk-delete" data-risk-delete="${escapeHtml(item.id)}">Notu sil</button>`}</li>`).join("");
+    ${item.verified_at ? `<small>Son doğrulama: ${escapeHtml(item.verified_at)}</small>` : ""}
+    ${item.stale_label ? `<small class="rate-warning">${escapeHtml(item.stale_label)}</small>` : ""}
+    ${item.official || item.precedent ? "" : `<button type="button" class="risk-delete" data-risk-delete="${escapeHtml(item.id)}">Notu sil</button>`}</li>`).join("");
   return `<div class="formula-ledger"><h3>${escapeHtml(data.gtip)} · ${data.direction === "export" ? "İhracat" : "İthalat"} · ${escapeHtml(data.year)}</h3>
     <p><span class="risk-badge ${RISK_LEVEL_CLASS[data.level] || "risk-none"}">Seviye: ${escapeHtml(data.level_label)}</span></p>
     <h4>Otomatik sinyaller</h4>${signals ? `<ul class="risk-list">${signals}</ul>` : '<p class="missing-list">Mevcut ticaret önlemi ve kontrol verisinde bu GTİP için sinyal bulunmadı.</p>'}
@@ -5403,6 +5406,7 @@ async function initEducation() {
     const data = await fetchJson("/api/education/status");
     $("#eduBranch").innerHTML = `<option value="">Tüm branşlar</option>` + Object.entries(data.branches).map(([key, b]) => `<option value="${escapeHtml(key)}">${escapeHtml(b.label)} (${b.questions} soru)</option>`).join("");
     renderEduStatus(data);
+    $("#eduReviewMode").hidden = !data.can_review;
   } catch (error) { $("#eduStatus").textContent = error.message || "Eğitim verisi alınamadı."; edu.ready = false; }
 }
 
@@ -5410,7 +5414,7 @@ function eduSetMode(mode) {
   edu.mode = mode;
   $$(".edu-mode").forEach((button) => button.classList.toggle("active", button.dataset.eduMode === mode));
   $("#eduMinutesField").hidden = mode !== "exam";
-  $("#eduStartLabel").textContent = mode === "exam" ? "Sınavı başlat" : mode === "wrong" ? "Yanlışlarımı göster" : "Alıştırmaya başla";
+  $("#eduStartLabel").textContent = mode === "exam" ? "Sınavı başlat" : mode === "wrong" ? "Yanlışlarımı göster" : mode === "review" ? "Taslakları listele" : "Alıştırmaya başla";
   window.clearInterval(edu.timer);
   $("#eduOutput").innerHTML = "";
 }
@@ -5436,7 +5440,9 @@ async function startEducation() {
   const out = $("#eduOutput");
   window.clearInterval(edu.timer);
   try {
-    if (edu.mode === "wrong") {
+    if (edu.mode === "review") {
+      await loadEduReview(branch);
+    } else if (edu.mode === "wrong") {
       const data = await fetchJson("/api/education/wrong");
       out.innerHTML = data.questions.length ? data.questions.map((q) => reviewCard(q, q.chosen)).join("") : '<p class="missing-list">Yanlış cevabınız yok.</p>';
     } else if (edu.mode === "practice") {
@@ -5459,6 +5465,103 @@ async function startEducation() {
     }
   } catch (error) { out.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "İşlem yapılamadı.")}</p>`; }
 }
+
+// Soru onayı: yalnız yönetici ve aktif danışman; taslaklar öğrencilere hiçbir yerde gösterilmez.
+function draftReviewCard(item) {
+  const options = item.options.map((option, i) => `<li class="${i === item.answer_index ? "edu-right" : ""}">${escapeHtml(option)}${i === item.answer_index ? " ✔ (doğru cevap)" : ""}</li>`).join("");
+  return `<div class="btb-item" data-review-id="${escapeHtml(item.id)}"><b>${escapeHtml(item.text)}</b>
+    <small>${escapeHtml(item.branch_label)} · ${escapeHtml(item.status_label)} · ${item.source_kind === "karar" ? "yargı kararı" : item.source_kind === "mevzuat" ? "mevzuat" : "kaynak"}</small>
+    <ul class="edu-options">${options}</ul>
+    ${item.notice ? `<small class="rate-warning">${escapeHtml(item.notice)}</small>` : ""}
+    <small>Dayanak: ${escapeHtml(item.legal_basis)}${item.source_ref ? ` (${escapeHtml(item.source_ref)})` : ""} · <a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a></small>
+    ${item.evidence_quote ? `<small>Kaynaktan alıntı: “${escapeHtml(item.evidence_quote)}”</small>` : ""}
+    ${item.explanation ? `<small>Açıklama: ${escapeHtml(item.explanation)}</small>` : ""}
+    ${item.review_note ? `<small>İnceleme notu: ${escapeHtml(item.review_note)}</small>` : ""}
+    ${item.status === "draft" ? `<input class="review-note" maxlength="500" placeholder="Not (red için zorunlu)" aria-label="İnceleme notu">
+    <button type="button" class="analyse-button" data-review-approve><span>Onayla ve yayımla</span></button>
+    <button type="button" class="risk-delete" data-review-reject>Reddet</button>` : ""}</div>`;
+}
+
+async function loadEduReview(branch) {
+  const data = await fetchJson(`/api/education/review?status=draft&branch=${encodeURIComponent(branch || "")}`);
+  const c = data.counts || {};
+  $("#eduOutput").innerHTML = `<div class="formula-ledger"><h3>Onay bekleyen taslaklar (${data.items.length})</h3>
+    <p class="fx-note">Taslak ${c.draft || 0} · onaylı ${c.approved || 0} · reddedilen ${c.rejected || 0}. Cevabı, alıntıyı ve kaynağı kaynak bağlantısından kontrol edip onaylayın.</p>
+    ${data.items.length ? data.items.map(draftReviewCard).join("") : '<p class="missing-list">Onay bekleyen taslak yok.</p>'}</div>`;
+}
+
+$("#eduOutput")?.addEventListener("click", async (event) => {
+  const approve = event.target.closest("[data-review-approve]"), reject = event.target.closest("[data-review-reject]");
+  if (!approve && !reject) return;
+  const card = event.target.closest("[data-review-id]");
+  const note = card.querySelector(".review-note")?.value || "";
+  try {
+    await jsonPost(`/api/education/review/${encodeURIComponent(card.dataset.reviewId)}/${approve ? "approve" : "reject"}`, { note });
+    card.remove();
+    showToast(approve ? "Soru yayımlandı." : "Soru reddedildi.");
+    refreshEduStatus();
+  } catch (error) { showToast(error.message || "İşlem yapılamadı."); }
+});
+
+// Risk kriteri onayı ve toplu CSV (yönetici / uzman)
+const riskReview = { ready: false };
+
+async function initRiskReview() {
+  try {
+    const auth = await fetchJson("/api/auth/me");
+    const canReview = Boolean(auth.user?.can_review);
+    $("#riskReviewBox").hidden = !canReview;
+    $("#riskImportTools").hidden = !auth.user?.is_admin;
+  } catch (error) { $("#riskReviewBox").hidden = true; }
+}
+
+function riskReviewRow(item) {
+  return `<div class="btb-item" data-risk-review-id="${escapeHtml(item.id)}"><b>${escapeHtml(item.title)}</b>
+    <small>${escapeHtml(item.origin_label)} · ${escapeHtml(item.status_label)} · ön ek ${escapeHtml(item.gtip_prefix)} · ${escapeHtml(item.category_label)}</small>
+    ${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}
+    <small>Kaynak: <a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a> · Son doğrulama: ${escapeHtml(item.verified_at || "yok")}</small>
+    ${item.stale_label ? `<small class="rate-warning">${escapeHtml(item.stale_label)}</small>` : ""}
+    ${item.status !== "rejected" ? `<label class="field"><span>Doğrulama tarihi (GG.AA.YYYY)</span><input class="risk-verified" maxlength="10" placeholder="${escapeHtml(item.verified_at || "GG.AA.YYYY")}"></label>` : ""}
+    ${item.status !== "rejected" ? `<input class="review-note" maxlength="500" placeholder="Not (red için zorunlu)" aria-label="İnceleme notu">
+    <button type="button" class="analyse-button" data-risk-approve><span>${item.status === "draft" ? "Onayla ve yayımla" : "Doğrulamayı yenile"}</span></button>
+    <button type="button" class="risk-delete" data-risk-reject>Reddet</button>` : ""}</div>`;
+}
+
+async function loadRiskReview() {
+  const filter = $("#riskReviewFilter").value;
+  const query = filter === "stale" ? "status=approved&stale=1" : `status=${filter}`;
+  const data = await fetchJson(`/api/risk/review?${query}`);
+  const s = data.summary || {};
+  $("#riskReviewList").innerHTML = `<p class="fx-note">Taslak ${s.draft || 0} · onaylı ${s.approved || 0} · eskimiş ${s.stale || 0} · reddedilen ${s.rejected || 0}</p>${data.items.length ? data.items.map(riskReviewRow).join("") : '<p class="missing-list">Kayıt yok.</p>'}`;
+}
+
+async function sendRiskCsv(dryRun) {
+  const file = $("#riskCsvFile").files[0], box = $("#riskCsvReport");
+  if (!file) { box.innerHTML = '<p class="rate-warning">Önce bir CSV dosyası seçin.</p>'; return; }
+  const csv = await file.text();
+  const response = await fetch("/api/risk/review/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ csv, dry_run: dryRun }) });
+  const data = await response.json();
+  if (data.error) { box.innerHTML = `<p class="rate-warning">${escapeHtml(data.error)}</p>`; return; }
+  const bad = data.rows.filter((row) => !row.ok).map((row) => `<li>Satır ${row.line}: ${escapeHtml(row.error)}</li>`).join("");
+  box.innerHTML = `<p>${escapeHtml(data.message)}</p><p class="fx-note">Toplam ${data.total} satır · geçerli ${data.valid} · hatalı ${data.errors}${data.imported ? ` · yazılan ${data.imported}` : ""}</p>${bad ? `<ul class="risk-list">${bad}</ul>` : ""}`;
+  if (data.committed) loadRiskReview();
+}
+
+$("#riskCsvCheck")?.addEventListener("click", () => sendRiskCsv(true).catch((e) => showToast(e.message)));
+$("#riskCsvImport")?.addEventListener("click", () => sendRiskCsv(false).catch((e) => showToast(e.message)));
+$("#riskReviewLoad")?.addEventListener("click", () => loadRiskReview().catch((e) => showToast(e.message)));
+$("#riskReviewList")?.addEventListener("click", async (event) => {
+  const approve = event.target.closest("[data-risk-approve]"), reject = event.target.closest("[data-risk-reject]");
+  if (!approve && !reject) return;
+  const card = event.target.closest("[data-risk-review-id]");
+  const body = { note: card.querySelector(".review-note")?.value || "", verified_at: card.querySelector(".risk-verified")?.value || "" };
+  try {
+    await jsonPost(`/api/risk/review/${encodeURIComponent(card.dataset.riskReviewId)}/${approve ? "approve" : "reject"}`, body);
+    showToast(approve ? "Kayıt onaylandı." : "Kayıt reddedildi.");
+    loadRiskReview();
+  } catch (error) { showToast(error.message || "İşlem yapılamadı."); }
+});
+
 $("#eduForm")?.addEventListener("submit", (event) => { event.preventDefault(); startEducation(); });
 
 $("#eduOutput")?.addEventListener("click", async (event) => {
