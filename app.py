@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 
 from auth_service import AuthError, GoogleAuthService
+from risk_engine import RiskError, RiskStore, check as risk_check
 from account_service import PLANS, AccountError, AccountService, QuotaExceeded
 from billing_service import BillingError, StripeBilling
 from customs_advisor import (
@@ -107,6 +108,7 @@ ADDITIONAL_ALLOWED_ORIGINS = tuple(
 SALES_CONTACT_EMAIL = os.environ.get("SALES_CONTACT_EMAIL", "hiktan44@gmail.com").strip()
 google_auth = GoogleAuthService()
 account_service = AccountService(google_auth.data_dir)
+risk_store = RiskStore(google_auth.data_dir, seed_path=Path(__file__).resolve().parent / "data" / "official" / "risk_criteria.json")
 stripe_billing = StripeBilling()
 email_sender = ResendEmailSender()
 agent_identity = AgentTokenVerifier()
@@ -3238,6 +3240,85 @@ async def web_trade_measures_status(request: Request):
     if limited:
         return limited
     return JSONResponse(trade_measure_engine.status())
+
+
+@mcp.custom_route("/api/risk/check", methods=["POST"])
+async def web_risk_check(request: Request):
+    """Beyanname öncesi risk ön kontrolü: kayıtlı kriterler + mevcut motorlardan otomatik sinyaller."""
+    limited = _rate_limit_response(request, "risk-check", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise RiskError("İstek bir nesne olmalıdır.")
+        gtip = str(body.get("gtip", ""))
+        direction = "export" if str(body.get("direction", "import")).lower() == "export" else "import"
+        origin = (str(body.get("origin_country") or "").strip() or None)
+        year_raw = body.get("year")
+        year = int(year_raw) if year_raw not in (None, "") else None
+        user = _session_user(request)
+        trade: dict[str, Any] | None = None
+        controls: dict[str, Any] | None = None
+        notes: list[str] = []
+        if direction == "import":
+            try:
+                trade = trade_measure_engine.lookup(gtip, origin).as_dict()
+            except ValueError:
+                notes.append("Ticaret önlemleri bu GTİP uzunluğuyla sorgulanamadı; en az 4 hane girin.")
+        try:
+            controls = (await control_engine.lookup(gtip, direction=direction)).model_dump(mode="json")
+        except ValueError:
+            notes.append("TAREKS/TSE kapsamı yalnız 4, 6, 8, 10 veya 12 haneli GTİP ile sorgulanır.")
+        result = risk_check(
+            risk_store, gtip=gtip, direction=direction, year=year, owner_sub=str(user.get("sub")) if user else None,
+            trade=trade, controls=controls, origin_given=origin is not None,
+        )
+        result["warnings"].extend(notes)
+    except (RiskError, TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception:
+        logger.exception("Risk check failed")
+        return JSONResponse({"error": "Risk ön kontrolü şu anda tamamlanamadı."}, status_code=502)
+    return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
+
+
+@mcp.custom_route("/api/risk/criteria", methods=["POST"])
+async def web_risk_criteria_add(request: Request):
+    """Kullanıcı notu ekler; yönetici ``official: true`` ile kaynaklı resmî kriter ekleyebilir."""
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise RiskError("İstek bir nesne olmalıdır.")
+        official = bool(body.get("official"))
+        if official and not account_service.is_admin(user):
+            raise AuthError("Resmî kriteri yalnızca yöneticiler ekleyebilir.")
+        record = risk_store.add(body, official=official, owner_sub=str(user.get("sub")))
+        return JSONResponse(record, status_code=201)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403 if "yönetici" in str(exc) else 401)
+    except RiskError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+
+@mcp.custom_route("/api/risk/criteria/{criterion_id}", methods=["DELETE"])
+async def web_risk_criteria_delete(request: Request):
+    """Yalnız kendi kullanıcı notunu siler; resmî kayıtlar bu uçtan silinemez."""
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        removed = risk_store.delete_note(request.path_params.get("criterion_id", ""), str(user.get("sub")))
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    if not removed:
+        return JSONResponse({"error": "Not bulunamadı veya size ait değil."}, status_code=404)
+    return JSONResponse({"deleted": True})
 
 
 @mcp.custom_route("/api/foreign/tariff", methods=["GET"])

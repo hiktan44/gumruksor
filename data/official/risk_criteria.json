@@ -1,0 +1,4 @@
+{
+  "_note": "Resmî kaynaklı risk kriterleri. Her kayıt id, gtip_prefix, category, title, source_label ve https source_url taşımalıdır. Kaynaksız kayıt eklenmez.",
+  "criteria": []
+}
