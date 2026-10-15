@@ -165,3 +165,48 @@ class MutalaaPacketTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeedSyncTests(unittest.TestCase):
+    def _seed(self, directory, questions):
+        path = Path(directory) / "seed.json"
+        path.write_text(json.dumps({"questions": questions}), encoding="utf-8")
+        return path
+
+    def test_seed_corrections_and_removals_reach_existing_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = {**GOOD, "id": "s-1"}
+            second = {**GOOD, "id": "s-2", "text": "İkinci sentetik soru metni nedir?"}
+            store = EducationStore(tmp, seed_path=self._seed(tmp, [first, second]))
+            admin_id = store.add_question({**GOOD, "text": "Yöneticinin eklediği sorunun metni nedir?"})
+            self.assertEqual(store.counts()["kiymet"], 3)
+            fixed = {**first, "answer_index": 2, "legal_basis": "Düzeltilmiş madde"}
+            store = EducationStore(tmp, seed_path=self._seed(tmp, [fixed]))
+            self.assertTrue(store.answer("s-1", 2, None)["correct"])
+            self.assertEqual(store.answer("s-1", 2, None)["question"]["legal_basis"], "Düzeltilmiş madde")
+            with self.assertRaises(EducationError):
+                store.answer("s-2", 0, None)  # tohumdan kaldırılan soru pasif
+            self.assertTrue(store.answer(admin_id, 1, None)["correct"])  # yönetici sorusu korunur
+            self.assertEqual(store.counts()["kiymet"], 2)
+
+    def test_removed_seed_question_returns_when_seed_restores_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            item = {**GOOD, "id": "s-1"}
+            EducationStore(tmp, seed_path=self._seed(tmp, [item]))
+            EducationStore(tmp, seed_path=self._seed(tmp, []))
+            store = EducationStore(tmp, seed_path=self._seed(tmp, [item]))
+            self.assertEqual(store.counts()["kiymet"], 1)
+
+    def test_old_database_without_origin_column_is_migrated(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(Path(tmp) / "education.sqlite3")
+            db.execute("CREATE TABLE questions (id TEXT PRIMARY KEY, branch TEXT NOT NULL, text TEXT NOT NULL, options_json TEXT NOT NULL, "
+                       "answer_index INTEGER NOT NULL, explanation TEXT NOT NULL DEFAULT '', legal_basis TEXT NOT NULL, source_label TEXT NOT NULL, "
+                       "source_url TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)")
+            db.execute("INSERT INTO questions VALUES ('s-1','kiymet','Eski sentetik soru metni?','[\"A\",\"B\"]',0,'','Eski','E','https://e.gov.tr',1,0)")
+            db.commit()
+            db.close()
+            store = EducationStore(tmp, seed_path=self._seed(tmp, [{**GOOD, "id": "s-1"}]))
+            self.assertEqual(store.answer("s-1", 1, None)["question"]["legal_basis"], GOOD["legal_basis"])

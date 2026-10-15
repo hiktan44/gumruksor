@@ -2931,6 +2931,7 @@ function requestCard(item) {
   return `<details class="consultation-request" data-request-id="${escapeHtml(item.id)}">
     <summary><div><span>${item.direction === "incoming" ? "GELEN" : "GÖNDERİLEN"}</span><b>${escapeHtml(item.subject)}</b><small>${escapeHtml(party || "Kullanıcı")} · ${escapeHtml(formatUnixDate(item.created_at))}</small></div><em data-status="${escapeHtml(item.status)}">${escapeHtml(consultationStatusLabels[item.status] || item.status)}</em></summary>
     <div class="consultation-request-body"><p class="initial-message">${escapeHtml(item.message)}</p>
+      ${packet.mutalaa ? `<div class="shared-packet mutalaa-packet"><b>Mütalaa talebi</b><p>Aciliyet: <span class="why-source${packet.mutalaa.urgency === "acil" ? " why-source-unverified" : ""}">${packet.mutalaa.urgency === "acil" ? "ACİL" : "Normal"}</span>${packet.mutalaa.gtip ? ` · GTİP <code>${escapeHtml(packet.mutalaa.gtip)}</code>` : ""}</p><p><b>Belge notu:</b> ${escapeHtml(packet.mutalaa.document_note || "Belirtilmedi")}</p><small>Dosya eki gönderilmez; belgeler yalnızca adıyla anılır.</small></div>` : ""}
       <div class="shared-packet"><b>Paylaşılan analiz özeti</b><p>${escapeHtml(packet.summary || "Özet bulunmuyor.")}</p><code>${escapeHtml(packet.inquiry?.candidate_gtip || "GTİP belirsiz")}</code><span>${escapeHtml(packet.inquiry?.origin_country || "Menşe belirtilmedi")}</span><nav>${sourceLinks || "Resmî kaynak URL’si bulunmuyor."}</nav></div>
       <div class="consultation-thread">${messages || "<p>Henüz ek mesaj yok.</p>"}</div>
       ${mayReply ? `<form class="consultation-reply"><label class="field"><span>Görüşme mesajı</span><textarea required minlength="2" maxlength="2000" placeholder="Yanıtınızı veya ek sorunuzu yazın."></textarea></label><button type="submit">Mesajı gönder</button></form>` : item.status === "sent" ? '<p class="reply-lock">Mesajlaşma, danışman talebi kabul ettikten sonra açılır.</p>' : ""}
@@ -5386,13 +5387,22 @@ $("#fihristLetters")?.addEventListener("click", (event) => {
 const edu = { mode: "practice", questions: [], index: 0, exam: null, timer: null, ready: false };
 const jsonPost = (url, body) => fetchJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
+function renderEduStatus(data) {
+  $("#eduStatus").textContent = data.stats ? `Toplam ${data.stats.attempts} cevap, ${data.stats.correct} doğru, ${data.stats.exams} sınav.` : "Sonuçlarınızın kaydedilmesi ve sınav için Google hesabınızla giriş yapın.";
+}
+
+// Kayıtlı cevap veya sınav sonrası toplamlar yeniden okunur; sekmeye dönüşte eski sayı kalmaz.
+async function refreshEduStatus() {
+  try { renderEduStatus(await fetchJson("/api/education/status")); } catch (error) { /* sayaç yenilenemezse mevcut değer kalır */ }
+}
+
 async function initEducation() {
-  if (edu.ready) return;
+  if (edu.ready) { refreshEduStatus(); return; }
   edu.ready = true;
   try {
     const data = await fetchJson("/api/education/status");
     $("#eduBranch").innerHTML = `<option value="">Tüm branşlar</option>` + Object.entries(data.branches).map(([key, b]) => `<option value="${escapeHtml(key)}">${escapeHtml(b.label)} (${b.questions} soru)</option>`).join("");
-    $("#eduStatus").textContent = data.stats ? `Toplam ${data.stats.attempts} cevap, ${data.stats.correct} doğru, ${data.stats.exams} sınav.` : "Sonuçlarınızın kaydedilmesi ve sınav için Google hesabınızla giriş yapın.";
+    renderEduStatus(data);
   } catch (error) { $("#eduStatus").textContent = error.message || "Eğitim verisi alınamadı."; edu.ready = false; }
 }
 
@@ -5460,6 +5470,7 @@ $("#eduOutput")?.addEventListener("click", async (event) => {
       const result = await jsonPost("/api/education/answer", { question_id: q.id, chosen: Number(choice.dataset.eduChoice) });
       $("#eduFeedback").innerHTML = `<p class="${result.correct ? "edu-right" : "edu-wrong"}"><b>${result.correct ? "Doğru" : "Yanlış"}</b></p>${reviewCard(result, result.chosen)}
         <button type="button" class="analyse-button" data-edu-next><span>Sonraki soru</span></button>${result.recorded ? "" : '<small class="fx-note">Sonuç kaydedilmedi; kaydetmek için giriş yapın.</small>'}`;
+      if (result.recorded) refreshEduStatus();
     } catch (error) { showToast(error.message || "Cevap gönderilemedi."); }
     return;
   }
@@ -5477,6 +5488,7 @@ $("#eduOutput")?.addEventListener("submit", async (event) => {
     $("#eduOutput").innerHTML = `<div class="formula-ledger"><h3>Sonuç: ${result.score} / ${result.total}</h3>
       ${result.overtime ? '<p class="rate-warning">Süre aşıldı; sonuç "süre aşıldı" olarak işaretlendi.</p>' : ""}
       ${result.results.map((r) => reviewCard(r, r.chosen)).join("")}</div>`;
+    refreshEduStatus();
   } catch (error) { showToast(error.message || "Sınav teslim edilemedi."); }
 });
 

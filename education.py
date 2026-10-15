@@ -87,9 +87,39 @@ class EducationStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(questions)").fetchall()}
+            if "origin" not in columns:
+                db.execute("ALTER TABLE questions ADD COLUMN origin TEXT NOT NULL DEFAULT 'admin'")
         if seed_path and Path(seed_path).exists():
-            for item in json.loads(Path(seed_path).read_text(encoding="utf-8")).get("questions", []):
-                self.add_question(item, identifier=str(item["id"]))
+            self._sync_seed(json.loads(Path(seed_path).read_text(encoding="utf-8")).get("questions", []))
+
+    def _sync_seed(self, items: list[dict[str, Any]]) -> None:
+        """Tohum dosyası kalıcı veritabanını yönetir: düzeltmeler uygulanır, kaldırılan sorular pasifleşir.
+
+        Yönetici eklediği sorulara (``origin='admin'``) dokunulmaz.
+        """
+        seen = []
+        for item in items:
+            record = validate_question(item)
+            identifier = str(item["id"])
+            seen.append(identifier)
+            with self._connect() as db:
+                db.execute(
+                    "INSERT INTO questions (id,branch,text,options_json,answer_index,explanation,legal_basis,source_label,source_url,"
+                    "active,origin,created_at) VALUES (?,?,?,?,?,?,?,?,?,1,'seed',?) "
+                    "ON CONFLICT(id) DO UPDATE SET branch=excluded.branch, text=excluded.text, options_json=excluded.options_json, "
+                    "answer_index=excluded.answer_index, explanation=excluded.explanation, legal_basis=excluded.legal_basis, "
+                    "source_label=excluded.source_label, source_url=excluded.source_url, active=1, origin='seed'",
+                    (identifier, record["branch"], record["text"], json.dumps(record["options"], ensure_ascii=False),
+                     record["answer_index"], record["explanation"], record["legal_basis"], record["source_label"],
+                     record["source_url"], time.time()),
+                )
+        with self._connect() as db:
+            if seen:
+                marks = ",".join("?" for _ in seen)
+                db.execute(f"UPDATE questions SET active=0 WHERE origin='seed' AND id NOT IN ({marks})", seen)
+            else:
+                db.execute("UPDATE questions SET active=0 WHERE origin='seed'")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path)
