@@ -139,12 +139,20 @@ class CustomsCrossSectorTests(unittest.TestCase):
         assert c_data["total"] > 0
         assert any("2026/10" in r["rule"]["code"] or "oyuncak" in r["rule"]["title"].lower() for r in c_data["results"])
 
-        # Catalog of all 24 communiques
+        # Tebliğ fihristi: sayı kaynak listesiyle birlikte büyür; sabit yerine
+        # tutarlılık ve bilinen ithalat tebliğlerinin varlığı denetlenir.
         cat_res = client.get("/api/controls/communiques")
         assert cat_res.status_code == 200
         cat_data = cat_res.json()
-        assert cat_data["count"] == 24
-        assert len(cat_data["communiques"]) == 24
+        communiques = cat_data["communiques"]
+        # count alanı liste uzunluğuyla tutarlı olmalı.
+        assert cat_data["count"] == len(communiques)
+        # En az 24 ÜGD ithalat tebliği (2026/*) kataloğa girmeli.
+        import_codes = {c["code"] for c in communiques if c["code"].startswith("2026/")}
+        assert len(import_codes) >= 24
+        # Senaryoda geçen bilinen tebliğler katalogda bulunmalı.
+        for expected in ("2026/10", "2026/18"):
+            assert expected in import_codes
 
 
 if __name__ == "__main__":
