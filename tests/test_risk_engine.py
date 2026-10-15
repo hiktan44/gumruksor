@@ -162,3 +162,75 @@ class RiskHttpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTests(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return RiskStore(tmp.name)
+
+    def test_prohibition_is_preserved_and_high(self):
+        controls = {"status": "matched", "matches": [{
+            "rule": {"title": "Atık ihracı", "authority": "Ticaret Bakanlığı", "system": "TAREKS", "code": "X"},
+            "matched_scope": {"list_kind": "prohibited", "excluded": False}, "assessment": "İhracı yasaktır.",
+        }]}
+        signal = automatic_signals(trade=None, controls=controls, origin_given=True)[0]
+        self.assertEqual(signal["level"], "high")
+        self.assertIn("YASAK", signal["title"])
+        self.assertIn("İhracı yasaktır.", signal["detail"])
+
+    def test_licence_required_and_excluded_scope(self):
+        base = {"rule": {"title": "Liste", "code": "Y"}, "assessment": "a"}
+        controls = {"status": "matched", "matches": [
+            {**base, "matched_scope": {"list_kind": "licence_required", "excluded": False}},
+            {**base, "matched_scope": {"list_kind": "scope", "excluded": True}},
+        ]}
+        signals = automatic_signals(trade=None, controls=controls, origin_given=True)
+        self.assertEqual(len(signals), 1)
+        self.assertIn("Ön izin", signals[0]["title"])
+
+    def test_unavailable_sources_never_look_clean(self):
+        store = self._store()
+        result = check(store, gtip="8517130000", direction="import", year=2026, owner_sub=None,
+                       trade={"warnings": ["Damping verisi yüklenmedi."]}, controls={"status": "unavailable", "warnings": ["Endeks eşitleniyor."]},
+                       origin_given=True)
+        self.assertEqual(result["level"], "unknown")
+        self.assertTrue(result["incomplete"])
+        self.assertIn("Damping verisi yüklenmedi.", result["warnings"])
+        self.assertIn("Endeks eşitleniyor.", result["warnings"])
+
+    def test_quota_origin_handling(self):
+        trade = {"tariff_quota": [
+            {"origin_match": False, "product": "A", "country": "Arnavutluk"},
+            {"origin_match": None, "product": "B", "country": "Arnavutluk"},
+        ]}
+        known = automatic_signals(trade=trade, controls=None, origin_given=True)
+        self.assertEqual(len(known), 1)
+        self.assertEqual(known[0]["level"], "medium")
+        unknown = automatic_signals(trade=trade, controls=None, origin_given=False)
+        self.assertEqual({s["level"] for s in unknown}, {"info"})
+        self.assertTrue(all(s["needs_input"] == "Menşe ülke" for s in unknown))
+
+    def test_safeguard_without_origin_is_downgraded_with_country(self):
+        trade = {"safeguard": [{"origin_match": None, "product": "Düz cam", "country": "İran", "rate_text": "%10"}]}
+        signal = automatic_signals(trade=trade, controls=None, origin_given=False)[0]
+        self.assertEqual(signal["level"], "medium")
+        self.assertIn("İran", signal["detail"])
+        self.assertEqual(signal["needs_input"], "Menşe ülke")
+        confirmed = automatic_signals(trade={"safeguard": [{**trade["safeguard"][0], "origin_match": True}]}, controls=None, origin_given=True)[0]
+        self.assertEqual(confirmed["level"], "high")
+
+    def test_other_year_skips_automatic_sources_and_says_so(self):
+        user = None
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            auth = GoogleAuthService(client_id="c", client_secret="s", session_secret="test-session-secret-that-is-long-enough", data_dir=directory)
+            with patch.object(web_app, "google_auth", auth), patch.object(web_app, "risk_store", RiskStore(directory)), \
+                    patch.object(web_app, "rate_limiter", web_app.FixedWindowRateLimiter()):
+                client = TestClient(web_app.app, base_url=ORIGIN)
+                data = client.post("/api/risk/check", json={"gtip": "9018499000", "origin_country": "Çin", "year": 2019}).json()
+                client.close()
+        self.assertEqual(data["signals"], [])
+        self.assertEqual(data["level"], "unknown")
+        self.assertTrue(any("2019" in w for w in data["warnings"]))

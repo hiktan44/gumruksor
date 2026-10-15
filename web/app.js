@@ -5230,7 +5230,7 @@ loadInfoStrip().catch(() => {});
 
 
 // Risk ön kontrolü: sonuçlar yalnız /api/risk/check yanıtından çizilir.
-const RISK_LEVEL_CLASS = { high: "risk-high", medium: "risk-medium", info: "risk-info", none: "risk-none" };
+const RISK_LEVEL_CLASS = { high: "risk-high", medium: "risk-medium", info: "risk-info", none: "risk-none", unknown: "risk-medium" };
 
 function renderRisk(data) {
   const signals = (data.signals || []).map((item) => `<li class="risk-item risk-${escapeHtml(item.level)}">
