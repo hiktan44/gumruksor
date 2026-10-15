@@ -2,6 +2,24 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — PR #104 gözetim giriş yolları entegrasyonu
+
+- İnceleme P1/P2 bulguları `d38108c` üzerinde doğrulandı. Tarife ve danışman web
+  formlarına iki birim, gözetim dövizi ve çapraz kur alanları eklendi; bilinmeyen
+  birim varsayılmıyor. `CustomsInquiry`, deterministik maliyet ve MCP ön kontrol
+  aracı aynı alanları taşır. Maliyet alanları ve karar soruları birim/kur cevaplarını
+  kullanıcıdan alır; geçersiz/silinen çapraz kur cevabı eski değeri kullanmaz.
+- Açıklamalı CSV/XLSX başlıkları en uzun özel alias ile eşleşir; genel “Gözetim”
+  başlığı artık döviz veya birim alanını tüketmez. Noktalı çapraz kur ondalık kalır.
+- Yeni `tests/test_surveillance_product_paths.py`: gerçek HTML kontrolleri ve
+  üretim JavaScript gönderim/karar/odak olayları Node VM'de yürütülür; çıkan
+  payload çevrimdışı ASGI API'ye ve gerçek aritmetiğe verilir. Danışman HTTP/MCP
+  yollarında LLM ve dış kaynak toplayıcılar taklit edilir; hesap ve modeller gerçektir.
+- 12 yeni test başarılı. Tam paket: **1.602 test; 1.592 başarılı, 10 atlama,
+  hata yok**. Node sözdizimi, Python derleme ve diff kontrolleri başarılı.
+- Aynı PR: https://github.com/hiktan44/gumruksor/pull/104 . Merge/deploy yok;
+  mevcut kullanıcı değişiklikleri ve ilk güvenlik kontrolleri korundu.
+
 ## 15 Ekim 2026 — EMY, toplu gözetim ve yürürlük kapsamı yeniden incelemesi
 
 - Taban `main`: `19b1a0b24a49fdce1c6261bc4e23c6437217d4cf`; doğru remote

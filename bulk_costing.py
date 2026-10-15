@@ -141,6 +141,7 @@ def parse_bool(value: Any) -> bool | None:
 
 def _map_headers(headers: list[Any]) -> dict[int, str]:
     lookup = {alias: field for field, aliases in _COLUMN_ALIASES.items() for alias in aliases}
+    specific_aliases = sorted(lookup.items(), key=lambda item: len(item[0]), reverse=True)
     mapping: dict[int, str] = {}
     for index, header in enumerate(headers):
         key = normalise_header(header)
@@ -149,7 +150,7 @@ def _map_headers(headers: list[Any]) -> dict[int, str]:
         field = lookup.get(key)
         if field is None:
             # "Fatura bedeli (USD)" → "fatura bedeli"; "KDV %" → "kdv"
-            for alias, candidate in lookup.items():
+            for alias, candidate in specific_aliases:
                 if key.startswith(alias + " ") or key == alias:
                     field = candidate
                     break

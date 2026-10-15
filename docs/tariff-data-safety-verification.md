@@ -35,6 +35,8 @@ oran çakışması davranışları korunur.
   önceki güvensiz sıfır/birim varsayımlarının beklentileri güncellendi.
 - `scripts/run_offline_tests.py`: yeniden çalıştırılabilir, geçici veri kullanan test çalıştırıcısı.
 - `PROJECT_NOTES.md` ve bu belge: devir ve doğrulama kanıtı.
+- İnceleme sonrası entegrasyon: `web/index.html`, `web/app.js`, `customs_advisor.py`,
+  `decision_questions.py`, `mevzuat_mcp_server.py`, `tests/test_surveillance_product_paths.py`.
 
 ## Bağımsız yürütme
 
@@ -72,6 +74,49 @@ birim/kur, doğrulanmış belge/sıfır, kısmi kaynak, sorgu hatası, geçmiş,
 gelecek, yalnız gelecekte başlayan kaynak, süresi biten ve onaysız eski sürüm
 senaryoları kapsanır. Bunlar aritmetik regresyon örnekleridir; hukuki oran önerisi değildir.
 HTTP 402/422 gibi ret yanıtları başarılı hesap kanıtı sayılmamıştır.
+
+## PR #104 incelemesi sonrası ürün yolları
+
+[P1](https://github.com/hiktan44/gumruksor/pull/104#discussion_r4281721687) ve
+[P2](https://github.com/hiktan44/gumruksor/pull/104#discussion_r4281721703)
+`d38108c6c7fd26b502151782b112eb13c18c025f` üzerinde doğrulandı. İlk düzeltmede motorun
+zorunlu kıldığı birimler iki web formunda sunulmuyor, danışman modelinden hesaba
+taşınmıyordu. Açıklama ekli dosya başlıklarında da genel önek özel alanları tüketiyordu.
+
+- Tarife ve danışman formlarında **miktar birimi**, **gözetim birimi**, **gözetim
+  dövizi** ve yönü açık **çapraz kur** alanları var. Birimler başlangıçta boş kalır.
+- Gerçek form gönderim/payload kodu bu alanları API'ye taşır. Danışman HTTP modeli,
+  `_deterministic_cost` ve MCP `prepare_customs_precheck` aracı da aynı sözleşmeyi kullanır.
+- Birim karar soruları ve çapraz kur girişi kullanıcı cevabıyla forma/modele yazılır;
+  varsayılan cevap yoktur. Mevcut açık sunucu girdisi karar cevabıyla ezilmez.
+  Boş veya geçersiz yeni çapraz kur cevabı eski değeri tekrar kullanmaz.
+- `0.900`/`0,900` çapraz kuru 0,9 kalır; odak/biçimlendirme olayları da ondalığı
+  binlik değere çeviremez. Tutar alanlarının mevcut Türkçe binlik kuralı korunur.
+- CSV/XLSX önek eşlemesi en uzun özel alias'a öncelik verir. `Gözetim dövizi (USD)`,
+  `Gözetim birimi (USD/kg)` ve İngilizce karşılıkları ayrı sütunlar olarak korunur;
+  birimler başlıktan varsayılmaz, hücredeki açık değer kullanılır.
+
+```sh
+PATH=/path/to/node/bin:$PATH .venv/bin/python scripts/run_offline_tests.py discover -s tests -p test_surveillance_product_paths.py -v
+PATH=/path/to/node/bin:$PATH .venv/bin/python scripts/run_offline_tests.py discover -s tests -v
+```
+
+Yeni **12 test başarılı**; tam paket **1.602 test, 1.592 başarılı, 10 atlama, hata
+yok**. Python derleme, Node sözdizimi ve diff kontrolleri başarılı. Başlangıç
+`d38108c` arşiv kopyasında aynı test paketi kırmızıdır; HTML kontrolleri, MCP/model
+sözleşmesi ve açıklamalı sütun eşlemesi hataları yeniden üretilir.
+
+Testler gönderilecek JSON'u kopyalayarak kurmaz: gönderilen HTML'den kontrolleri,
+başlangıç değerlerini ve select seçeneklerini okur; üretim JS gönderim işleyicisini,
+payload toplayıcılarını, karar cevabı ve odak olaylarını Node VM'de yürütür. Üretilen
+gövde gerçek ASGI uçlarından geçirilir. Danışman analizinin LLM/dış kaynak adımı ve
+ücret/kota sınırı testte taklit edilir; Pydantic doğrulaması ve maliyet aritmetiği
+gerçektir. MCP testinin arka plan eşitlemeleri kapalıdır. Tarayıcı çizimi veya canlı
+ERP testi yapılmamıştır. Başarılı hesaplar durum ve tutarla doğrulanır; 422 yalnız
+geçersiz kurun reddedildiğini kanıtlar.
+
+Yeni loglar: görev klasöründeki `verification/product-paths-before-final.log`,
+`verification/product-paths-final.log`, `verification/integration-full-final.log`.
 
 ## Kalan sınırlar
 

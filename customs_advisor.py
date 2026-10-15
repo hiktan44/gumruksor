@@ -283,6 +283,10 @@ class CustomsInquiry(BaseModel):
     sct_amount: float | None = Field(None, ge=0, le=1_000_000_000)
     surveillance_unit_value: float | None = Field(None, ge=0, le=1_000_000_000)
     has_surveillance_certificate: bool | None = None
+    surveillance_currency: str = Field("USD", min_length=3, max_length=3)
+    surveillance_cross_rate: float | None = Field(None, gt=0, le=1_000_000)
+    surveillance_unit: str | None = Field(None, max_length=20)
+    quantity_unit: str | None = Field(None, max_length=20)
     trt_bandrol_rate: float | None = Field(None, ge=0, le=100)
     exchange_rate: float | None = Field(None, gt=0, le=1_000_000)
     exchange_rate_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -375,7 +379,7 @@ class CustomsInquiry(BaseModel):
             raise ValueError("Kesin alt GTİP onayı yalnızca 12 haneli Türk GTİP için verilebilir.")
         return self
 
-    @field_validator("currency")
+    @field_validator("currency", "surveillance_currency")
     @classmethod
     def normalise_currency(cls, value: str) -> str:
         value = value.upper()
@@ -2393,6 +2397,10 @@ def _deterministic_cost(
         "sct_amount": inquiry.sct_amount,
         "surveillance_unit_value": inquiry.surveillance_unit_value,
         "has_surveillance_certificate": inquiry.has_surveillance_certificate,
+        "surveillance_currency": inquiry.surveillance_currency,
+        "surveillance_cross_rate": inquiry.surveillance_cross_rate,
+        "surveillance_unit": inquiry.surveillance_unit,
+        "quantity_unit": inquiry.quantity_unit,
         "trt_bandrol_rate": inquiry.trt_bandrol_rate,
         "exchange_rate": inquiry.exchange_rate,
         "exchange_rate_date": inquiry.exchange_rate_date or inquiry.as_of_date,

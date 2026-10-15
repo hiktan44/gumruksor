@@ -18,7 +18,8 @@ Rules that hold everywhere in this file:
 
 from __future__ import annotations
 
-from typing import Any
+import math
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,6 +51,7 @@ class DecisionQuestion(BaseModel):
     id: str = Field(..., min_length=1, max_length=60)
     text: str = Field(..., min_length=1, max_length=600)
     options: list[DecisionOption] = Field(default_factory=list, max_length=8)
+    input_type: Literal["decimal"] | None = None
     affects: list[str] = Field(default_factory=list, max_length=6)
     legal_basis: str | None = Field(None, max_length=400)
     default: str | None = Field(None, max_length=80)
@@ -225,6 +227,32 @@ def _payment_question(inquiry: Any) -> list[DecisionQuestion]:
     ]
 
 
+def _surveillance_conversion_questions(inquiry: Any) -> list[DecisionQuestion]:
+    threshold = _field(inquiry, "surveillance_unit_value")
+    if not isinstance(threshold, (int, float)) or threshold <= 0 or _field(inquiry, "has_surveillance_certificate") is not False:
+        return []
+    questions: list[DecisionQuestion] = []
+    options = [DecisionOption(value=value, label=label) for value, label in (("kg", "kg"), ("ton", "ton"), ("adet", "adet"), ("cift", "çift"))]
+    for field, text in (
+        ("quantity_unit", "Beyan ettiğiniz miktarın birimi nedir?"),
+        ("surveillance_unit", "Doğruladığınız gözetim birim kıymetinin birimi nedir?"),
+    ):
+        if not _text(_field(inquiry, field)):
+            questions.append(DecisionQuestion(
+                id=field, text=text, options=options, affects=[field],
+                reason="Belge yokken gözetim tabanı için miktar ve eşik birimleri ayrı ayrı gerekir; aynı birim varsayılmaz.",
+            ))
+    threshold_currency = _text(_field(inquiry, "surveillance_currency")).upper() or "USD"
+    invoice_currency = _text(_field(inquiry, "currency")).upper() or "USD"
+    if threshold_currency != invoice_currency and _field(inquiry, "surveillance_cross_rate") is None:
+        questions.append(DecisionQuestion(
+            id="surveillance_cross_rate", input_type="decimal", affects=["surveillance_cross_rate"],
+            text=f"Doğruladığınız çapraz kur nedir: 1 {threshold_currency} = kaç {invoice_currency}?",
+            reason="Gözetim dövizi fatura dövizinden farklı; çapraz kur yalnız sizin doğruladığınız değerle uygulanır.",
+        ))
+    return questions
+
+
 def _atr_question(lookup: dict[str, Any], inquiry: Any) -> list[DecisionQuestion]:
     if not lookup.get("atr_available"):
         return []
@@ -331,6 +359,7 @@ def build_decision_questions(
     questions: list[DecisionQuestion] = [
         *_vat_questions(vat, inquiry),
         *_surveillance_question(trade, inquiry),
+        *_surveillance_conversion_questions(inquiry),
         *_payment_question(inquiry),
         *_atr_question(lookup, inquiry),
         *_origin_proof_question(lookup),
@@ -409,6 +438,16 @@ def apply_decision_answers(answers: dict[str, str], cost_input_dict: dict) -> di
             flag = _boolean_from_answer(value)
             if flag is not None:
                 put("has_surveillance_certificate", flag)
+        elif question_id in {"quantity_unit", "surveillance_unit"}:
+            if value in {"kg", "ton", "adet", "cift"}:
+                put(question_id, value)
+        elif question_id == "surveillance_cross_rate":
+            try:
+                cross_rate = float(value.replace(",", "."))
+            except ValueError:
+                continue
+            if math.isfinite(cross_rate) and 0 < cross_rate <= 1_000_000:
+                put("surveillance_cross_rate", cross_rate)
         elif question_id == "atr_certificate":
             flag = _boolean_from_answer(value)
             if flag is not None:
