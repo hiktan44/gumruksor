@@ -29,7 +29,7 @@ CATEGORIES = {
     "beyan_uyumsuzlugu": "Beyan uyumsuzluğu",
 }
 DIRECTIONS = {"import", "export", "both"}
-LEVELS = {"high": "Yüksek", "medium": "Orta", "info": "Bilgi", "none": "Kayıt yok"}
+LEVELS = {"high": "Yüksek", "medium": "Orta", "info": "Bilgi", "none": "Kayıt yok", "unknown": "Belirsiz (kaynak eksik)"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS risk_criteria (
     id TEXT PRIMARY KEY,
@@ -204,10 +204,14 @@ def automatic_signals(
         for hit in trade.get("safeguard", []):
             if hit.get("status") == "expired" or hit.get("origin_match") is False:
                 continue
+            unknown_origin = hit.get("origin_match") is None and not origin_given
+            detail = " · ".join(part for part in (hit.get("product", ""), hit.get("country", ""), hit.get("rate_text", "")) if part)
             signals.append({
-                "code": "safeguard", "level": "high", "category": "beyan_uyumsuzlugu", "title": "Korunma önlemi kapsamı",
-                "detail": f"{hit.get('product', '')} · {hit.get('rate_text', '')}".strip(" ·"),
-                "source": hit.get("legal_act") or hit.get("gazette") or "", "needs_input": None,
+                "code": "safeguard", "level": "medium" if unknown_origin else "high",
+                "category": "beyan_uyumsuzlugu",
+                "title": "Korunma önlemi kapsamı" + (" (menşe doğrulanmalı)" if unknown_origin else ""),
+                "detail": detail, "source": hit.get("legal_act") or hit.get("gazette") or "",
+                "needs_input": "Menşe ülke" if unknown_origin else None,
             })
         for hit in trade.get("surveillance", []):
             if hit.get("status") == "expired":
@@ -218,19 +222,34 @@ def automatic_signals(
                 "source": hit.get("legal_act") or hit.get("gazette") or "", "needs_input": None,
             })
         for hit in trade.get("tariff_quota", []):
+            if hit.get("origin_match") is False:
+                continue
+            unknown_origin = hit.get("origin_match") is None and not origin_given
+            detail = " · ".join(part for part in (hit.get("product", ""), hit.get("country", ""), hit.get("rate_text", "")) if part)
             signals.append({
-                "code": "tariff_quota", "level": "medium", "category": "mense", "title": "Tarife kontenjanı kapsamı",
-                "detail": f"{hit.get('product', '')} · {hit.get('country', '')} · {hit.get('rate_text', '')}".strip(" ·"),
-                "source": hit.get("legal_act") or hit.get("gazette") or "", "needs_input": None,
+                "code": "tariff_quota", "level": "info" if unknown_origin else "medium", "category": "mense",
+                "title": "Tarife kontenjanı kapsamı" + (" (menşe doğrulanmalı)" if unknown_origin else ""),
+                "detail": detail, "source": hit.get("legal_act") or hit.get("gazette") or "",
+                "needs_input": "Menşe ülke" if unknown_origin else None,
             })
     if controls and controls.get("status") == "matched":
         for match in controls.get("matches", []):
             rule = match.get("rule", {})
+            scope = match.get("matched_scope", {})
+            if scope.get("excluded"):
+                continue
+            kind = scope.get("list_kind", "scope")
+            title = rule.get("title", "Ürün güvenliği / TAREKS kontrolü")
+            if kind == "prohibited":
+                level, headline = "high", f"YASAK kapsamı: {title}"
+            elif kind == "licence_required":
+                level, headline = "medium", f"Ön izin / ruhsat gerekebilir: {title}"
+            else:
+                level, headline = "medium", f"{title} kapsamında olabilir"
+            detail = " · ".join(part for part in (rule.get("authority", ""), rule.get("system", ""), match.get("assessment", "")) if part)
             signals.append({
-                "code": "control", "level": "medium", "category": "tareks",
-                "title": f"{rule.get('title', 'Ürün güvenliği / TAREKS kontrolü')} kapsamında olabilir",
-                "detail": f"{rule.get('authority', '')} · {rule.get('system', '')}".strip(" ·"),
-                "source": rule.get("code", ""), "needs_input": None,
+                "code": "control_" + kind, "level": level, "category": "tareks", "title": headline,
+                "detail": detail, "source": rule.get("code", ""), "needs_input": None,
             })
     return signals
 
@@ -249,6 +268,7 @@ def assess_level(signals: list[dict[str, Any]], criteria: list[dict[str, Any]]) 
 def check(
     store: RiskStore, *, gtip: str, direction: str, year: int | None, owner_sub: str | None,
     trade: dict[str, Any] | None, controls: dict[str, Any] | None, origin_given: bool,
+    source_notes: list[str] | None = None,
 ) -> dict[str, Any]:
     code = normalise_gtip(gtip)
     direction = "export" if str(direction).lower() == "export" else "import"
@@ -256,11 +276,18 @@ def check(
     criteria = store.match(code, direction, year, owner_sub)
     signals = automatic_signals(trade=trade, controls=controls, origin_given=origin_given)
     level = assess_level(signals, criteria)
+    upstream = [str(item) for item in ((trade or {}).get("warnings") or [])]
+    upstream += [str(item) for item in ((controls or {}).get("warnings") or [])]
+    incomplete = bool(source_notes) or bool(upstream) or (controls is not None and controls.get("status") == "unavailable")
+    if incomplete and level == "none":
+        level = "unknown"
     warnings = ["Karar desteğidir; gümrük idaresinin risk analizi ve seçiciliği burada belirlenmez."]
     if not any(item["official"] for item in criteria):
         warnings.append("Bu GTİP için kayıtlı resmî kaynaklı risk kriteri bulunmuyor; bu, riskin olmadığı anlamına gelmez.")
+    warnings.extend(upstream)
+    warnings.extend(source_notes or [])
     return {
-        "gtip": code, "direction": direction, "year": year, "level": level, "level_label": LEVELS[level],
+        "gtip": code, "direction": direction, "year": year, "level": level, "incomplete": incomplete, "level_label": LEVELS[level],
         "signals": signals, "criteria": criteria, "needs_input": [s["needs_input"] for s in signals if s.get("needs_input")],
         "warnings": warnings,
     }

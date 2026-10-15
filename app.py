@@ -3261,20 +3261,27 @@ async def web_risk_check(request: Request):
         trade: dict[str, Any] | None = None
         controls: dict[str, Any] | None = None
         notes: list[str] = []
-        if direction == "import":
+        current_year = date.today().year
+        if year is not None and year != current_year:
+            # Ticaret önlemi ve kontrol motorları bugünün verisini okur; farklı yıl etiketiyle karıştırılmaz.
+            notes.append(
+                f"{year} yılı için otomatik sinyal üretilmedi: ticaret önlemi ve TAREKS/TSE kapsamı yalnız güncel veriden okunur. "
+                "Yalnız o yıla ait kayıtlı kriterler gösterilir; geçmiş dönem için Tarife sekmesindeki yürürlük tarihini kullanın."
+            )
+        else:
+            if direction == "import":
+                try:
+                    trade = trade_measure_engine.lookup(gtip, origin).as_dict()
+                except ValueError:
+                    notes.append("Ticaret önlemleri bu GTİP uzunluğuyla sorgulanamadı; en az 4 hane girin.")
             try:
-                trade = trade_measure_engine.lookup(gtip, origin).as_dict()
+                controls = (await control_engine.lookup(gtip, direction=direction)).model_dump(mode="json")
             except ValueError:
-                notes.append("Ticaret önlemleri bu GTİP uzunluğuyla sorgulanamadı; en az 4 hane girin.")
-        try:
-            controls = (await control_engine.lookup(gtip, direction=direction)).model_dump(mode="json")
-        except ValueError:
-            notes.append("TAREKS/TSE kapsamı yalnız 4, 6, 8, 10 veya 12 haneli GTİP ile sorgulanır.")
+                notes.append("TAREKS/TSE kapsamı yalnız 4, 6, 8, 10 veya 12 haneli GTİP ile sorgulanır.")
         result = risk_check(
             risk_store, gtip=gtip, direction=direction, year=year, owner_sub=str(user.get("sub")) if user else None,
-            trade=trade, controls=controls, origin_given=origin is not None,
+            trade=trade, controls=controls, origin_given=origin is not None, source_notes=notes,
         )
-        result["warnings"].extend(notes)
     except (RiskError, TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
     except Exception:
