@@ -1592,3 +1592,15 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
   .info-strip { grid-template-columns: 1fr; }
   .tariff-group-grid { grid-template-columns: 1fr; }
 }
+
+.risk-badge { display: inline-block; padding: 4px 12px; border: 1px solid var(--line-strong); font-weight: 700; }
+.risk-badge.risk-high { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.risk-badge.risk-medium { border-color: var(--amber); color: var(--amber); }
+.risk-badge.risk-info { border-color: var(--blue); color: var(--blue); }
+.risk-list { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.risk-item { display: grid; gap: 3px; padding: 8px 12px; border-left: 3px solid var(--line-strong); background: var(--surface-soft); }
+.risk-item.risk-high { border-left-color: var(--danger); }
+.risk-item.risk-medium { border-left-color: var(--amber); }
+.risk-item.risk-info { border-left-color: var(--blue); }
+.risk-item small { color: var(--ink-2); }
+.risk-delete { justify-self: start; border: 0; background: transparent; color: var(--danger); font-size: .62rem; cursor: pointer; }

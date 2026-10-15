@@ -2,6 +2,24 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — Külliyat PR2: Risk ön kontrolü (dal `feat/kulliyat-risk-kontrol`, PR1 dalının üstünde)
+
+- Rapor: "Gümrük Külliyatı REA İncelemesi" (14 Ekim); eksik özellik listesi `KULLIYAT_GOREV.md` ile aynı.
+  Rapor ilkeleri uygulandı: açıklanabilir sonuç, varsayım yok, yalnız birincil kaynak.
+- `risk_engine.py`: `RiskStore` (SQLite `risk_criteria`) + `automatic_signals` + sabit `assess_level`
+  (yüksek sinyal → Yüksek; orta sinyal veya resmî kriter → Orta; yalnız not → Bilgi).
+  Resmî kriter yalnız yönetici ve https kaynak bağlantısıyla eklenir; kullanıcı kayıtları
+  "kullanıcı notu (resmî değildir)" etiketlidir ve yalnız sahibine görünür.
+- API: `POST /api/risk/check`, `POST /api/risk/criteria`, `DELETE /api/risk/criteria/{id}`.
+  Otomatik sinyaller mevcut `trade_measure_engine` (damping, korunma, gözetim, kontenjan) ve
+  `control_engine` (TAREKS/TSE) çıktısından türetilir; yeni oran uydurulmaz. Menşe bilinmiyorsa
+  damping "menşe doğrulanmalı" olarak orta düzeyde kalır.
+- **Veri boşluğu:** `data/official/risk_criteria.json` bilinçli olarak boş; resmî risk kriterleri (2002+)
+  editoryal olarak kaynaklı eklenmeli (yönetici POST ile veya tohum dosyası). Kaynaksız kayıt reddedilir.
+- Ekran: "Risk Kontrol" sekmesi (GTİP, menşe, yön, yıl; seviye rozeti; sinyaller; kriterler; kendi notum).
+- Testler: `tests/test_risk_engine.py` (14). Tam paket TZ=UTC: 1625 test, hata yok.
+- Sıradaki: PR3 BTB / eşya fihristi (`KULLIYAT_GOREV.md`).
+
 ## 15 Ekim 2026 — Külliyat PR1: düzen ve vergi hesap ekranı (dal `feat/kulliyat-duzeni-vergi-ekrani`)
 
 - Kaynak görev: `KULLIYAT_GOREV.md` (5 PR'lık plan; bu PR1). Taban `a3958c9`. Merge/deploy yok.

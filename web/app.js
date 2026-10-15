@@ -5227,3 +5227,66 @@ $$(".tree-leaf").forEach((button) => {
 });
 
 loadInfoStrip().catch(() => {});
+
+
+// Risk ön kontrolü: sonuçlar yalnız /api/risk/check yanıtından çizilir.
+const RISK_LEVEL_CLASS = { high: "risk-high", medium: "risk-medium", info: "risk-info", none: "risk-none", unknown: "risk-medium" };
+
+function renderRisk(data) {
+  const signals = (data.signals || []).map((item) => `<li class="risk-item risk-${escapeHtml(item.level)}">
+    <b>${escapeHtml(item.title)}</b>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+    ${item.source ? `<small>Dayanak: ${escapeHtml(item.source)}</small>` : ""}
+    ${item.needs_input ? `<small class="rate-warning">Kesinleştirmek için gerekli: ${escapeHtml(item.needs_input)}</small>` : ""}</li>`).join("");
+  const criteria = (data.criteria || []).map((item) => `<li class="risk-item ${item.official ? "risk-medium" : "risk-info"}">
+    <b>${escapeHtml(item.title)}</b>
+    <small><span class="why-source ${item.official ? "why-source-official_tariff" : "why-source-unverified"}">${escapeHtml(item.origin_label)}</span> · ${escapeHtml(item.category_label)} · ön ek ${escapeHtml(item.gtip_prefix)}</small>
+    ${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}
+    ${item.source_url ? `<small>Kaynak: <a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label || "Kaynağı aç")}</a></small>` : ""}
+    ${item.official ? "" : `<button type="button" class="risk-delete" data-risk-delete="${escapeHtml(item.id)}">Notu sil</button>`}</li>`).join("");
+  return `<div class="formula-ledger"><h3>${escapeHtml(data.gtip)} · ${data.direction === "export" ? "İhracat" : "İthalat"} · ${escapeHtml(data.year)}</h3>
+    <p><span class="risk-badge ${RISK_LEVEL_CLASS[data.level] || "risk-none"}">Seviye: ${escapeHtml(data.level_label)}</span></p>
+    <h4>Otomatik sinyaller</h4>${signals ? `<ul class="risk-list">${signals}</ul>` : '<p class="missing-list">Mevcut ticaret önlemi ve kontrol verisinde bu GTİP için sinyal bulunmadı.</p>'}
+    <h4>Kayıtlı kriterler</h4>${criteria ? `<ul class="risk-list">${criteria}</ul>` : '<p class="missing-list">Kayıtlı kriter yok.</p>'}
+    ${(data.warnings || []).map((w) => `<p class="rate-warning">${escapeHtml(w)}</p>`).join("")}</div>`;
+}
+
+async function runRiskCheck() {
+  const output = $("#riskOutput");
+  output.innerHTML = '<p class="missing-list">Sorgulanıyor…</p>';
+  const year = $("#riskYear").value;
+  try {
+    const data = await fetchJson("/api/risk/check", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gtip: $("#riskGtip").value, origin_country: $("#riskOrigin").value, direction: $("#riskDirection").value, year: year || null }),
+    });
+    output.innerHTML = renderRisk(data);
+  } catch (error) {
+    output.innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "Risk ön kontrolü yapılamadı.")}</p>`;
+  }
+}
+
+$("#riskForm")?.addEventListener("submit", (event) => { event.preventDefault(); runRiskCheck(); });
+
+$("#riskNoteForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = $("#riskNoteStatus");
+  if (!state.auth?.authenticated) { status.textContent = "Not kaydetmek için Google hesabınızla giriş yapın."; return; }
+  try {
+    await fetchJson("/api/risk/criteria", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gtip_prefix: $("#riskNoteGtip").value, category: $("#riskNoteCategory").value, title: $("#riskNoteTitle").value, description: $("#riskNoteDescription").value }),
+    });
+    status.textContent = "Not kaydedildi; yalnız size görünür.";
+    event.target.reset();
+    if ($("#riskGtip").value) runRiskCheck();
+  } catch (error) { status.textContent = error.message || "Not kaydedilemedi."; }
+});
+
+$("#riskOutput")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-risk-delete]");
+  if (!button) return;
+  try {
+    await fetchJson(`/api/risk/criteria/${encodeURIComponent(button.dataset.riskDelete)}`, { method: "DELETE" });
+    runRiskCheck();
+  } catch (error) { showToast(error.message || "Not silinemedi."); }
+});

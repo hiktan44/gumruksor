@@ -212,12 +212,12 @@
         <nav class="customs-view-tabs" aria-label="Gümrükçe çalışma alanları">
           <button type="button" class="active" data-customs-view="assistant">Ürüne Sor</button>
           <button type="button" data-customs-view="tariff">Vergi Hesap</button>
+          <button type="button" data-customs-view="risk">Risk Kontrol</button>
           <button type="button" data-customs-view="controls">Kontroller &amp; Belgeler</button>
           <button type="button" data-customs-view="changes">Değişiklikler</button>
           <button type="button" data-customs-view="consultants">Gümrük Danışmanları</button>
           <button type="button" data-customs-view="guide">İşlem Rehberi</button>
-          <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Risk Kontrol <small>yakında</small></button>
-          <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">BTB / Fihrist <small>yakında</small></button>
+                    <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">BTB / Fihrist <small>yakında</small></button>
           <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Eğitim <small>yakında</small></button>
           <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Mütalaa <small>yakında</small></button>
         </nav>
@@ -626,6 +626,31 @@
             <button class="analyse-button" type="button" id="euTaricLookup" data-feature="foreign_tariff"><span>AB oranlarını sorgula</span></button>
             <div id="euTaricOutput" aria-live="polite"></div>
           </div>
+        </section>
+
+        <section class="customs-tool-panel" data-customs-panel="risk" hidden aria-labelledby="riskPanelTitle">
+          <header class="tool-panel-head"><span>03 / BEYANNAME ÖNCESİ</span><h2 id="riskPanelTitle">Risk ön kontrolü</h2><p>GTİP için kayıtlı risk kriterlerini ve damping, korunma, gözetim, kontenjan ile TAREKS/TSE kapsamından türetilen sinyalleri bir arada gösterir. Karar desteğidir; gümrük idaresinin risk analizi burada belirlenmez.</p></header>
+          <form class="tool-form" id="riskForm">
+            <fieldset class="tariff-group"><legend>Sorgu</legend><div class="tariff-group-grid">
+              <label class="field req"><span>GTİP <b>*</b></span><input id="riskGtip" required inputmode="numeric" maxlength="14" autocomplete="off" placeholder="4-12 hane, örn. 8517130000"></label>
+              <label class="field opt"><span>Menşe ülke</span><input id="riskOrigin" list="countryList" autocomplete="off" maxlength="100" placeholder="Damping ve kontenjan için"></label>
+              <label class="field req"><span>Yön</span><select id="riskDirection"><option value="import">İthalat</option><option value="export">İhracat</option></select></label>
+              <label class="field opt"><span>Yıl</span><input id="riskYear" type="number" min="1990" max="2100" inputmode="numeric" placeholder="Bu yıl"></label>
+            </div></fieldset>
+            <button class="analyse-button" type="submit"><span>Risk ön kontrolünü çalıştır</span></button>
+          </form>
+          <div class="tool-output" id="riskOutput" aria-live="polite"></div>
+          <details class="scenario-box advanced-fields" id="riskNoteBox">
+            <summary><span>Kendi risk notum</span><small>Yalnız size görünür; resmî kriter değildir</small></summary>
+            <form class="tool-form" id="riskNoteForm">
+              <label class="field"><span>GTİP öneki <b>*</b></span><input id="riskNoteGtip" required inputmode="numeric" maxlength="12" placeholder="Örn. 8517"></label>
+              <label class="field"><span>Kategori</span><select id="riskNoteCategory"><option value="kiymet">Kıymet</option><option value="mense">Menşe</option><option value="tareks">TAREKS / ürün güvenliği</option><option value="damping_kacagi">Damping kaçağı</option><option value="beyan_uyumsuzlugu">Beyan uyumsuzluğu</option></select></label>
+              <label class="field"><span>Başlık <b>*</b></span><input id="riskNoteTitle" required maxlength="200"></label>
+              <label class="field"><span>Açıklama</span><input id="riskNoteDescription" maxlength="2000"></label>
+              <button class="analyse-button" type="submit"><span>Notu kaydet</span></button>
+              <small id="riskNoteStatus" class="fx-note"></small>
+            </form>
+          </details>
         </section>
 
         <section class="customs-tool-panel" data-customs-panel="controls" hidden aria-labelledby="controlsPanelTitle">
