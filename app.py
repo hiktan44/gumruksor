@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 
 from auth_service import AuthError, GoogleAuthService
+from education import BRANCHES as EDUCATION_BRANCHES, EducationError, EducationStore
 from risk_engine import RiskError, RiskStore, check as risk_check
 from account_service import PLANS, AccountError, AccountService, QuotaExceeded
 from billing_service import BillingError, StripeBilling
@@ -109,6 +110,7 @@ ADDITIONAL_ALLOWED_ORIGINS = tuple(
 SALES_CONTACT_EMAIL = os.environ.get("SALES_CONTACT_EMAIL", "hiktan44@gmail.com").strip()
 google_auth = GoogleAuthService()
 account_service = AccountService(google_auth.data_dir)
+education_store = EducationStore(google_auth.data_dir, seed_path=Path(__file__).resolve().parent / "data" / "official" / "question_bank.json")
 risk_store = RiskStore(google_auth.data_dir, seed_path=Path(__file__).resolve().parent / "data" / "official" / "risk_criteria.json")
 stripe_billing = StripeBilling()
 email_sender = ResendEmailSender()
@@ -3404,6 +3406,129 @@ async def web_btb_detail(request: Request):
     if record is None:
         return JSONResponse({"error": "Kayıt bulunamadı."}, status_code=404)
     return JSONResponse(record, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@mcp.custom_route("/api/education/status", methods=["GET"])
+async def web_education_status(request: Request):
+    limited = _rate_limit_response(request, "education-status", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    user = _session_user(request)
+    counts = education_store.counts()
+    payload: dict[str, Any] = {
+        "branches": {key: {"label": label, "questions": counts.get(key, 0)} for key, label in EDUCATION_BRANCHES.items()},
+        "signed_in": bool(user),
+    }
+    if user:
+        payload["stats"] = education_store.stats(str(user["sub"]))
+    return JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
+
+
+@mcp.custom_route("/api/education/practice", methods=["GET"])
+async def web_education_practice(request: Request):
+    """Alıştırma soruları; cevap anahtarı yanıtta yer almaz."""
+    limited = _rate_limit_response(request, "education-practice", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        items = education_store.pick(str(request.query_params.get("branch", "")), int(request.query_params.get("count") or 10))
+    except (EducationError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse({"questions": items}, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/education/answer", methods=["POST"])
+async def web_education_answer(request: Request):
+    limited = _rate_limit_response(request, "education-answer", limit=120, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise EducationError("İstek bir nesne olmalıdır.")
+        user = _session_user(request)
+        result = education_store.answer(str(body.get("question_id", "")), body.get("chosen"), str(user["sub"]) if user else None)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/education/exams", methods=["POST"])
+async def web_education_exam_start(request: Request):
+    limited = _rate_limit_response(request, "education-exam", limit=20, window_seconds=3600)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise EducationError("İstek bir nesne olmalıdır.")
+        exam = education_store.start_exam(
+            str(user["sub"]), str(body.get("branch", "")), int(body.get("count") or 10), int(body.get("minutes") or 15)
+        )
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except (EducationError, TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse(exam, status_code=201, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/education/exams/{exam_id}/submit", methods=["POST"])
+async def web_education_exam_submit(request: Request):
+    limited = _rate_limit_response(request, "education-exam-submit", limit=40, window_seconds=3600)
+    if limited:
+        return limited
+    try:
+        _trusted_request_origin(request)
+        user = _required_user(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise EducationError("İstek bir nesne olmalıdır.")
+        result = education_store.submit_exam(str(user["sub"]), str(request.path_params.get("exam_id", "")), body.get("answers") or {})
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@mcp.custom_route("/api/education/wrong", methods=["GET"])
+async def web_education_wrong(request: Request):
+    limited = _rate_limit_response(request, "education-wrong", limit=60, window_seconds=60)
+    if limited:
+        return limited
+    try:
+        user = _required_user(request)
+    except AuthError as exc:
+        return _auth_error(exc)
+    return JSONResponse({"questions": education_store.wrong_answers(str(user["sub"]))}, headers={"Cache-Control": "private, no-store"})
+
+
+@mcp.custom_route("/api/education/questions", methods=["POST"])
+async def web_education_question_add(request: Request):
+    """Yalnız yönetici: kaynaklı yeni soru ekler (dayanak ve https kaynak zorunlu)."""
+    try:
+        _trusted_request_origin(request)
+        _require_admin(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise EducationError("İstek bir nesne olmalıdır.")
+        identifier = education_store.add_question(body)
+    except SecurityViolation as exc:
+        return _security_response(exc)
+    except AuthError as exc:
+        return _auth_error(exc, status_code=403)
+    except EducationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse({"id": identifier}, status_code=201)
 
 
 @mcp.custom_route("/api/foreign/tariff", methods=["GET"])

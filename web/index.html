@@ -218,8 +218,8 @@
           <button type="button" data-customs-view="changes">Değişiklikler</button>
           <button type="button" data-customs-view="consultants">Gümrük Danışmanları</button>
           <button type="button" data-customs-view="guide">İşlem Rehberi</button>
-          <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Eğitim <small>yakında</small></button>
-          <button type="button" class="soon" disabled aria-disabled="true" title="Hazırlanıyor">Mütalaa <small>yakında</small></button>
+          <button type="button" data-customs-view="egitim">Eğitim</button>
+          <button type="button" data-customs-view="mutalaa">Mütalaa</button>
         </nav>
 
         <div class="info-strip" id="infoStrip" role="status" aria-label="Güncel veri durumu">
@@ -668,6 +668,45 @@
             <div class="fihrist-letters" id="fihristLetters" role="group" aria-label="Harf seçin"></div>
             <div id="fihristOutput" aria-live="polite"></div>
           </details>
+        </section>
+
+        <section class="customs-tool-panel" data-customs-panel="egitim" hidden aria-labelledby="eduPanelTitle">
+          <header class="tool-panel-head"><span>05 / EĞİTİM</span><h2 id="eduPanelTitle">Soru bankası ve deneme sınavı</h2><p>Her sorunun mevzuat dayanağı ve resmî kaynak bağlantısı cevaplandıktan sonra gösterilir. Soru sayısı kaynaklı sorularla sınırlıdır; branşlardaki soru sayısını aşağıda görebilirsiniz.</p></header>
+          <div class="edu-modes" role="group" aria-label="Çalışma biçimi">
+            <button type="button" class="edu-mode active" data-edu-mode="practice">Alıştırma</button>
+            <button type="button" class="edu-mode" data-edu-mode="exam">Deneme sınavı (süreli)</button>
+            <button type="button" class="edu-mode" data-edu-mode="wrong">Yanlışlarım</button>
+          </div>
+          <form class="tool-form" id="eduForm">
+            <fieldset class="tariff-group"><legend>Ayarlar</legend><div class="tariff-group-grid">
+              <label class="field req"><span>Branş</span><select id="eduBranch"></select></label>
+              <label class="field opt"><span>Soru sayısı</span><input id="eduCount" type="number" min="1" max="50" value="5"></label>
+              <label class="field opt" id="eduMinutesField" hidden><span>Süre (dakika)</span><input id="eduMinutes" type="number" min="1" max="180" value="10"></label>
+            </div></fieldset>
+            <button class="analyse-button" type="submit"><span id="eduStartLabel">Başla</span></button>
+          </form>
+          <p class="fx-note" id="eduStatus"></p>
+          <div class="tool-output" id="eduOutput" aria-live="polite"></div>
+        </section>
+
+        <section class="customs-tool-panel" data-customs-panel="mutalaa" hidden aria-labelledby="mutPanelTitle">
+          <header class="tool-panel-head"><span>06 / YAZILI GÖRÜŞ</span><h2 id="mutPanelTitle">Mütalaa talebi</h2><p>Talebiniz seçtiğiniz gümrük danışmanına mevcut danışmanlık akışıyla iletilir; yanıt ve mesajlar Gümrük Danışmanları sekmesindeki talep kutunuzda görünür. Danışman görüşü bağlayıcı idari karar değildir. Dosya eki gönderilmez; belgeleri yalnızca adıyla ve kısa notla belirtin.</p></header>
+          <form class="tool-form" id="mutForm">
+            <fieldset class="tariff-group"><legend>Talep</legend><div class="tariff-group-grid">
+              <label class="field req"><span>Konu <b>*</b></span><input id="mutSubject" required minlength="5" maxlength="130" placeholder="Örn. Klima kompresörü GTİP tespiti"></label>
+              <label class="field opt"><span>GTİP (varsa)</span><input id="mutGtip" inputmode="numeric" maxlength="14"></label>
+              <label class="field req"><span>Aciliyet</span><select id="mutUrgency"><option value="normal">Normal</option><option value="acil">Acil</option></select></label>
+              <label class="field req"><span>Danışman <b>*</b></span><select id="mutConsultant" required></select></label>
+            </div>
+            <label class="field req"><span>Eşya ve soru <b>*</b></span><textarea id="mutMessage" required minlength="10" maxlength="1600" rows="5" placeholder="Eşyanın tanımı, kullanım amacı, bileşimi ve sorunuz"></textarea></label>
+            <label class="field opt"><span>Belge notu</span><input id="mutDocuments" maxlength="500" placeholder="Örn. Ürün kataloğu, fatura, teknik föy (dosya eklenmez)"></label>
+            <label class="consent-row"><input type="checkbox" id="mutConsent"> <span>Bu bilgilerin seçtiğim danışmanla paylaşılmasını onaylıyorum. Kişisel iletişim bilgileri ve fatura değerleri gönderilmez.</span></label>
+            </fieldset>
+            <button class="analyse-button" type="submit"><span>Talebi gönder</span></button>
+            <small class="fx-note" id="mutStatus"></small>
+          </form>
+          <h3>Taleplerim ve durumları</h3>
+          <div class="tool-output" id="mutRequests" aria-live="polite"></div>
         </section>
 
         <section class="customs-tool-panel" data-customs-panel="controls" hidden aria-labelledby="controlsPanelTitle">
