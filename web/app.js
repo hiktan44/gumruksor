@@ -3640,7 +3640,7 @@ $("#tariffForm").addEventListener("submit", async (event) => {
     const data = invoice == null
       ? await fetchJson("/api/tariff/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(common) })
       : await fetchJson("/api/tariff/cost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...common, ...collectTariffCostInputs(invoice), decision_answers: { ...(state.decisionAnswers.tool || {}) } }) });
-    output.innerHTML = renderTariffTool(data);
+    output.innerHTML = renderTariffTool(data) + gtipImagesBox(common.gtip);
     const scenarioBox = $("#scenarioBox");
     if (scenarioBox) {
       scenarioBox.hidden = false;
@@ -5541,4 +5541,62 @@ $("#mutForm")?.addEventListener("submit", async (event) => {
     event.target.reset();
     loadMutRequests();
   } catch (error) { status.textContent = error.message || "Talep gönderilemedi."; }
+});
+
+
+// ---- GTİP örnek görselleri: yalnız resmî kaynak adresleri; fotoğraf tıklayınca kaynaktan yüklenir
+function gtipImagesBox(gtip) {
+  const digits = String(gtip || "").replace(/\D/g, "");
+  if (digits.length < 6) return "";
+  return `<div class="formula-ledger gtip-images" data-gtip="${escapeHtml(digits)}"><h3>Örnek görseller</h3>
+    <p class="rate-warning">Resmî BTB kayıtlarındaki örnek fotoğraflar; sınıflandırma kanıtıdır, bağlayıcı karar değildir.</p>
+    <button type="button" class="analyse-button" data-load-gtip-images><span>Örnek görselleri getir</span></button><div class="gtip-images-body"></div></div>`;
+}
+
+function turkeyImageCard(item) {
+  return `<li class="btb-item"><b>${escapeHtml(item.btb_no)}</b> · <code>${escapeHtml(item.gtip)}</code> · geçerlilik ${escapeHtml(item.valid_from)}
+    <span>${escapeHtml(item.description)}</span>
+    <div class="photo-slot"><button type="button" class="risk-delete" data-load-photo="${safeUrl(item.photo_url)}">Fotoğrafı göster (Bakanlık kaynağından yüklenir)</button></div>
+    <small><a href="${safeUrl(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a></small></li>`;
+}
+
+function renderGtipImages(data) {
+  const turkey = (data.turkey_btb || []).map(turkeyImageCard).join("");
+  const eu = data.eu_ebti || {};
+  const euRows = (eu.decisions || []).map((d) => `<li class="btb-item"><b>${escapeHtml(d.reference)}</b> · ${escapeHtml(d.issuing_country)} · <code>${escapeHtml(d.code)}</code>
+    <span>${escapeHtml(d.description)}</span><small><a href="${safeUrl(d.official_url)}" target="_blank" rel="noreferrer">Resmî AB karar sayfası</a></small></li>`).join("");
+  return `<div class="btb-grid gtip-images-grid">
+    <section><h4>Türkiye BTB fotoğrafları</h4>${turkey ? `<ul class="risk-list">${turkey}</ul>` : '<p class="missing-list">Bu GTİP için kayıtlı Türkiye BTB bulunamadı.</p>'}<p class="rate-warning">${escapeHtml(data.notices?.turkey || "")}</p></section>
+    <section><h4>AB EBTI kararları</h4>${eu.status === "locked" ? `<p class="missing-list">${escapeHtml(eu.message || "Giriş gerekli.")}</p>` : euRows ? `<ul class="risk-list">${euRows}</ul>` : '<p class="missing-list">Eşleşen AB kararı yok.</p>'}
+      ${eu.image_note ? `<p class="rate-warning">${escapeHtml(eu.image_note)}</p>` : ""}<p class="rate-warning">${escapeHtml(data.notices?.eu || "")}</p></section></div>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const load = event.target.closest("[data-load-gtip-images]");
+  if (load) {
+    const box = load.closest(".gtip-images");
+    load.disabled = true;
+    try {
+      const data = await fetchJson(`/api/gtip/images?gtip=${encodeURIComponent(box.dataset.gtip)}`);
+      box.querySelector(".gtip-images-body").innerHTML = renderGtipImages(data);
+      load.hidden = true;
+    } catch (error) { box.querySelector(".gtip-images-body").innerHTML = `<p class="rate-warning">${escapeHtml(error.message || "Görseller alınamadı.")}</p>`; load.disabled = false; }
+    return;
+  }
+  const photo = event.target.closest("[data-load-photo]");
+  if (photo) {
+    const slot = photo.closest(".photo-slot");
+    const img = new Image();
+    img.className = "btb-photo";
+    img.loading = "eager"; // kullanıcı tıkladı; ekran dışındaki lazy görsel hiç başlamaz
+    img.referrerPolicy = "no-referrer";
+    img.alt = "Bakanlık BTB kaydındaki örnek fotoğraf";
+    img.addEventListener("error", () => { slot.innerHTML = '<small class="missing-list">Bu kayıt için fotoğraf bulunamadı veya kaynak şu an yanıt vermiyor.</small>'; });
+    const note = document.createElement("small");
+    note.className = "fx-note";
+    note.textContent = "Fotoğraf yükleniyor…";
+    img.addEventListener("load", () => note.remove());
+    img.src = photo.dataset.loadPhoto;
+    slot.replaceChildren(note, img);
+  }
 });

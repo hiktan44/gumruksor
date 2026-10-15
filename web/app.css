@@ -1624,3 +1624,6 @@ input.input-invalid { border-color: #c0392b !important; box-shadow: 0 0 0 2px rg
 .edu-wrong { color: var(--danger); font-weight: 600; }
 .edu-opt { display: block; padding: 3px 0; }
 #mutMessage { width: 100%; font: inherit; }
+
+.btb-photo { display: block; max-width: 100%; max-height: 320px; margin-top: 6px; object-fit: contain; border: 1px solid var(--line); background: var(--surface); }
+.gtip-images { margin-top: 18px; }

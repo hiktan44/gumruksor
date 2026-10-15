@@ -210,6 +210,28 @@ class BtbStore:
                     break
         return matches
 
+    def by_gtip(self, gtip: str, *, limit: int = 6) -> list[dict[str, Any]]:
+        """Aynı GTİP'in kayıtları önce, sonra 10, 8 ve 6 haneli ön ek eşleşmeleri; her kayıt bir kez, en yeni önce."""
+        digits = re.sub(r"\D", "", gtip or "")
+        if len(digits) < 6:
+            return []
+        limit = max(1, min(int(limit), 12))
+        chosen: dict[str, tuple[int, sqlite3.Row]] = {}
+        with self._connect() as db:
+            for length in (len(digits[:12]), 10, 8, 6):
+                prefix = digits[:length]
+                if len(prefix) < length:
+                    continue
+                for row in db.execute(
+                    "SELECT * FROM btb_rulings WHERE missed_syncs < 2 AND gtip LIKE ? ORDER BY valid_from DESC LIMIT ?",
+                    (prefix + "%", limit),
+                ).fetchall():
+                    chosen.setdefault(row["btb_no"], (length, row))
+                if len(chosen) >= limit:
+                    break
+        ordered = sorted(chosen.values(), key=lambda item: (-item[0], -int(item[1]["valid_from"].replace("-", ""))))
+        return [{**self._public(row), "match_digits": length} for length, row in ordered[:limit]]
+
     def status(self) -> dict[str, Any]:
         with self._connect() as db:
             total = db.execute("SELECT COUNT(*) FROM btb_rulings").fetchone()[0]

@@ -2,6 +2,27 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — Külliyat PR5: GTİP örnek görselleri (dal `feat/kulliyat-gtip-gorseller`, PR4 üstünde)
+
+- Vergi/tarife sonucunun altında "Örnek görseller" kutusu (GTİP en az 6 hane). `GET /api/gtip/images`
+  Türkiye BTB kayıtlarını (aynı GTİP önce, sonra 10/8/6 hane öneki; en çok 6) ve AB EBTI kararlarını döndürür.
+- **TR BTB fotoğrafı doğrulandı:** `uygulama.gtb.gov.tr/BTBBasvuru/grdpht.ashx?ImID=<BTB no>` image/jpeg
+  (3024x4032, ~2,3 MB); fotoğrafı olmayan kayıtta 302 döner, bu yüzden varlık önceden bilinemez.
+  Görsel **saklanmaz, proxylenmez**: kullanıcı "Fotoğrafı göster" deyince tarayıcı doğrudan Bakanlıktan
+  yükler (`referrerpolicy=no-referrer`, eager; lazy ekran dışında hiç başlamıyordu), hata olursa "fotoğraf
+  bulunamadı" der. Sitede kullanım koşulu/telif metni bulunamadı, robots.txt yok (404); yine de kopyalanmıyor.
+- **AB EBTI görseli doğrulanamadı:** `ebti_details.jsp` ayrıntı sayfası 15 Ekim'de HTTP 500 (gerçek bir
+  DEBTI referansıyla denendi) ve CSV'de görsel alanı yok; bu yüzden görsel adresi **uydurulmadı**
+  (`image_url: null`), yalnız resmî karar bağlantısı + "görsel adresi doğrulanamadı" notu verilir. EBTI
+  servisi düzelince adres kalıbı ölçülüp eklenmeli. Not: `parse_decisions` CSV başlıkları görsel içermiyor.
+- Gizlilik/uyarı: TR için "BTB yalnız başvuru sahibini bağlar, görseller örnek niteliğinde"; AB için
+  "Türkiye'de bağlayıcı değildir". AB sonuçları `foreign_tariff` kilidine tabidir (giriş yoksa "locked").
+- Dağıtım notu: uygulamada CSP başlığı yok; ters proxy/Coolify tarafında `img-src` kısıtı varsa
+  `uygulama.gtb.gov.tr` izinli olmalı.
+- Testler: `tests/test_gtip_images.py` (7). Tam paket TZ=UTC: 1672 test, hata yok. Gerçek veriyle elle doğrulandı.
+- Külliyat planı (PR1-PR5) tamam. Açık iş: resmî risk kriterleri ve 2002+ arşivi, soru bankası genişletme,
+  EBTI görsel adresi, `data/official/question_bank.json` ve `risk_criteria.json` editoryal doldurma.
+
 ## 15 Ekim 2026 — Külliyat PR4: Eğitim soru bankası + mütalaa talebi (dal `feat/kulliyat-egitim-mutalaa`, PR3 üstünde)
 
 - `education.py` + `data/official/question_bank.json`: her soru mevzuat dayanağı ve https kaynakla
