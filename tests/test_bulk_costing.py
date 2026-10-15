@@ -101,9 +101,9 @@ class BulkCalculationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["customs_value"], 11250.0)
         self.assertEqual(first["rates"]["customs_duty"], 12.0)
         self.assertEqual(first["landed_total"], 18045.0)
-        # Motor resmî listede EMY bulamadığını söylüyor; tek satır hesabıyla aynı kuralla %0 alınır.
-        self.assertNotIn("Ek mali yükümlülük oranı", result["rows"][1]["missing_rates"])
-        self.assertEqual(result["rows"][1]["rates"]["financial_liability"], 0.0)
+        # Kısmi EMY kapsamındaki satır yokluğu uygulanmazlık kanıtı değildir.
+        self.assertIn("Ek mali yükümlülük oranı", result["rows"][1]["missing_rates"])
+        self.assertIsNone(result["rows"][1]["rates"]["financial_liability"])
         # "10.000" Türkçe binlik okunur ve satıra açıklama notu düşer.
         self.assertTrue(any("binlik" in warning for warning in first["warnings"]))
         self.assertIn("GTİP boş", result["rows"][2]["error"])

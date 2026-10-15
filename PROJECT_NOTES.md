@@ -2,6 +2,26 @@
 
 Son güncelleme: 15 Ekim 2026 (Europe/Istanbul)
 
+## 15 Ekim 2026 — EMY, toplu gözetim ve yürürlük kapsamı yeniden incelemesi
+
+- Taban `main`: `19b1a0b24a49fdce1c6261bc4e23c6437217d4cf`; doğru remote
+  `hiktan44/gumruksor`. Yeni temiz klonda `fix/tariff-data-completeness` dalı.
+  PR #101 birleşmiş; açık PR #103 yalnız test/rapor ekliyor. Üç risk hâlâ mevcuttu.
+- Kısmi/eksik EMY kapsamındaki satır yokluğu veya kaynak sorgu hatası artık
+  uygulanmazlık/%0 sayılmaz. Açık resmî sıfır ve kullanıcıca doğrulanan oran korunur.
+- Toplu JSON/CSV/XLSX gözetim dövizi, çapraz kur ve iki birimi taşır. Eksik birim,
+  kur veya belge durumunda nihai toplam verilmez. Sentetik 100 kg × 20.000 USD/ton
+  örneği 2.000 USD taban verir; bu bir hukuki oran önerisi değildir.
+- Etkin snapshot sorgu gününü kapsamıyorsa yalnız günü kapsayan onaylı eski sürüm
+  seçilir. Böyle bir sürüm yoksa tarih/kaynak eksikliği açıkça bildirilir.
+- 19 yeni regresyon başlangıç kodunda 35 başarısız assertion/alt senaryo ve
+  1 metadata sorgu hatası üretti; düzeltmelerle 19/19 geçiyor. Tam paket:
+  **1.590 test, 1.580 başarılı, 10 atlama, hata yok**. Atlamalar: 9 canlı önbellek,
+  1 Chromium PDF testi. Geçici veri, temiz ortam ve dış ağ/DNS engeli kullanıldı.
+- Yeniden yürütme: `.venv/bin/python scripts/run_offline_tests.py discover -s tests -v`.
+  Ayrıntı: `docs/tariff-data-safety-verification.md`. Gerçek müşteri/ERP/LLM veya
+  üretim kaydı kullanılmadı; merge ve deploy yapılmadı. Yerel container/Trivy yok.
+
 ## 15 Ekim 2026 — Faz 0: vergi hesabı düzeltmeleri (dal `fix/faz0-vergi-motoru`)
 
 - Kaynak: "GümrükSor Üzerine Külliyat + Mevzuat.Net Yapısı ve Sağlam Vergi Motoru"

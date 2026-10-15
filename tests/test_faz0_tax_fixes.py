@@ -3,7 +3,7 @@
 1. MCP maliyet aracı tanımsız ``as_of`` yüzünden her çağrıda NameError veriyordu.
 2. "akreditif" metni "kredi" alt dizesine takılıp KKDF %6 öneriyordu.
 3. İleri tarihli kararname snapshot'ı indirildiği an bugünkü hesaba giriyordu; "bugün" UTC idi.
-4. EMY listede yokken motor "uygulanmaz" dediği halde hesap satırı eksik kalıyordu.
+4. Kısmi EMY kapsamında satır yokluğu muafiyet sayılmaz; kullanıcı oranı korunur.
 5. Kullanıcı oranı / resmî oran çakışması ön kontrol yolunda sessizdi.
 6. Gözetim eşiği (USD/kg) fatura dövizi ve birim çevrilmeden karşılaştırılıyordu.
 7. Toplu hesap tescil tarihini ve A.TR beyanını iletmiyordu; FOB sütunu sessizdi.
@@ -160,7 +160,7 @@ class IstanbulTodayTests(unittest.TestCase):
         self.assertEqual(late_utc.astimezone(ISTANBUL).date(), date(2026, 10, 15))
 
 
-# ----------------------------------------------------------------------------- 4. EMY %0
+# ----------------------------------------------------------------------------- 4. EMY belirsizliği
 
 
 class FinancialLiabilityInferenceTests(unittest.IsolatedAsyncioTestCase):
@@ -177,15 +177,16 @@ class FinancialLiabilityInferenceTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.close()
         self.temp_dir.cleanup()
 
-    async def test_engine_statement_becomes_a_zero_line(self) -> None:
+    async def test_absent_emy_in_partial_coverage_requires_confirmation(self) -> None:
         lookup = await self.engine.lookup(_GTIP, origin_country="Çin")
-        self.assertIn("additional_financial_liability", lookup.not_applicable_measures)
+        self.assertNotIn("additional_financial_liability", lookup.not_applicable_measures)
         result = await self.engine.calculate(_GTIP, "Çin", LandedCostInput(invoice_value=1000))
         cost = result["cost"]
         emy = next(line for line in cost["lines"] if line["code"] == "financial_liability")
-        self.assertEqual(emy["rate"], 0.0)
-        self.assertNotIn("Ek mali yükümlülük oranı", cost["missing_rates"])
-        self.assertTrue(any("EMY tespit edilmedi" in warning for warning in cost["warnings"]))
+        self.assertIsNone(emy["rate"])
+        self.assertIn("Ek mali yükümlülük oranı", cost["missing_rates"])
+        self.assertEqual(cost["status"], "partial")
+        self.assertIsNone(cost["landed_total"])
 
     async def test_user_rate_is_not_overwritten(self) -> None:
         result = await self.engine.calculate(
@@ -216,7 +217,8 @@ class PrecheckOverrideTests(unittest.TestCase):
 
 class SurveillanceConversionTests(unittest.TestCase):
     def _cost(self, **overrides):
-        values = dict(invoice_value=1000, quantity=100, surveillance_unit_value=20, has_surveillance_certificate=False, kkdf_rate=0)
+        values = dict(invoice_value=1000, quantity=100, surveillance_unit_value=20, has_surveillance_certificate=False,
+                      kkdf_rate=0, quantity_unit="kg", surveillance_unit="kg")
         values.update(overrides)
         return calculate_landed_cost(_base_cost(**values))
 

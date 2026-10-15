@@ -41,6 +41,10 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "anti_dumping_amount": ("damping", "damping tutari", "anti dumping", "dumping", "subvansiyon"),
     "sct_amount": ("otv", "otv tutari", "sct"),
     "surveillance_unit_value": ("gozetim", "gozetim kiymeti", "gozetim birim kiymeti", "surveillance"),
+    "surveillance_currency": ("surveillance currency", "gozetim dovizi", "gozetim para birimi"),
+    "surveillance_cross_rate": ("surveillance cross rate", "gozetim capraz kuru", "gozetim capraz kur"),
+    "surveillance_unit": ("surveillance unit", "gozetim birimi", "gozetim esik birimi"),
+    "quantity_unit": ("quantity unit", "miktar birimi"),
     "has_surveillance_certificate": ("gozetim belgesi", "surveillance certificate"),
     "atr_certificate": ("atr", "a tr", "atr belgesi", "a tr belgesi", "atr certificate"),
     "additional_financial_liability_rate": ("emy", "ek mali yukumluluk", "ek mali yukumluluk orani"),
@@ -57,7 +61,7 @@ _NUMERIC_FIELDS = {
     "invoice_value", "freight", "insurance", "other_costs", "quantity", "vat_rate", "kkdf_rate",
     "anti_dumping_amount", "sct_amount", "surveillance_unit_value", "additional_financial_liability_rate",
     "customs_duty_rate", "additional_duty_rate", "trt_bandrol_rate", "exchange_rate", "stamp_duty_try",
-    "port_storage_try", "gekap_try",
+    "port_storage_try", "gekap_try", "surveillance_cross_rate",
 }
 _DEFAULT_ZERO = {"freight", "insurance", "other_costs"}
 
@@ -65,10 +69,11 @@ TEMPLATE_HEADERS = [
     "GTİP", "Menşe", "Sevk ülkesi", "Açıklama", "Fatura bedeli", "Navlun", "Sigorta", "Diğer gider", "Miktar",
     "Para birimi", "KDV", "Ödeme şekli", "KKDF", "Damping", "ÖTV", "Gözetim", "EMY", "GV", "İGV",
     "Kur", "Kur tarihi", "Damga vergisi", "TRT bandrol", "Liman/ardiye", "GEKAP",
+    "Gözetim dövizi", "Gözetim çapraz kuru", "Gözetim birimi", "Miktar birimi",
 ]
 TEMPLATE_ROWS = [
-    ["6911.10.00.00.11", "Çin", "", "Porselen yemek takımı", "10000", "1200", "50", "300", "2000", "USD", "20", "mal mukabili", "", "0", "0", "0", "0", "", "", "41,25", "2026-09-05", "1.250", "0", "18.000", "0"],
-    ["6103.42.00.00.00", "Almanya", "Almanya", "Pamuklu erkek pantolon", "25.000,00", "800", "0", "0", "1500", "EUR", "10", "peşin", "0", "0", "0", "0", "0", "", "", "", "", "", "", "", ""],
+    ["6911.10.00.00.11", "Çin", "", "Porselen yemek takımı", "10000", "1200", "50", "300", "2000", "USD", "20", "mal mukabili", "", "0", "0", "0", "0", "", "", "41,25", "2026-09-05", "1.250", "0", "18.000", "0", "USD", "", "adet", "adet"],
+    ["6103.42.00.00.00", "Almanya", "Almanya", "Pamuklu erkek pantolon", "25.000,00", "800", "0", "0", "1500", "EUR", "10", "peşin", "0", "0", "0", "0", "0", "", "", "", "", "", "", "", "", "USD", "", "adet", "adet"],
 ]
 
 
@@ -83,7 +88,7 @@ def normalise_header(value: Any) -> str:
 # anlamsızdır); tutar alanlarında Türkçe binlik ayırıcı kuralı korunur ve uyarı üretilir.
 _DECIMAL_DOT_FIELDS = frozenset({
     "exchange_rate", "vat_rate", "kkdf_rate", "customs_duty_rate", "additional_duty_rate",
-    "additional_financial_liability_rate", "trt_bandrol_rate",
+    "additional_financial_liability_rate", "trt_bandrol_rate", "surveillance_cross_rate",
 })
 _DOT_THOUSANDS_RE = re.compile(r"-?\d{1,3}(\.\d{3})+")
 
@@ -258,6 +263,10 @@ def _clean_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             payload[field] = value
     currency = str(row.get("currency") or "USD").strip().upper()[:3]
     payload["currency"] = currency or "USD"
+    for field in ("surveillance_currency", "surveillance_unit", "quantity_unit"):
+        value = str(row.get(field) or "").strip()
+        if value:
+            payload[field] = value
     payment = row.get("payment_method")
     if payment:
         payload["payment_method"] = str(payment)[:100]
