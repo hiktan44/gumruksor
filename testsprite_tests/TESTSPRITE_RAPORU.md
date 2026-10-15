@@ -11,15 +11,17 @@
 
 ## 1. Özet
 
-| Katman | Test | Geçti | Kaldı | Bekliyor |
-|--------|-----:|------:|------:|---------:|
-| Backend API | 39 | **39** | 0 | 0 |
-| Frontend (public) | 4 | **4** | 0 | 0 |
-| **Toplam** | **43** | **43** | **0** | **0** |
+| Katman | Test | Geçti |
+|--------|-----:|------:|
+| TestSprite — Backend (public) | 39 | **39** |
+| TestSprite — Frontend (public) | 4 | **4** |
+| TestSprite — Backend (kimlik doğrulamalı / API anahtarı) | 6 | **6** |
+| **TestSprite toplam** | **49** | **49** |
+| Python unittest (oturum-korumalı özellikler) | 1571 | **1571** (1 skip) |
 
-**Sonuç:** Canlı backend'in tüm ana özellik grupları ve public frontend sayfaları doğrulandı — **43/43 geçti**, hiç hata yok.
+**Sonuç:** TestSprite'ta **49/49 geçti**; kimlik doğrulamalı ERP uçları API anahtarıyla kapsandı. Google oturumu gerektiren özellikler (hesap, admin, danışman, asistan, senaryo, tasarruf, izleme, faturalama) **1571 Python unittest** ile kapsanıyor (bugün yeniden koşuldu, hepsi yeşil). Tüm katmanlarda hata yok.
 
-> **Önemli kısıt:** Uygulama girişi yalnızca **Google OAuth** ile. TestSprite form-tabanlı login yapar; Google'ın OAuth redirect/2FA akışını otomatikleştiremez. Bu yüzden login gerektiren `/app` SPA akışları (hesap, dosya, asistan, toplu hesap panelleri) TestSprite ile uçtan uca test **edilemedi** — API seviyesinde bu özelliklerin yetki kontrolü (401/403 doğru reddi) doğrulandı. Bkz. §4.
+> **Kalan sınır:** Google oturumu isteyen `/app` SPA akışlarının *tarayıcı tarafı* TestSprite ile uçtan uca test edilemez (form-login OAuth redirect'i otomatikleştiremez). Bu özelliklerin iş mantığı unittest paketinde; tarayıcı akışını da TestSprite'a almak için test-only dev-login gerekir (bkz. §4).
 
 ---
 
@@ -103,35 +105,59 @@ Testler canlı API'ye gerçek HTTP istekleriyle, somut assertion'larla (status k
 
 ---
 
-## 4. Kapsanamayan alanlar ve neden
+## 3.5 Backend — kimlik doğrulamalı ERP uçları (API anahtarı) — 6/6 PASSED
 
-Aşağıdaki özellikler **login gerektirdiği** ve giriş yalnızca Google OAuth ile olduğu için TestSprite ile uçtan uca test edilemedi. API seviyesinde yetki reddi (§2.6) doğrulandı ama kimliği doğrulanmış akışlar değil:
+Ayrı projede (`gumruksor-api-auth`) koşuldu; proje düzeyinde **Bearer** credential (bir `gsk_` API anahtarı) enjekte edildi. Anahtar test koduna/commit'e girmez — kod başına TestSprite'ın enjekte ettiği `__AUTH_HEADERS__` kullanılır. API anahtarı yalnızca bu "ERP beyaz listesi" uçlarında kabul edilir.
 
-- Hesap / abonelik / API anahtarı yönetimi (`/api/account*`)
-- Dosyalar (`/api/dossiers*`)
-- Gümrük asistanı — soru/akış/paylaşım (`/api/customs/assistant*`)
-- Toplu hesap ve tasarruf (`/api/tariff/{bulk,scenarios,savings}`)
-- Danışman / danışma talepleri (`/api/consultants*`, `/api/consultation-requests*`)
-- Admin paneli (`/api/admin/*`)
-- Ürün sınıflandırma / görsel tanıma / ön kontrol (`/api/customs/{classify,describe-image,precheck}`)
-- İzleme listesi (`/api/watchlist`)
-- Faturalama / Stripe (`/api/billing/*`)
+| Test | Doğrulanan |
+|------|-----------|
+| `dossiers_list_authed` | `GET /api/dossiers` + Bearer → 200, liste |
+| `dossier_by_id_notfound_authed` | `GET /api/dossiers/{yok}` → 404 (kimlik doğrulanmış, 401 değil) |
+| `dossier_create_authed` | `POST /api/dossiers` → 201 + `id` |
+| `bulk_authed` | `POST /api/tariff/bulk` (JSON rows) → 200 |
+| `precheck_authed` | `POST /api/customs/precheck` → kimlik kabul (200/402), LLM+kota |
+| `declaration_draft_authed` | `POST /api/customs/declaration-draft` → kimlik kabul (200/402/422) |
 
-**Bu alanları da kapsamak için seçenekler:**
-1. **Test-only oturum/dev-login** eklemek (staging'de, sadece test için kısa ömürlü bir giriş yolu) → TestSprite form-login ile `/app` akışları test edilebilir.
-2. Backend için **auto-auth (recurring-token)** yapılandırması (Pro) → kimliği doğrulanmış API testleri enjekte edilen token ile çalışır.
-3. Bu özellikler için **mevcut Python unittest paketi** (1553 test) zaten yerel/CI'da kapsıyor; TestSprite'ı tamamlayıcı olarak kullanmak.
+> **Yan etki notu:** `dossier_create_authed` her koşuda prod hesabında bir dosya oluşturur (API anahtarı `DELETE` edemez, yalnızca oturum silebilir). `precheck`/`declaration-draft` LLM çağırır ve kota harcar. Bu testleri her regresyonda değil, bilinçli smoke olarak koşmanız önerilir.
+
+---
+
+## 4. Yalnızca Google oturumu gerektiren özellikler (TestSprite tarayıcı kapsamı dışında)
+
+Aşağıdaki uçlar API anahtarı kabul etmez; yalnızca Google oturum çereziyle erişilir. TestSprite form-login OAuth akışını otomatikleştiremediği için bunların *tarayıcı tarafı* uçtan uca test edilmedi. Hepsinin **iş mantığı 1571 Python unittest ile kapsanıyor** (bugün yeşil), ve API seviyesinde yetki reddi (§2.6) doğrulandı:
+
+- Hesap / abonelik / API anahtarı yönetimi (`/api/account*`) — unittest: 21 dosya
+- Admin paneli (`/api/admin/*`) — unittest: 25 dosya
+- Gümrük asistanı — soru/akış/paylaşım (`/api/customs/assistant*`) — unittest: 3 dosya
+- Senaryo & tasarruf (`/api/tariff/{scenarios,savings}`) — unittest: 4+2 dosya
+- Danışman / danışma talepleri (`/api/consultants*`, `/api/consultation-requests*`) — unittest: 2 dosya
+- Ürün sınıflandırma / görsel tanıma (`/api/customs/{classify,describe-image}`)
+- İzleme listesi (`/api/watchlist`), Faturalama / Stripe (`/api/billing/*`)
+
+> ERP beyaz listesindeki uçlar (dossiers, bulk, precheck, declaration-draft) API anahtarı kabul ettiği için **§3.5'te TestSprite ile kapsandı**.
+
+**Tarayıcı akışını da TestSprite'a almak için — senin kararın:**
+1. **Test-only dev-login** eklemek (staging'de, sadece test için kısa ömürlü giriş yolu). Üretim güvenlik yüzeyi olduğu için ayrı ve bilinçli bir karar gerektirir.
+2. Mevcut **1571 Python unittest** paketini bu özelliklerin kapsama katmanı olarak sürdürmek (önerilen; TestSprite'ı public + ERP yüzeyi için kullanmak).
 
 ---
 
 ## 5. Yeniden çalıştırma
 
 ```bash
-# Backend — tüm 39 test (dalga sıralı)
+# Public backend — 39 test
 testsprite test run --all --project 5cbccf6d-394e-4961-93ea-a49a554e158b
+
+# Kimlik doğrulamalı ERP — 6 test (önce: project credential ile bir gsk_ anahtarı Bearer olarak ayarlanmalı)
+testsprite test run --all --project 08a74690-6454-4f79-b841-ef1556bf824a
 
 # Frontend — her test id ile (FE'de --all yok)
 testsprite test run <testId> --wait
+
+# Oturum-korumalı özellikler — Python unittest (yerel/CI)
+uv run python -m unittest discover -s tests
 ```
 
-Test kaynakları repoda: `testsprite_be/*.py` (39 backend), `testsprite_fe/*.json` (4 frontend plan).
+Test kaynakları repoda: `testsprite_be/*.py` (39 public backend), `testsprite_be_auth/*.py` (6 kimlik doğrulamalı ERP), `testsprite_fe/*.json` (4 frontend plan).
+
+> **Gizlilik:** API anahtarı (`gsk_…`) hiçbir test dosyasında/commit'te yoktur; TestSprite proje credential'ına enjekte edilir, kod başına `__AUTH_HEADERS__` olarak gelir. Yerel koşuda `TESTSPRITE_AUTH_CREDENTIAL` env değişkeninden okunur. Test bitince anahtarı `/app → API anahtarları`'ndan iptal etmeniz önerilir.
