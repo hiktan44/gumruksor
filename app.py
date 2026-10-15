@@ -3546,7 +3546,7 @@ async def web_gtip_images(request: Request):
         require_feature(request, "foreign_tariff")
         found = ebti_engine.search("", code_prefix=gtip[:10] if len(gtip) >= 6 else gtip, limit=4).as_dict()
         eu = {
-            "status": found["status"],
+            "status": found["status"], "warnings": found.get("warnings", []),
             "decisions": [
                 {"reference": hit["reference"], "issuing_country": hit["issuing_country"], "code": hit["code"],
                  "description": hit["description"][:240], "official_url": hit["url"], "image_url": None}
@@ -3560,7 +3560,7 @@ async def web_gtip_images(request: Request):
         eu = {"status": "invalid", "message": str(exc), "decisions": []}
     return JSONResponse(
         {
-            "gtip": gtip, "turkey_btb": turkey, "eu_ebti": eu,
+            "gtip": gtip, "turkey_btb": turkey, "turkey_btb_status": btb_engine.store.status(), "eu_ebti": eu,
             "notices": {
                 "turkey": "Fotoğraflar Ticaret Bakanlığı BTB Başvuru Sistemi'nden anlık yüklenir; bu uygulama kopyalamaz veya saklamaz. BTB yalnız ilgili başvuru sahibini ve bildirilen eşyayı bağlar; görseller örnek niteliğindedir.",
                 "eu": "AB BTB kararları Türkiye'de bağlayıcı değildir; karşılaştırmalı sınıflandırma kanıtıdır.",

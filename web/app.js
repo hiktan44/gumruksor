@@ -5563,11 +5563,14 @@ function turkeyImageCard(item) {
 function renderGtipImages(data) {
   const turkey = (data.turkey_btb || []).map(turkeyImageCard).join("");
   const eu = data.eu_ebti || {};
+  const turkeyReady = data.turkey_btb_status?.ready !== false;
+  const euUnavailable = eu.status === "unavailable";
+  const euWarnings = (eu.warnings || []).map((w) => `<p class="rate-warning">${escapeHtml(w)}</p>`).join("");
   const euRows = (eu.decisions || []).map((d) => `<li class="btb-item"><b>${escapeHtml(d.reference)}</b> · ${escapeHtml(d.issuing_country)} · <code>${escapeHtml(d.code)}</code>
     <span>${escapeHtml(d.description)}</span><small><a href="${safeUrl(d.official_url)}" target="_blank" rel="noreferrer">Resmî AB karar sayfası</a></small></li>`).join("");
   return `<div class="btb-grid gtip-images-grid">
-    <section><h4>Türkiye BTB fotoğrafları</h4>${turkey ? `<ul class="risk-list">${turkey}</ul>` : '<p class="missing-list">Bu GTİP için kayıtlı Türkiye BTB bulunamadı.</p>'}<p class="rate-warning">${escapeHtml(data.notices?.turkey || "")}</p></section>
-    <section><h4>AB EBTI kararları</h4>${eu.status === "locked" ? `<p class="missing-list">${escapeHtml(eu.message || "Giriş gerekli.")}</p>` : euRows ? `<ul class="risk-list">${euRows}</ul>` : '<p class="missing-list">Eşleşen AB kararı yok.</p>'}
+    <section><h4>Türkiye BTB fotoğrafları</h4>${turkey ? `<ul class="risk-list">${turkey}</ul>` : turkeyReady ? '<p class="missing-list">Bu GTİP için kayıtlı Türkiye BTB bulunamadı.</p>' : '<p class="rate-warning">Türkiye BTB listesi henüz yüklenmedi; bu bir "kayıt yok" sonucu değildir. Kısa süre sonra yeniden deneyin.</p>'}<p class="rate-warning">${escapeHtml(data.notices?.turkey || "")}</p></section>
+    <section><h4>AB EBTI kararları</h4>${eu.status === "locked" ? `<p class="missing-list">${escapeHtml(eu.message || "Giriş gerekli.")}</p>` : euUnavailable ? `<p class="rate-warning">AB BTB indeksi şu an kullanılamıyor; bu bir "karar yok" sonucu değildir.</p>${euWarnings}` : euRows ? `<ul class="risk-list">${euRows}</ul>` : '<p class="missing-list">Eşleşen AB kararı yok.</p>'}
       ${eu.image_note ? `<p class="rate-warning">${escapeHtml(eu.image_note)}</p>` : ""}<p class="rate-warning">${escapeHtml(data.notices?.eu || "")}</p></section></div>`;
 }
 

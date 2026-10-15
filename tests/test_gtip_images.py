@@ -94,3 +94,24 @@ class RouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadinessTests(unittest.TestCase):
+    def test_response_reports_index_readiness_and_ebti_unavailability(self):
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = btb.BtbEngine(tmp, delay=0)  # eşitlenmemiş, boş depo
+            auth = GoogleAuthService(client_id="c", client_secret="s", session_secret="test-session-secret-that-is-long-enough", data_dir=Path(tmp))
+            unavailable = MagicMock()
+            unavailable.as_dict.return_value = {"status": "unavailable", "hits": [], "warnings": ["AB indeksi henüz hazır değil."]}
+            with patch.object(web_app, "btb_engine", engine), patch.object(web_app, "google_auth", auth), \
+                    patch.object(web_app, "rate_limiter", web_app.FixedWindowRateLimiter()), \
+                    patch.object(web_app, "require_feature", return_value=None), patch.object(web_app.ebti_engine, "search", return_value=unavailable):
+                client = TestClient(web_app.app, base_url="https://gumruksor.com")
+                data = client.get("/api/gtip/images", params={"gtip": "841430899000"}).json()
+                client.close()
+        self.assertEqual(data["turkey_btb"], [])
+        self.assertFalse(data["turkey_btb_status"]["ready"])
+        self.assertEqual(data["eu_ebti"]["status"], "unavailable")
+        self.assertEqual(data["eu_ebti"]["warnings"], ["AB indeksi henüz hazır değil."])
