@@ -199,19 +199,12 @@ def collect_official_sources(value: Any, *, limit: int = 100) -> list[str]:
     return found
 
 
-DEFAULT_ADMIN_EMAILS = {
-    "hikmet044@gmail.com",
-    "hiktan44@gmail.com",
-}
-
-
 class AccountService:
     def __init__(self, data_dir: str | Path | None = None, *, admin_emails: str | None = None) -> None:
         default_root = Path(os.environ.get("MEVZUAT_DATA_DIR", Path.home() / ".cache" / "mevzuat-mcp"))
         self.data_dir = Path(data_dir or default_root)
         raw_admins = admin_emails if admin_emails is not None else os.environ.get("ADMIN_EMAILS", "")
         self.admin_emails = {item.strip().casefold() for item in raw_admins.split(",") if item.strip()}
-        self.admin_emails.update(DEFAULT_ADMIN_EMAILS)
         self.db_path = self.data_dir / "users.sqlite3"
         self._ensure_schema()
 

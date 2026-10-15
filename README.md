@@ -855,6 +855,12 @@ STRIPE_PRICE_TEAM_YEARLY=<price_ kimliği>
 STRIPE_AUTOMATIC_TAX=false
 ```
 
+`ADMIN_EMAILS` yalnız açıkça listelenmiş tam Google e-posta adreslerine yönetici
+yetkisi verir; yerleşik adres eklenmez. Değişken boş veya eksikse hiçbir e-posta
+yönetici kabul edilmez. Bu sürüme geçmeden önce Coolify'ın çalışma zamanı
+yapılandırmasında yetkili yöneticilerin tam adreslerini tanımlayın; önceki
+varsayılan adreslerle giriş yapan yöneticiler de listeye açıkça eklenmelidir.
+
 Stripe webhook adresi `https://gumruksor.com/api/billing/stripe/webhook` olmalı ve yalnız `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed` olaylarını göndermelidir. Müşteri Portalı, paket değişikliği/iptal ve ödeme yöntemi yönetimini Stripe’ın barındırdığı sayfada yapar. `STRIPE_AUTOMATIC_TAX` yalnız Stripe Tax kayıtları hazırlandıktan sonra `true` yapılmalıdır. Anahtar, webhook secret veya Price ID’lerden biri eksikse ödeme güvenli biçimde kapalı kalır; paket ve fiyat seçimi tarayıcıdan değil sunucudaki katalogdan doğrulanır.
 
 Landing page; canonical, Open Graph/Twitter kartları, `SoftwareApplication` ve `FAQPage` yapılandırılmış verisi, `/robots.txt`, `/sitemap.xml`, manifest ve indekslenmeyen `/app` çalışma alanıyla hazırdır. Google Search Console tarafında alan adı doğrulandıktan sonra `https://gumruksor.com/sitemap.xml` gönderilmelidir; indeks kararı ve sıralama Google'a aittir.

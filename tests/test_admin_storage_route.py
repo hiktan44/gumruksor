@@ -83,7 +83,6 @@ class AdminStorageAuthorizationTests(unittest.TestCase):
     def test_exact_admin_sessions_can_report_create_and_download_backups(self):
         for email in (
             "admin@example.com", " ADMIN@EXAMPLE.COM ",
-            "hikmet044@gmail.com", "hiktan44@gmail.com",
         ):
             with self.subTest(email=email):
                 token = self.auth.create_session({"sub": "test-admin", "email": email})
@@ -108,11 +107,19 @@ class AdminStorageAuthorizationTests(unittest.TestCase):
     def test_signed_nonadmins_cannot_access_any_backup_operation(self):
         for email in (
             "user@example.com", "admin@other.example", "admin@example.com.other.example",
+            "hikmet044@gmail.com", "hiktan44@gmail.com",
             "hikmet044@other.example", "hiktan44@other.example",
             "hikmet044", "hikmet044@gmail", "hiktan44@@gmail.com", "", "@gmail.com",
         ):
             with self.subTest(email=email):
                 self.assert_storage_denied(self.auth.create_session({"sub": "test-user", "email": email}))
+
+    def test_empty_admin_list_denies_signed_users_for_all_backup_operations(self):
+        accounts = AccountService(self.dir / "no-admins", admin_emails="")
+        with patch.object(web_app, "account_service", accounts):
+            for email in ("admin@example.com", "hikmet044@gmail.com", "hiktan44@gmail.com"):
+                with self.subTest(email=email):
+                    self.assert_storage_denied(self.auth.create_session({"sub": "test-user", "email": email}))
 
     def test_anonymous_invalid_tampered_and_expired_sessions_are_denied(self):
         token = self.auth.create_session(ADMIN)
