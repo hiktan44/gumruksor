@@ -187,7 +187,7 @@ class TariffLookupResult(BaseModel):
     rate_variants: dict[str, list[float]] = Field(default_factory=dict)
     unambiguous_rates: dict[str, float] = Field(default_factory=dict)
     ambiguous_measure_types: list[str] = Field(default_factory=list)
-    # Motorun resmî listeye bakarak "uygulanmaz (%0)" dediği kalemler; hesapta 0 kabul edilir.
+    # Yalnız kapsamı doğrulanmış "uygulanmaz (%0)" kararları; boş/eksik sonuç muafiyet değildir.
     not_applicable_measures: list[str] = Field(default_factory=list)
     measures: list[TariffMeasure] = Field(default_factory=list)
     conditional_measures: list[TariffMeasure] = Field(default_factory=list)
@@ -351,7 +351,10 @@ def _surveillance_floor(data: "LandedCostInput", missing: list[str], warnings: l
         )
         return None
     quantity_unit, threshold_unit = _unit(data.quantity_unit), _unit(data.surveillance_unit)
-    if quantity_unit and threshold_unit and quantity_unit != threshold_unit:
+    if not quantity_unit or not threshold_unit:
+        missing.append("Gözetim eşiği birimi ve miktar birimi (kg/ton/adet) doğrulanmalıdır")
+        return None
+    if quantity_unit != threshold_unit:
         factor = _UNIT_FACTORS.get((quantity_unit, threshold_unit))
         if factor is None:
             missing.append(f"Gözetim eşiği birimi ({threshold_unit}) ile miktar birimi ({quantity_unit}) uyumsuz")
@@ -359,8 +362,6 @@ def _surveillance_floor(data: "LandedCostInput", missing: list[str], warnings: l
         quantity = data.quantity * factor
     else:
         quantity = data.quantity
-        if not (quantity_unit and threshold_unit):
-            warnings.append("Gözetim eşiği ile miktarın aynı birimde (kg/ton/adet) olduğu varsayıldı; birimleri doğrulayın.")
     return data.surveillance_unit_value * fx * quantity
 
 
@@ -873,11 +874,10 @@ class TariffEngine:
         """
         query_day = as_of if as_of and as_of >= today_iso() else (None if as_of else today_iso())
         if query_day is not None:
-            active = db.execute("SELECT * FROM tariff_snapshots WHERE active=1 ORDER BY source_id").fetchall()
+            active = db.execute("SELECT * FROM tariff_snapshots WHERE active=1 AND status='approved' ORDER BY source_id").fetchall()
             selected: list[sqlite3.Row] = []
             for row in active:
-                valid_from = str(row["valid_from"] or "")[:10]
-                if not valid_from or valid_from <= query_day:
+                if covers(row, query_day):
                     selected.append(row)
                     continue
                 previous = db.execute(
@@ -886,7 +886,8 @@ class TariffEngine:
                     (row["source_id"], row["id"]),
                 ).fetchall()
                 fallback = next((old for old in previous if covers(old, query_day)), None)
-                selected.append(fallback if fallback is not None else row)
+                if fallback is not None:
+                    selected.append(fallback)
             return selected
         rows = db.execute(
             "SELECT * FROM tariff_snapshots WHERE status='approved' ORDER BY source_id, retrieved_at DESC"
@@ -1310,7 +1311,11 @@ class TariffEngine:
         engine = self.trade_measures
         if engine is None:
             return MeasureCoverage(status="not_integrated", note=default_note)
-        meta = engine.store.metadata(kind)
+        try:
+            meta = engine.store.metadata(kind)
+        except Exception:  # noqa: BLE001 – veri yokluğu sıfır oran veya doğrulanmış kapsam değildir
+            logger.exception("Trade measure metadata unavailable for %s", kind)
+            return MeasureCoverage(status="not_integrated", note=default_note + " Kaynak kapsamı sorgulanamadı.")
         if meta.get("origin") == "missing":
             return MeasureCoverage(status="not_integrated", note=default_note)
         stamp = meta.get("fetched_at") or "depo tohum verisi"
@@ -1370,12 +1375,19 @@ class TariffEngine:
             return
         try:
             as_of_day = parse_iso_date(result.as_of_date) if result.as_of_date else None
-            if as_of_day is not None and as_of_day < date.today():
+            if as_of_day is not None:
                 report = engine.lookup(result.gtip, result.origin_country, today=as_of_day)
             else:
                 report = engine.lookup(result.gtip, result.origin_country)
         except Exception:  # noqa: BLE001 – önlem verisi tarife sonucunu düşürmemeli
             logger.exception("Trade measure lookup failed for %s", result.gtip)
+            result.warnings.append("Ticaret politikası önlemleri sorgulanamadı; eksik sonuç muafiyet veya %0 oran anlamına gelmez.")
+            for kind in ("anti_dumping", "safeguard", "surveillance", "tariff_quota"):
+                result.measure_coverage[kind] = MeasureCoverage(
+                    status="not_integrated", note="Önlem sorgusu başarısız; uygulanabilirlik doğrulanmalıdır."
+                )
+                if kind not in result.unresolved_measure_types:
+                    result.unresolved_measure_types.append(kind)
             return
         result.trade_measures = report.as_dict()
         for hit in report.applicable_anti_dumping[:3]:
@@ -1413,7 +1425,8 @@ class TariffEngine:
             "additional_financial_liability": MeasureCoverage(
                 status="partial_snapshot" if "import_regime" in active else "not_integrated",
                 source_ids=["import_regime"] if "import_regime" in active else [],
-                note="Konsolide cetveldeki IV sayılı liste okunur; diğer ek mali yükümlülük kararları ayrıca doğrulanmalıdır.",
+                note=("Konsolide cetveldeki IV sayılı liste okunur; diğer ek mali yükümlülük kararları ayrıca doğrulanmalıdır. "
+                      "Eşleşme bulunmaması muafiyet kanıtı değildir; belirsiz kapsamda oran veya uygulanmazlık kullanıcıca doğrulanmalıdır."),
             ),
             "anti_dumping": self._trade_coverage("anti_dumping", "Ürün, menşe ve üretici/ihracatçı bazlı güncel damping/sübvansiyon önlemi henüz yapılandırılmış hesap motorunda değildir."),
             "surveillance": self._trade_coverage("surveillance", "Gözetim tebliği, birim kıymet, menşe ve yürürlük tarihi ayrıca doğrulanmalıdır."),
@@ -1463,12 +1476,23 @@ class TariffEngine:
             await self.sync()
         with self._connect() as db:
             snapshots = self._select_snapshots(db, as_of)
+            query_day = as_of or today_iso()
+            selected_sources = {row["source_id"] for row in snapshots}
+            unavailable_sources = sorted(
+                row["source_id"] for row in db.execute("SELECT DISTINCT source_id FROM tariff_snapshots")
+                if row["source_id"] not in selected_sources
+            )
+            validity_warnings = [
+                f"{query_day} tarihini kapsayan onaylı resmî tarife sürümü bulunamadı: {', '.join(unavailable_sources)}."
+            ] if unavailable_sources else []
             if not snapshots:
-                message = (
-                    f"{as_of} tarihini kapsayan onaylı resmî tarife sürümü arşivde yok."
-                    if as_of and as_of < today_iso() else "Resmî tarife tabloları henüz eşitlenmedi."
+                coverage = self._measure_coverage([])
+                result = TariffLookupResult(
+                    status="unavailable", gtip=normalised, origin_country=origin_country, dispatch_country=dispatch_country,
+                    as_of=_now(), warnings=validity_warnings or [f"{query_day} tarihini kapsayan onaylı resmî tarife sürümü arşivde yok."],
+                    measure_coverage=coverage,
+                    unresolved_measure_types=[key for key, item in coverage.items() if item.status != "verified_snapshot"],
                 )
-                result = TariffLookupResult(status="unavailable", gtip=normalised, origin_country=origin_country, dispatch_country=dispatch_country, as_of=_now(), warnings=[message])
                 self._stamp_validity(result, [], as_of)
                 self._attach_trade_measures(result)
                 return result
@@ -1495,7 +1519,7 @@ class TariffEngine:
                 snapshots=[self._snapshot(row) for row in snapshots], measure_coverage=coverage,
                 unresolved_measure_types=[key for key, item in coverage.items() if item.status != "verified_snapshot"],
                 as_of=_now(),
-                warnings=["Bu kod aktif resmî tarife/İGV tablolarında bulunamadı; kod ve fasıl doğrulaması gerekir."],
+                warnings=[*validity_warnings, "Bu kod seçilen resmî tarife/İGV tablolarında bulunamadı; kod ve fasıl doğrulaması gerekir."],
             )
             self._stamp_validity(result, snapshots, as_of)
             self._attach_trade_measures(result)
@@ -1503,7 +1527,7 @@ class TariffEngine:
 
         matched_gtips = sorted({row["gtip"] for row, _ in all_rows})
         selected_by_scope: dict[tuple[str, str, str], str | None] = {}
-        warnings: list[str] = []
+        warnings: list[str] = list(validity_warnings)
         origin_entry = find_country(origin_country) if origin_country else None
         dispatch_entry = find_country(dispatch_country) if dispatch_country else None
         if dispatch_country and dispatch_entry is None:
@@ -1649,9 +1673,8 @@ class TariffEngine:
                     "Gösterilen otomatik oranlar bütün eşleşen 12 haneli satırlarda aynıdır; beyan öncesinde kesin 12 haneli GTİP yine doğrulanmalıdır."
                 )
         coverage = self._measure_coverage(snapshots)
-        lookup_status = "matched" if primary and not ambiguous_measure_types else "partial"
         not_applicable: list[str] = []
-        if origin_country and selected and lookup_status:
+        if origin_country and selected:
             if (
                 "additional_duty" not in rate_variants
                 and "additional_duty" not in ambiguous_measure_types
@@ -1660,27 +1683,11 @@ class TariffEngine:
             ):
                 warnings.append("Bu GTİP İlave Gümrük Vergisi (İGV) ekli listelerinde yer almamaktadır; İGV uygulanmaz (%0).")
                 not_applicable.append("additional_duty")
-            safeguards = []
-            if self.trade_measures:
-                try:
-                    if hasattr(self.trade_measures, "lookup"):
-                        safeguards = getattr(self.trade_measures.lookup(normalised, origin_country), "safeguard", [])
-                    elif hasattr(self.trade_measures, "measures_for_gtip"):
-                        safeguards = self.trade_measures.measures_for_gtip(normalised, origin=origin_country).get("safeguard") or []
-                except Exception:
-                    safeguards = []
-            has_live_safeguard = any(
-                (getattr(hit, "status", None) or (hit.get("status") if isinstance(hit, dict) else None)) != "expired"
-                and (getattr(hit, "origin_match", None) or (hit.get("origin_match") if isinstance(hit, dict) else None)) is not False
-                for hit in safeguards
-            )
-            if (
-                "additional_financial_liability" not in rate_variants
-                and "additional_financial_liability" not in ambiguous_measure_types
-                and not has_live_safeguard
-            ):
-                warnings.append("Bu GTİP için ek mali yükümlülük (EMY) tespit edilmemiştir; EMY uygulanmaz (%0).")
-                not_applicable.append("additional_financial_liability")
+        # IV sayılı liste ve korunma önlemi anlık görüntüleri EMY kapsamının yalnız bir
+        # bölümünü doğrular. Satır yokluğu, motor/veri yokluğu ve sorgu hatası bir
+        # muafiyet kararı değildir. Açık resmî %0 satırı unambiguous_rates içinde kalır.
+        if "additional_financial_liability" not in unambiguous_rates:
+            warnings.append("Ek mali yükümlülük (EMY) oranı/uygulanabilirliği doğrulanamadı; eksik veya kısmi kapsam %0 kabul edilmedi.")
         unresolved = [key for key, item in coverage.items() if item.status != "verified_snapshot"]
         if unresolved:
             warnings.append(
@@ -1909,8 +1916,7 @@ class TariffEngine:
             and lookup.status in {"matched", "partial"}
         ):
             inferred_additional_duty = 0.0
-        # EMY: motor resmî listeye bakıp "uygulanmaz (%0)" dediyse hesap da 0 alır (İGV ile aynı
-        # kural). Eskiden yalnız İGV için yapılıyordu; EMY satırı gereksiz yere "eksik" kalıyordu.
+        # Yalnız yapısal, doğrulanmış uygulanmazlık kararı %0'a dönüşebilir.
         inferred_financial_liability = safe_rates.get("additional_financial_liability")
         if (
             inferred_financial_liability is None
@@ -1931,7 +1937,7 @@ class TariffEngine:
             }
         )
         if inferred_financial_liability == 0.0 and data.additional_financial_liability_rate is None and safe_rates.get("additional_financial_liability") is None:
-            conflicts.append("Ek mali yükümlülük: resmî listede bu GTİP için EMY tespit edilmedi; %0 alındı. Korunma önlemi kararı varsa oranı girin.")
+            conflicts.append("Ek mali yükümlülük: doğrulanmış uygulanmazlık kararı nedeniyle %0 alındı.")
         cost = calculate_landed_cost(enriched)
         cost.rate_overrides = overrides
         cost.warnings.extend(conflicts)
@@ -2132,7 +2138,8 @@ def calculate_landed_cost(data: LandedCostInput) -> LandedCostResult:
     else:
         warnings.append("TRT bandrol ücreti (TV, radyo, telefon, taşıt vb.) uygulanıyorsa oranını girin; girilmedi, hesaba alınmadı.")
 
-    pre_vat_known = all(
+    # Eksik gözetim birimi/çapraz kur/belge durumu matrahı da belirsiz bırakır.
+    pre_vat_known = not missing and all(
         value is not None
         for value in (duty, additional, emy, data.anti_dumping_amount, kkdf_amount, data.sct_amount, data.surveillance_unit_value)
     )

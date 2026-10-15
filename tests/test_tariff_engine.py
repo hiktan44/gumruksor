@@ -186,6 +186,8 @@ class LandedCostTests(unittest.TestCase):
                 quantity=100,
                 surveillance_unit_value=20,
                 has_surveillance_certificate=False,
+                quantity_unit="kg",
+                surveillance_unit="kg",
                 customs_duty_rate=0,
                 additional_duty_rate=0,
                 additional_financial_liability_rate=0,

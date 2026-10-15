@@ -113,13 +113,13 @@ function safeUrl(value) {
   }
 }
 
-function parseLocalizedNumber(raw) {
+function parseLocalizedNumber(raw, dotIsDecimal = false) {
   // Accepts Turkish ("1.234,56", "12,5"), plain ("1234.56") and thousands-only ("12.500") input.
   let value = String(raw ?? "").trim().replace(/\s+/g, "").replace(/[₺$€£]|TL|USD|EUR|GBP|%/gi, "");
   if (!value) return null;
   if (value.includes(",")) {
     value = value.replace(/\./g, "").replace(",", ".");
-  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(value)) {
+  } else if (!dotIsDecimal && /^-?\d{1,3}(\.\d{3})+$/.test(value)) {
     value = value.replace(/\./g, "");
   }
   const number = Number(value);
@@ -128,7 +128,7 @@ function parseLocalizedNumber(raw) {
 
 function nullableNumber(selector) {
   const input = $(selector);
-  const number = parseLocalizedNumber(input?.value);
+  const number = parseLocalizedNumber(input?.value, input?.dataset?.decimal === "true");
   if (number == null) {
     input?.classList.toggle("input-invalid", Boolean(input?.value?.trim()));
     return null;
@@ -145,17 +145,19 @@ const localizedNumberFormat = new Intl.NumberFormat("tr-TR", { maximumFractionDi
 function bindLocalizedNumberInputs() {
   document.querySelectorAll("input[data-number]").forEach((input) => {
     input.addEventListener("blur", () => {
-      const number = parseLocalizedNumber(input.value);
+      const number = parseLocalizedNumber(input.value, input.dataset.decimal === "true");
       if (number == null) {
         input.classList.toggle("input-invalid", Boolean(input.value.trim()));
         return;
       }
       input.classList.remove("input-invalid");
-      input.value = localizedNumberFormat.format(number);
+      input.value = input.dataset.decimal === "true"
+        ? new Intl.NumberFormat("tr-TR", { maximumSignificantDigits: 15, useGrouping: false }).format(number)
+        : localizedNumberFormat.format(number);
     });
     input.addEventListener("focus", () => {
       // Raw digits are easier to edit; the value is re-formatted on blur.
-      const number = parseLocalizedNumber(input.value);
+      const number = parseLocalizedNumber(input.value, input.dataset.decimal === "true");
       if (number != null) input.value = String(number).replace(".", ",");
     });
   });
@@ -1441,11 +1443,13 @@ const DECISION_FIELDS = {
   precheck: {
     vat_rate: "#vatRate", kkdf_rate: "#kkdfRate", payment_method: "#paymentMethod",
     has_surveillance_certificate: "#hasSurveillanceCertificate", atr_certificate: "#assistAtr",
+    quantity_unit: "#quantityUnit", surveillance_unit: "#assistSurveillanceUnit", surveillance_cross_rate: "#assistSurveillanceCrossRate",
     condition: "#productCondition",
   },
   tool: {
     vat_rate: "#tariffVat", kkdf_rate: "#tariffKkdf", payment_method: "#tariffPayment",
     has_surveillance_certificate: "#tariffSurveillanceCertificate", atr_certificate: "#tariffAtr",
+    quantity_unit: "#tariffQuantityUnit", surveillance_unit: "#tariffSurveillanceUnit", surveillance_cross_rate: "#tariffSurveillanceCrossRate",
   },
 };
 
@@ -1463,7 +1467,9 @@ function decisionQuestionsHtml(questions, context) {
     }).join("");
     return `<div class="decision-question-row${current ? " answered" : ""}" data-decision-row="${escapeHtml(id)}">
       <p>${escapeHtml(question.text)}</p>
-      <div class="decision-question-options">${options}</div>
+      <div class="decision-question-options">${question.input_type === "decimal"
+        ? `<label><span>Çapraz kur</span><input type="text" inputmode="decimal" value="${escapeHtml(current)}" placeholder="Örn. 0,9" data-decision-context="${escapeHtml(context)}" data-decision-id="${escapeHtml(id)}"></label>`
+        : options}</div>
       <span class="decision-filled">cevabınızla dolduruldu</span>
       <small>${escapeHtml(question.reason || "")}${question.legal_basis ? ` · ${escapeHtml(question.legal_basis)}` : ""}</small>
     </div>`;
@@ -1533,6 +1539,11 @@ function applyDecisionAnswerToFields(questionId, value, context) {
     remember("KKDF", setDecisionField(fields.kkdf_rate, cash ? 0 : 6));
   } else if (questionId === "surveillance_certificate") {
     remember("Gözetim belgesi", setDecisionField(fields.has_surveillance_certificate, value));
+  } else if (questionId === "quantity_unit" || questionId === "surveillance_unit") {
+    remember("Gözetim / miktar birimi", setDecisionField(fields[questionId], value));
+  } else if (questionId === "surveillance_cross_rate") {
+    const rate = parseLocalizedNumber(value, true);
+    if (rate != null && rate > 0 && rate <= 1000000) remember("Gözetim çapraz kuru", setDecisionField(fields.surveillance_cross_rate, rate));
   } else if (questionId === "atr_certificate") {
     remember("A.TR", setDecisionField(fields.atr_certificate, value));
   } else if (questionId === "used_goods") {
@@ -1543,14 +1554,28 @@ function applyDecisionAnswerToFields(questionId, value, context) {
 
 document.addEventListener("change", (event) => {
   const input = event.target.closest("[data-decision-id]");
-  if (!input || !input.checked) return;
+  if (!input || (input.type === "radio" && !input.checked)) return;
   const context = input.dataset.decisionContext === "tool" ? "tool" : "precheck";
   const questionId = input.dataset.decisionId;
-  state.decisionAnswers[context] = { ...(state.decisionAnswers[context] || {}), [questionId]: input.value };
+  let value = input.value;
+  if (input.type !== "radio") {
+    const rate = parseLocalizedNumber(value, true);
+    const invalid = rate == null || rate <= 0 || rate > 1000000;
+    input.classList.toggle("input-invalid", invalid);
+    if (invalid) {
+      if (state.decisionAnswers[context]) delete state.decisionAnswers[context][questionId];
+      if (questionId === "surveillance_cross_rate") setDecisionField(DECISION_FIELDS[context]?.surveillance_cross_rate, "");
+      input.closest(".decision-question-row")?.classList.remove("answered");
+      updateDecisionProgress();
+      return;
+    }
+    value = String(rate);
+  }
+  state.decisionAnswers[context] = { ...(state.decisionAnswers[context] || {}), [questionId]: value };
   const row = input.closest(".decision-question-row");
   if (row) row.classList.add("answered");
   updateDecisionProgress();
-  const applied = applyDecisionAnswerToFields(questionId, input.value, context);
+  const applied = applyDecisionAnswerToFields(questionId, value, context);
   if (typeof updateReadiness === "function") updateReadiness();
   showToast(applied.length
     ? `${applied.join(", ")} alanı cevabınızla dolduruldu; hesabı yeniden çalıştırın.`
@@ -2493,6 +2518,8 @@ const EXPORT_NULLED_LEVIES = {
   sct_amount: null,
   surveillance_unit_value: null,
   has_surveillance_certificate: null,
+  surveillance_unit: null,
+  surveillance_cross_rate: null,
   trt_bandrol_rate: null,
   stamp_duty_try: null,
   port_storage_try: null,
@@ -2553,6 +2580,7 @@ function customsRequestBody() {
     sct_amount: nullableNumber("#sctAmount"),
     surveillance_unit_value: nullableNumber("#surveillanceUnitValue"),
     has_surveillance_certificate: $("#hasSurveillanceCertificate").value === "" ? null : $("#hasSurveillanceCertificate").value === "true",
+    ...surveillanceFields("assist", "#quantityUnit"),
     ...liraFields("assist"),
     ...declarationFields(),
   };
@@ -2595,6 +2623,15 @@ function liraFields(prefix) {
     stamp_duty_try: nullableNumber(`#${prefix}StampDutyTry`),
     port_storage_try: nullableNumber(`#${prefix}PortStorageTry`),
     gekap_try: nullableNumber(`#${prefix}GekapTry`),
+  };
+}
+
+function surveillanceFields(prefix, quantitySelector) {
+  return {
+    surveillance_currency: $(`#${prefix}SurveillanceCurrency`)?.value || "USD",
+    surveillance_cross_rate: nullableNumber(`#${prefix}SurveillanceCrossRate`),
+    surveillance_unit: $(`#${prefix}SurveillanceUnit`)?.value || null,
+    quantity_unit: $(quantitySelector)?.value || null,
   };
 }
 
@@ -3604,6 +3641,7 @@ function collectTariffCostInputs(invoice) {
     anti_dumping_amount: nullableNumber("#tariffAntiDumping"), sct_amount: nullableNumber("#tariffSct"),
     surveillance_unit_value: nullableNumber("#tariffSurveillance"),
     has_surveillance_certificate: $("#tariffSurveillanceCertificate").value === "" ? null : $("#tariffSurveillanceCertificate").value === "true",
+    ...surveillanceFields("tariff", "#tariffQuantityUnit"),
     ...liraFields("tariff"),
   };
 }
