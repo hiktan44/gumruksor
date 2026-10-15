@@ -3531,6 +3531,45 @@ async def web_education_question_add(request: Request):
     return JSONResponse({"id": identifier}, status_code=201)
 
 
+@mcp.custom_route("/api/gtip/images", methods=["GET"])
+async def web_gtip_images(request: Request):
+    """GTİP için resmî kaynaklı örnek görsel başvuruları (yalnız adres; dosya saklanmaz)."""
+    limited = _rate_limit_response(request, "gtip-images", limit=40, window_seconds=60)
+    if limited:
+        return limited
+    gtip = re.sub(r"\D", "", request.query_params.get("gtip", ""))[:12]
+    if len(gtip) < 6:
+        return JSONResponse({"error": "Görseller için en az 6 haneli GTİP girin."}, status_code=422)
+    turkey = btb_engine.store.by_gtip(gtip, limit=6)
+    eu: dict[str, Any]
+    try:
+        require_feature(request, "foreign_tariff")
+        found = ebti_engine.search("", code_prefix=gtip[:10] if len(gtip) >= 6 else gtip, limit=4).as_dict()
+        eu = {
+            "status": found["status"], "warnings": found.get("warnings", []),
+            "decisions": [
+                {"reference": hit["reference"], "issuing_country": hit["issuing_country"], "code": hit["code"],
+                 "description": hit["description"][:240], "official_url": hit["url"], "image_url": None}
+                for hit in found["hits"]
+            ],
+            "image_note": "AB EBTI karar sayfalarındaki görsellerin adres kalıbı doğrulanamadığı için görsel adresi üretilmedi; resmî karar sayfasında görsel bulunabilir.",
+        }
+    except (FeatureNotAvailable, AuthError) as exc:
+        eu = {"status": "locked", "message": str(exc), "decisions": []}
+    except ValueError as exc:
+        eu = {"status": "invalid", "message": str(exc), "decisions": []}
+    return JSONResponse(
+        {
+            "gtip": gtip, "turkey_btb": turkey, "turkey_btb_status": btb_engine.store.status(), "eu_ebti": eu,
+            "notices": {
+                "turkey": "Fotoğraflar Ticaret Bakanlığı BTB Başvuru Sistemi'nden anlık yüklenir; bu uygulama kopyalamaz veya saklamaz. BTB yalnız ilgili başvuru sahibini ve bildirilen eşyayı bağlar; görseller örnek niteliğindedir.",
+                "eu": "AB BTB kararları Türkiye'de bağlayıcı değildir; karşılaştırmalı sınıflandırma kanıtıdır.",
+            },
+        },
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 @mcp.custom_route("/api/foreign/tariff", methods=["GET"])
 async def web_foreign_tariff(request: Request):
     """Yurt dışı tarife karşılaştırma: BK/ABD açık API'lerinden oran, AB/İsviçre için resmî sorgu bağlantısı."""
