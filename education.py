@@ -8,6 +8,9 @@ Kurallar:
   teslim edildikten sonra açıklamayla birlikte döner.
 * Sınav süresi sunucuda tutulur (istemci saatine güvenilmez); süre aşımı sonuca "süre aşıldı"
   olarak yazılır, yanıtlar yine de not alınır ama sonuç etiketlenir.
+* Durum (``status``): ``draft`` (üretim betiği/yönetici taslağı), ``approved``, ``rejected``.
+  Öğrenciye yalnız ``approved`` sorular gösterilir; taslak bir soru kimliğiyle bile
+  cevaplanamaz. Onay/red yalnız yönetici ve aktif danışman rolündedir.
 * "Yanlışlarım": kullanıcının bir sorudaki **son** denemesi yanlışsa listelenir; sonra doğru
   cevaplanırsa listeden düşer.
 """
@@ -47,6 +50,20 @@ CREATE TABLE IF NOT EXISTS attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_user_question ON attempts(user_sub, question_id, created_at);
 """
 GRACE_SECONDS = 20
+STATUSES = {"draft": "Taslak", "approved": "Onaylı", "rejected": "Reddedildi"}
+#: Eski veritabanlarına eklenecek sütunlar; varsayılanlar mevcut soruları ``approved`` bırakır.
+MIGRATION_COLUMNS = {
+    "origin": "TEXT NOT NULL DEFAULT 'admin'",
+    "status": "TEXT NOT NULL DEFAULT 'approved'",
+    "review_note": "TEXT NOT NULL DEFAULT ''",
+    "reviewed_by": "TEXT",
+    "reviewed_at": "REAL",
+    "source_ref": "TEXT NOT NULL DEFAULT ''",
+    "source_kind": "TEXT NOT NULL DEFAULT ''",
+    "evidence_quote": "TEXT NOT NULL DEFAULT ''",
+}
+#: Yargı kararından üretilen sorulara öğrenciye gösterilen sabit uyarı.
+PRECEDENT_NOTICE = "Emsal karar; bağlayıcı olmayabilir."
 
 
 class EducationError(ValueError):
@@ -74,7 +91,12 @@ def validate_question(payload: dict[str, Any]) -> dict[str, Any]:
     source_label = str(payload.get("source_label", "")).strip()
     if not legal_basis or not source_label or not re.match(r"^https://", source_url):
         raise EducationError("Her soru için mevzuat dayanağı, kaynak adı ve https kaynak bağlantısı zorunludur.")
+    source_kind = str(payload.get("source_kind", "")).strip()
+    if source_kind not in ("", "mevzuat", "karar"):
+        raise EducationError("Kaynak türü mevzuat veya karar olmalıdır.")
     return {
+        "source_ref": str(payload.get("source_ref", "")).strip()[:200], "source_kind": source_kind,
+        "evidence_quote": str(payload.get("evidence_quote", "")).strip()[:1500],
         "branch": branch, "text": text, "options": options, "answer_index": answer,
         "explanation": str(payload.get("explanation", "")).strip()[:1000], "legal_basis": legal_basis[:400],
         "source_label": source_label[:200], "source_url": source_url,
@@ -88,8 +110,9 @@ class EducationStore:
         with self._connect() as db:
             db.executescript(SCHEMA)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(questions)").fetchall()}
-            if "origin" not in columns:
-                db.execute("ALTER TABLE questions ADD COLUMN origin TEXT NOT NULL DEFAULT 'admin'")
+            for column, definition in MIGRATION_COLUMNS.items():
+                if column not in columns:
+                    db.execute(f"ALTER TABLE questions ADD COLUMN {column} {definition}")
         if seed_path and Path(seed_path).exists():
             self._sync_seed(json.loads(Path(seed_path).read_text(encoding="utf-8")).get("questions", []))
 
@@ -106,7 +129,7 @@ class EducationStore:
             with self._connect() as db:
                 db.execute(
                     "INSERT INTO questions (id,branch,text,options_json,answer_index,explanation,legal_basis,source_label,source_url,"
-                    "active,origin,created_at) VALUES (?,?,?,?,?,?,?,?,?,1,'seed',?) "
+                    "active,origin,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,1,'seed','approved',?) "
                     "ON CONFLICT(id) DO UPDATE SET branch=excluded.branch, text=excluded.text, options_json=excluded.options_json, "
                     "answer_index=excluded.answer_index, explanation=excluded.explanation, legal_basis=excluded.legal_basis, "
                     "source_label=excluded.source_label, source_url=excluded.source_url, active=1, origin='seed'",
@@ -127,35 +150,96 @@ class EducationStore:
         return db
 
     # ---- sorular
-    def add_question(self, payload: dict[str, Any], *, identifier: str | None = None) -> str:
+    def add_question(
+        self, payload: dict[str, Any], *, identifier: str | None = None, status: str = "approved",
+        origin: str = "admin",
+    ) -> str:
+        """Soru ekler. Yönetici ekleme varsayılanı ``approved``; betik ve içe aktarma ``draft`` vermelidir."""
+        if status not in STATUSES:
+            raise EducationError("Durum geçersiz.")
         record = validate_question(payload)
         identifier = identifier or uuid.uuid4().hex
         with self._connect() as db:
             db.execute(
-                "INSERT OR IGNORE INTO questions (id,branch,text,options_json,answer_index,explanation,legal_basis,source_label,source_url,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO questions (id,branch,text,options_json,answer_index,explanation,legal_basis,source_label,"
+                "source_url,created_at,status,origin,source_ref,source_kind,evidence_quote) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (identifier, record["branch"], record["text"], json.dumps(record["options"], ensure_ascii=False),
                  record["answer_index"], record["explanation"], record["legal_basis"], record["source_label"],
-                 record["source_url"], time.time()),
+                 record["source_url"], time.time(), status, origin, record["source_ref"], record["source_kind"],
+                 record["evidence_quote"]),
             )
         return identifier
+
+    def exists(self, identifier: str) -> bool:
+        with self._connect() as db:
+            return db.execute("SELECT 1 FROM questions WHERE id=?", (identifier,)).fetchone() is not None
+
+    # ---- onay akışı
+    def list_for_review(self, status: str = "draft", branch: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        """Yetkili için cevap anahtarı ve kaynak bilgisiyle liste. Öğrenci uçlarından erişilmez."""
+        if status not in STATUSES:
+            raise EducationError("Durum geçersiz.")
+        query = "SELECT * FROM questions WHERE status=? AND active=1"
+        params: list[Any] = [status]
+        if branch:
+            if branch not in BRANCHES:
+                raise EducationError("Branş geçersiz.")
+            query += " AND branch=?"
+            params.append(branch)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 200)))
+        with self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [self._review_item(row) for row in rows]
+
+    def pending_counts(self) -> dict[str, int]:
+        with self._connect() as db:
+            rows = db.execute("SELECT status, COUNT(*) n FROM questions WHERE active=1 GROUP BY status").fetchall()
+        counts = {key: 0 for key in STATUSES}
+        counts.update({row["status"]: row["n"] for row in rows})
+        return counts
+
+    def set_status(self, identifier: str, status: str, reviewer_sub: str, note: str = "") -> dict[str, Any]:
+        if status not in ("approved", "rejected"):
+            raise EducationError("Durum yalnız approved veya rejected olabilir.")
+        note = str(note or "").strip()[:500]
+        if status == "rejected" and not note:
+            raise EducationError("Reddetmek için gerekçe yazın.")
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM questions WHERE id=? AND active=1", (identifier,)).fetchone()
+            if row is None:
+                raise EducationError("Soru bulunamadı.")
+            db.execute("UPDATE questions SET status=?, review_note=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+                       (status, note, reviewer_sub, time.time(), identifier))
+            row = db.execute("SELECT * FROM questions WHERE id=?", (identifier,)).fetchone()
+        return self._review_item(row)
+
+    def _review_item(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = self._public(row, reveal=True)
+        item.update({
+            "status": row["status"], "status_label": STATUSES.get(row["status"], row["status"]),
+            "origin": row["origin"], "review_note": row["review_note"], "source_ref": row["source_ref"],
+            "source_kind": row["source_kind"], "evidence_quote": row["evidence_quote"],
+        })
+        return item
 
     @staticmethod
     def _public(row: sqlite3.Row, *, reveal: bool = False) -> dict[str, Any]:
         item = {
             "id": row["id"], "branch": row["branch"], "branch_label": BRANCHES.get(row["branch"], row["branch"]),
             "text": row["text"], "options": json.loads(row["options_json"]),
+            "notice": PRECEDENT_NOTICE if row["source_kind"] == "karar" else "",
         }
         if reveal:
             item.update({
                 "answer_index": row["answer_index"], "explanation": row["explanation"], "legal_basis": row["legal_basis"],
-                "source_label": row["source_label"], "source_url": row["source_url"],
+                "source_label": row["source_label"], "source_url": row["source_url"], "source_ref": row["source_ref"],
             })
         return item
 
     def counts(self) -> dict[str, int]:
         with self._connect() as db:
-            rows = db.execute("SELECT branch, COUNT(*) n FROM questions WHERE active=1 GROUP BY branch").fetchall()
+            rows = db.execute("SELECT branch, COUNT(*) n FROM questions WHERE active=1 AND status='approved' GROUP BY branch").fetchall()
         counts = {key: 0 for key in BRANCHES}
         counts.update({row["branch"]: row["n"] for row in rows})
         return counts
@@ -166,15 +250,17 @@ class EducationStore:
         count = max(1, min(int(count), 50))
         with self._connect() as db:
             if branch:
-                rows = db.execute("SELECT * FROM questions WHERE active=1 AND branch=?", (branch,)).fetchall()
+                rows = db.execute("SELECT * FROM questions WHERE active=1 AND status='approved' AND branch=?", (branch,)).fetchall()
             else:
-                rows = db.execute("SELECT * FROM questions WHERE active=1").fetchall()
+                rows = db.execute("SELECT * FROM questions WHERE active=1 AND status='approved'").fetchall()
         random.shuffle(rows)
         return [self._public(row) for row in rows[:count]]
 
     def answer(self, question_id: str, chosen: Any, user_sub: str | None, *, exam_id: str | None = None) -> dict[str, Any]:
         with self._connect() as db:
-            row = db.execute("SELECT * FROM questions WHERE id=? AND active=1", (question_id,)).fetchone()
+            # Sınav sırasında red edilen soru teslimi bozmasın: sınavda verilmiş sorular durumdan bağımsız puanlanır.
+            clause = "id=? AND active=1" if exam_id else "id=? AND active=1 AND status='approved'"
+            row = db.execute(f"SELECT * FROM questions WHERE {clause}", (question_id,)).fetchone()
             if row is None:
                 raise EducationError("Soru bulunamadı.")
             options = json.loads(row["options_json"])
@@ -238,7 +324,7 @@ class EducationStore:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT q.*, a.chosen AS chosen FROM questions q JOIN attempts a ON a.question_id=q.id "
-                "WHERE a.user_sub=? AND a.created_at=(SELECT MAX(created_at) FROM attempts WHERE user_sub=a.user_sub AND question_id=a.question_id) "
+                "WHERE q.status='approved' AND q.active=1 AND a.user_sub=? AND a.created_at=(SELECT MAX(created_at) FROM attempts WHERE user_sub=a.user_sub AND question_id=a.question_id) "
                 "AND a.correct=0 ORDER BY a.created_at DESC LIMIT ?",
                 (user_sub, max(1, min(int(limit), 200))),
             ).fetchall()
